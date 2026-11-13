@@ -179,12 +179,12 @@ addEventListener('touchend', (e) => {
 const state = {
   ready: false, player: null, anim: null, enemies: [], npc: null,
   heading: 0, hp: 100, maxHp: 100, dead: false,
-  attackUntil: 0, attackCdUntil: 0, didHit: false, kills: 0, skKills: 0,
+  attackUntil: 0, attackCdUntil: 0, didHit: false, kills: 0, skKills: 0, wKills: 0,
   dialog: false,
-  quest: { state: 'none', startKills: 0, goal: 3 }, // none → active → done
+  quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
 };
 const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4, skel: true };
-const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2, skel: true };
+const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2, skel: true, warrior: true };
 const PLAYER = { dmg: 10, range: 2.4, arc: Math.PI * 0.6 };
 const FROG = { hp: 15, dmg: 3, speed: 2.0, aggro: 9, range: 1.4, cd: 1.6 };
 const RAT = { hp: 10, dmg: 2, speed: 3.2, aggro: 8, range: 1.2, cd: 1.1 };
@@ -449,6 +449,7 @@ async function build() {
     heal() { state.hp = state.maxHp; if (state.dead) respawn(); },
     talk() { tryInteract(); },
     addKills(n) { state.kills += n; },
+    setCounters(k, sk, w) { state.kills = k; state.skKills = sk; state.wKills = w; },
     save() { saveGame(); },
     teleport(x, z) { state.player.position.set(x, 0, z); },
     debug() { return { dungeon: { ...DUNGEON }, colliders, hp: state.hp, dead: state.dead, dialog: state.dialog }; },
@@ -456,8 +457,41 @@ async function build() {
 }
 
 // ---------- NPC 대화 / 의뢰 ----------
+// ---------- 의뢰(퀘스트) 체인 ----------
+// 보상은 applyProgression()이 완료 idx 기준으로 재계산해 세이브 복원과 항상 일치
+const QUESTS = [
+  { name: '스켈레톤 처치', goal: 3, counter: 'skKills', unit: '마리',
+    offer: '유랑자여, 잘 왔네. 언덕에 스켈레톤이 들끓어 마을 사람들이 불안해하고 있네.<br>스켈레톤 <b>3마리</b>를 처치해주게. 사례는 하겠네.',
+    progress: '스켈레톤 처치를 부탁했었지.',
+    done: '스켈레톤 3마리를 모두 해치웠군! 마을이 자네 덕분에 한시름 놓았네.<br>약속한 사례일세: <b>최대 체력 100 → 130</b>.' },
+  { name: '들판 몬스터 토벌', goal: 5, counter: 'fieldKills', unit: '마리',
+    offer: '요즘 들판의 개구리며 쥐, 거미들이 흉포해져서 밭일을 못하겠다는군.<br>들판 몬스터 <b>5마리</b>를 토벌해주게. 자네 검솜씨를 봤으니 가능할 걸세.',
+    progress: '들판 몬스터 토벌을 부탁했었지.',
+    done: '들판이 한결 안전해졌네! 이제 주민들이 밭에 나갈 수 있겠어.<br>사례일세: <b>공격력 10 → 14</b>.' },
+  { name: '묘지의 전사', goal: 2, counter: 'wKills', unit: '기',
+    offer: '마지막 부탁일세. 북동쪽 지하묘지에는 <b>스켈레톤 전사</b>가 지키고 있다네.<br>그 <b>2기</b>를 쓰러뜨려주면 마을에도 진정한 평화가 오겠네.',
+    progress: '지하묘지의 스켈레톤 전사를 부탁했었지.',
+    done: '전사들까지 해치우다니, 자네는 진정한 유랑 검객일세!<br>사례일세: <b>최대 체력 130 → 160</b>.' },
+];
+function questCounter(q) {
+  const d = QUESTS[q.idx];
+  if (!d) return 0;
+  if (d.counter === 'skKills') return state.skKills || 0;
+  if (d.counter === 'wKills') return state.wKills || 0;
+  if (d.counter === 'fieldKills') return (state.kills || 0) - (state.skKills || 0); // 전사 포함 스켈레톤 제외
+  return 0;
+}
+function applyProgression() {
+  const done = state.quest.idx; // idx번째 미만은 완료된 의뢰
+  state.maxHp = 100; PLAYER.dmg = 10;
+  if (done >= 1) state.maxHp = 130;
+  if (done >= 2) PLAYER.dmg = 14;
+  if (done >= 3) state.maxHp = 160;
+  state.hp = Math.min(state.hp, state.maxHp);
+}
+
 const dlgEl = () => document.getElementById('dlg');
-function questProgress() { return Math.min((state.skKills || 0) - state.quest.startKills, state.quest.goal); }
+function questProgress() { const d = QUESTS[state.quest.idx]; return d ? Math.min(questCounter(state.quest) - state.quest.startKills, d.goal) : 0; }
 function tryInteract() {
   if (!state.ready || state.dead || state.dialog || !state.npc) return;
   if (state.player.position.distanceTo(state.npc.pos) > 2.6) return;
@@ -466,6 +500,7 @@ function tryInteract() {
 function openDialog() {
   state.dialog = true;
   const q = state.quest;
+  const d = QUESTS[q.idx];
   const name = document.getElementById('dlg-name');
   const text = document.getElementById('dlg-text');
   const btns = document.getElementById('dlg-btns');
@@ -478,23 +513,23 @@ function openDialog() {
     btns.appendChild(b);
   };
   name.textContent = '마을 장로';
-  if (q.state === 'none') {
-    text.innerHTML = '유랑자여, 잘 왔네. 언덕에 스켈레톤이 들끓어 마을 사람들이 불안해하고 있네.<br>스켈레톤 <b>3마리</b>를 처치해주게. 사례는 하겠네.';
-    mk('수락한다', '', () => { q.state = 'active'; q.startKills = state.skKills || 0; closeDialog(); saveGame(); });
+  if (!d) {
+    text.innerHTML = '마을의 모든 부탁을 들어주었네. 자네는 이제 이 언덕의 영웅일세.<br>바람 언덕에서 마음껏 유랑하게나.';
+    mk('닫기', '', closeDialog);
+  } else if (q.state === 'none') {
+    text.innerHTML = d.offer;
+    mk('수락한다', '', () => { q.state = 'active'; q.startKills = questCounter(q); closeDialog(); saveGame(); });
     mk('나중에', 'sub', closeDialog);
-  } else if (q.state === 'active' && questProgress() >= q.goal) {
-    text.innerHTML = '스켈레톤 3마리를 모두 해치웠군! 마을이 자네 덕분에 한시름 놓았네.<br>약속한 사례일세: <b>최대 체력 100 → 130</b>.';
+  } else if (q.state === 'active' && questProgress() >= d.goal) {
+    text.innerHTML = d.done;
     mk('사례를 받는다', '', () => {
-      q.state = 'done';
-      state.maxHp = 130; state.hp = 130;
+      q.idx++; q.state = 'none'; q.startKills = 0;
+      applyProgression(); state.hp = state.maxHp;
       closeDialog(); saveGame();
     });
   } else if (q.state === 'active') {
-    text.innerHTML = `스켈레톤 처치를 부탁했었지. 현재 <b>${questProgress()} / ${q.goal}</b> 마리네.<br>조금만 더 힘내주게.`;
+    text.innerHTML = `${d.progress} 현재 <b>${questProgress()} / ${d.goal}</b> ${d.unit}네.<br>조금만 더 힘내주게.`;
     mk('계속', '', closeDialog);
-  } else {
-    text.innerHTML = '덕분에 마을이 평온을 되찾았네. 언덕 저편 지하묘지에는 더 강한 스켈레톤 전사가 있다고 하니 조심하게.';
-    mk('닫기', '', closeDialog);
   }
   dlgEl().style.display = 'block';
 }
@@ -512,7 +547,7 @@ function saveGame() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       x: state.player.position.x, z: state.player.position.z,
-      hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0,
+      hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -529,7 +564,16 @@ function loadGame() {
     state.maxHp = s.maxHp || 100;
     state.kills = s.kills || 0;
     state.skKills = s.skKills || 0;
-    if (s.quest) state.quest = s.quest;
+    state.wKills = s.wKills || 0;
+    if (s.quest) {
+      // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
+      if (s.quest.idx === undefined) {
+        state.quest = { idx: s.quest.state === 'done' ? 1 : 0, state: s.quest.state === 'done' ? 'none' : (s.quest.state || 'none'), startKills: s.quest.startKills || 0 };
+      } else {
+        state.quest = s.quest;
+      }
+    }
+    applyProgression();
   } catch (e) { console.warn('load fail', e); }
 }
 setInterval(() => { if (state.ready && !state.dead) saveGame(); }, 4000);
@@ -630,6 +674,7 @@ function playerAttackHit() {
       e.respawnAt = clock.elapsedTime + 6;
       state.kills++;
       if (e.stats.skel) state.skKills++;
+      if (e.stats.warrior) state.wKills++;
       setTimeout(() => { e.root.visible = false; }, 1600);
     } else {
       e.anim.playOnce('hit_a', 'hit');
@@ -774,12 +819,13 @@ function tick() {
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
-    if (state.quest.state === 'active') {
+    const qd = QUESTS[state.quest.idx];
+    if (qd && state.quest.state === 'active') {
       qEl.style.display = 'block';
-      qEl.innerHTML = `의뢰 · 스켈레톤 처치 ${questProgress()} / ${state.quest.goal}${questProgress() >= state.quest.goal ? '<br>장로에게 돌아가기' : ''}`;
-    } else if (state.quest.state === 'done') {
+      qEl.innerHTML = `의뢰 · ${qd.name} ${questProgress()} / ${qd.goal}${questProgress() >= qd.goal ? '<br>장로에게 돌아가기' : ''}`;
+    } else if (!qd) {
       qEl.style.display = 'block';
-      qEl.textContent = '의뢰 완료 · 스켈레톤 처치';
+      qEl.textContent = '모든 의뢰 완료';
     } else {
       qEl.style.display = 'none';
     }
@@ -819,8 +865,8 @@ function tick() {
   window.__probe = state.ready ? {
     pos: state.player.position.toArray().map((v) => +v.toFixed(2)),
     anim: state.anim.current,
-    hp: state.hp, maxHp: state.maxHp, dead: state.dead, kills: state.kills,
-    quest: state.quest.state, qprog: questProgress(), dialog: state.dialog,
+    hp: state.hp, maxHp: state.maxHp, dead: state.dead, kills: state.kills, dmg: PLAYER.dmg,
+    quest: state.quest.state, qidx: state.quest.idx, qprog: questProgress(), dialog: state.dialog,
     enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1) })),
   } : null;
 }
