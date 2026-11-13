@@ -42,7 +42,11 @@ async function loadObj(base) {
   const objLoader = new OBJLoader();
   const mtl = await mtlLoader.loadAsync(`/assets/village/${base}.mtl`);
   mtl.preload();
-  const obj = await objLoader.setMaterials(mtl).loadAsync(`/assets/village/${base}.obj`);
+  // OBJ 안의 라인(l)/포인트(p) 요소는 버린다: OBJLoader는 객체에 'l' 요소가 하나라도
+  // 있으면 해당 객체 전체를 LineSegments로 만들어 면이 와이어프레임처럼 보이는 문제가 있음
+  const objText = await (await fetch(`/assets/village/${base}.obj`)).text();
+  const stripped = objText.split('\n').filter((l) => !/^[lp] /.test(l)).join('\n');
+  const obj = objLoader.setMaterials(mtl).parse(stripped);
   obj.traverse((o) => {
     if (o.isMesh) {
       o.castShadow = true; o.receiveShadow = true;
@@ -50,7 +54,9 @@ async function loadObj(base) {
       for (const m of mats) {
         if (!m) continue;
         m.side = THREE.DoubleSide; // Quaternius OBJ 일부 면이 안쪽을 향해 컬링되는 문제 방지
-        // Blender가 내보낸 MTL Kd는 이미 리니어 값 — 추가 sRGB 변환을 하면 지나치게 어두워짐
+        // Blender MTL의 Kd는 이미 리니어 값인데 MTLLoader가 sRGB로 간주해 리니어로 변환하면서
+        // 이중으로 어두워짐 → 변환을 되돌려 원래 리니어 값을 복원
+        if (m.color) m.color.convertLinearToSRGB();
         if ('specular' in m) m.specular.setScalar(0.03);
         if ('shininess' in m) m.shininess = 4;
       }
@@ -293,6 +299,18 @@ async function build() {
     } catch (err) { console.warn('town load fail', name, err); }
   }));
   // 주택·여관·마구간 (Quaternius Medieval Village, CC0 — 공식 팩 페이지 문구 직접 확인)
+  const only = params.get('only'); // 격리 렌더 검증용
+  if (only) {
+    const o = await loadObj(only);
+    scene.add(o);
+    const bb = new THREE.Box3().setFromObject(o);
+    console.log('only-bbox', JSON.stringify(bb.min), JSON.stringify(bb.max));
+    state.ready = true;
+    window.__gameReady = true;
+    state.anim = { play() {}, playOnce() {}, update() {}, names: [], current: '' };
+    state.player = new THREE.Object3D();
+    return;
+  }
   const houses = [
     ['House_1', -22, -6, Math.PI / 2, 4.2, 2.6],
     ['House_2', 22, -6, -Math.PI / 2, 4.2, 2.6],
@@ -476,7 +494,7 @@ function loadGame() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return;
     const s = JSON.parse(raw);
-    state.player.position.set(s.x || 0, 0, s.z || 0);
+    state.player.position.set(s.x ?? 0, 0, s.z ?? 8); // 기본 스폰은 마을 남쪽 빈터(시장 노점 북쪽 8m)
     state.heading = s.heading || 0;
     state.player.rotation.y = state.heading;
     state.hp = s.hp ?? state.maxHp;
@@ -654,7 +672,7 @@ function playerDie() {
 }
 function respawn() {
   state.dead = false; state.hp = state.maxHp;
-  state.player.position.set(0, 0, 0);
+  state.player.position.set(0, 0, 8);
   state.anim.play('Idle');
   document.getElementById('over').style.display = 'none';
 }
@@ -736,14 +754,19 @@ function tick() {
       qEl.style.display = 'none';
     }
 
-    // 카메라
+    // 카메라 (?cam=px,py,pz 고정 시점 — 촬영용)
     const p = state.player.position;
-    const dist = 5.2, h = 1.6 + Math.sin(camPitch) * 3.2;
-    camera.position.lerp(new THREE.Vector3(
-      p.x - Math.sin(camYaw) * Math.cos(camPitch) * dist, h,
-      p.z - Math.cos(camYaw) * Math.cos(camPitch) * dist
-    ), Math.min(1, dt * 8));
-    camera.lookAt(p.x, p.y + 1.4, p.z);
+    if (fixedCam) {
+      camera.position.set(fixedCam[0], fixedCam[1], fixedCam[2]);
+      camera.lookAt(fixedCam[3] ?? p.x, fixedCam[4] ?? 1, fixedCam[5] ?? p.z);
+    } else {
+      const dist = 5.2, h = 1.6 + Math.sin(camPitch) * 3.2;
+      camera.position.lerp(new THREE.Vector3(
+        p.x - Math.sin(camYaw) * Math.cos(camPitch) * dist, h,
+        p.z - Math.cos(camYaw) * Math.cos(camPitch) * dist
+      ), Math.min(1, dt * 8));
+      camera.lookAt(p.x, p.y + 1.4, p.z);
+    }
     sun.position.set(p.x + 20, 30, p.z + 12);
     sun.target.position.copy(p);
     sun.target.updateMatrixWorld();
@@ -780,9 +803,11 @@ addEventListener('resize', () => {
 
 // 스크린샷 검증용: ?demo=walk|running 이면 자동 전진, ?tp=x,z 텔레포트, ?reset=1 세이브 초기화
 const params = new URLSearchParams(location.search);
+if (innerWidth < 640) document.getElementById('msg').textContent = 'WASD/스틱 이동 · Space/버튼 공격 · 드래그 시점';
 const demo = params.get('demo');
 if (demo) setTimeout(() => keys.add('KeyW'), 1500);
 if (demo === 'running') setTimeout(() => keys.add('ShiftLeft'), 1500);
+const fixedCam = params.get('cam') ? params.get('cam').split(',').map(Number) : null;
 const tp = params.get('tp');
 if (tp) {
   const [tx, tz] = tp.split(',').map(Number);
