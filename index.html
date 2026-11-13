@@ -47,6 +47,27 @@
       border: 1px solid rgba(255,255,255,.4); z-index: 11; cursor: pointer;
       user-select: none; -webkit-user-select: none;
     }
+    #auto {
+      position: fixed; top: 44px; right: 10px; padding: 6px 10px; border-radius: 14px;
+      background: rgba(70,40,20,.7); color: #fff; font: 600 12px 'Noto Sans KR', sans-serif;
+      border: 1px solid rgba(255,255,255,.4); z-index: 11; cursor: pointer;
+      user-select: none; -webkit-user-select: none;
+    }
+    #auto.on { background: rgba(160,80,20,.85); }
+    #gold {
+      position: fixed; left: 8px; bottom: 8px; color: #ffe9a8; font: 600 13px 'Noto Sans KR', sans-serif;
+      background: rgba(0,0,0,.35); padding: 5px 10px; border-radius: 6px;
+      pointer-events: none; z-index: 10; display: none;
+    }
+    .cbtn {
+      position: fixed; right: 26px; width: 56px; height: 56px; border-radius: 50%;
+      color: #fff; font: 700 12px 'Noto Sans KR', sans-serif;
+      display: flex; align-items: center; justify-content: center; z-index: 11;
+      border: 2px solid rgba(255,255,255,.6); user-select: none; -webkit-user-select: none;
+      text-align: center;
+    }
+    #dodge { bottom: 146px; background: rgba(60,90,180,.75); }
+    #pot { bottom: 214px; background: rgba(160,60,140,.75); }
     #over {
       position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
       background: rgba(0,0,0,.55); color: #fff; font: 700 20px 'Noto Sans KR', sans-serif;
@@ -60,9 +81,30 @@
       user-select: none; -webkit-user-select: none;
     }
     #quest {
-      position: fixed; top: 46px; right: 8px; color: #fff; font: 12px/1.5 'Noto Sans KR', sans-serif;
+      position: fixed; top: 78px; right: 8px; color: #fff; font: 12px/1.5 'Noto Sans KR', sans-serif;
       background: rgba(0,0,0,.35); padding: 6px 10px; border-radius: 6px;
       pointer-events: none; z-index: 10; display: none; text-align: right;
+    }
+    #nav {
+      position: fixed; top: 120px; right: 8px; color: #ffe9a8; font: 12px/1.5 'Noto Sans KR', sans-serif;
+      background: rgba(0,0,0,.35); padding: 4px 10px; border-radius: 6px;
+      pointer-events: none; z-index: 10; display: none; text-align: right;
+    }
+    #nav .arrow { display: inline-block; font-size: 13px; }
+    #tut {
+      position: fixed; top: 34px; left: 50%; transform: translateX(-50%);
+      display: none; color: #fff; font: 13px/1.6 'Noto Sans KR', sans-serif; text-align: center;
+      background: rgba(20,40,80,.85); padding: 8px 16px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.4); z-index: 12; max-width: 80vw;
+    }
+    #tut .skip {
+      display: block; margin-top: 2px; font-size: 10px; opacity: .75;
+      cursor: pointer; pointer-events: auto; text-decoration: underline;
+    }
+    #toast {
+      position: fixed; top: 110px; left: 50%; transform: translateX(-50%);
+      color: #ffe9a8; font: 600 14px 'Noto Sans KR', sans-serif; z-index: 12;
+      pointer-events: none; opacity: 0; transition: opacity .3s; text-shadow: 0 1px 3px #000;
     }
     #dlg {
       position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%);
@@ -81,7 +123,15 @@
     @media (max-width: 640px) {
       #hud { font-size: 10px; padding: 4px 6px; }
       #hpwrap { top: auto; bottom: 52px; left: 8px; transform: none; width: 130px; height: 10px; }
-      #quest { top: 42px; font-size: 10px; padding: 4px 6px; max-width: 40vw; }
+      #quest { top: 66px; font-size: 10px; padding: 4px 6px; max-width: 40vw; }
+      #nav { top: 100px; font-size: 10px; padding: 3px 8px; }
+      #auto { top: 38px; font-size: 10px; padding: 5px 8px; }
+      #gold { bottom: 66px; font-size: 11px; padding: 4px 8px; }
+      .cbtn { width: 46px; height: 46px; right: 16px; font-size: 10px; }
+      #dodge { bottom: 104px; }
+      #pot { bottom: 158px; }
+      #tut { top: 8px; font-size: 11px; padding: 6px 12px; max-width: 56vw; }
+      #toast { top: 96px; font-size: 12px; }
       #msg { font-size: 10px; bottom: 8px; padding: 4px 8px; max-width: 70vw; }
       #atk { width: 56px; height: 56px; right: 14px; bottom: 40px; font-size: 12px; }
       #prompt { bottom: 96px; font-size: 11px; padding: 6px 12px; }
@@ -93,13 +143,20 @@
   <div id="app"></div>
   <div id="loading"><div class="ttl">바람 언덕의 유랑자</div><div id="loadmsg">불러오는 중…</div></div>
   <div id="hud"></div>
-  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격 · 드래그 시점 (모바일: 왼쪽 이동 · 오른쪽 시점 · 빨간 버튼 공격)</div>
+  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격(길게 강공격) · Q 회피 · R 물약 · T 자동 전투 · 드래그 시점</div>
   <div id="hpwrap"><div id="hpfill"></div></div>
   <div id="atk">공격</div>
   <div id="snd">소리 끔</div>
+  <div id="auto">자동 전투 OFF</div>
+  <div id="gold"></div>
+  <div id="dodge" class="cbtn">회피</div>
+  <div id="pot" class="cbtn">물약 0</div>
   <div id="over">쓰러졌습니다<br><span style="font-size:14px;font-weight:400">탭하면 마을에서 다시 일어납니다</span></div>
   <div id="prompt">E · 대화하기</div>
   <div id="quest"></div>
+  <div id="nav"><span class="arrow" id="navarrow">▲</span> <span id="navtext"></span></div>
+  <div id="tut"><span id="tuttext"></span><span class="skip" id="tutskip">건너뛰기</span></div>
+  <div id="toast"></div>
   <div id="dlg"><h3 id="dlg-name"></h3><div id="dlg-text"></div><div class="btns" id="dlg-btns"></div></div>
   <script type="module" src="/src/main.js"></script>
 </body>
