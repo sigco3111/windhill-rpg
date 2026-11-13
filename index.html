@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>바람 언덕의 유랑자 - 프로토타입</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <title>바람 언덕의 유랑자 - 프로토타입</title>
   <link rel="stylesheet" href="/fonts/fonts.css" />
   <style>
     html, body { margin: 0; padding: 0; overflow: hidden; background: #87b5d9; touch-action: none; font-family: 'Noto Sans KR', sans-serif; }
@@ -36,6 +37,41 @@
       background: rgba(0,0,0,.55); color: #fff; font: 700 20px 'Noto Sans KR', sans-serif;
       z-index: 20; text-align: center; cursor: pointer;
     }
+    #prompt {
+      position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%);
+      display: none; color: #fff; font: 600 13px 'Noto Sans KR', sans-serif;
+      background: rgba(20,60,120,.8); padding: 8px 16px; border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.5); z-index: 12; cursor: pointer;
+      user-select: none; -webkit-user-select: none;
+    }
+    #quest {
+      position: fixed; top: 8px; right: 8px; color: #fff; font: 12px/1.5 'Noto Sans KR', sans-serif;
+      background: rgba(0,0,0,.35); padding: 6px 10px; border-radius: 6px;
+      pointer-events: none; z-index: 10; display: none; text-align: right;
+    }
+    #dlg {
+      position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%);
+      display: none; width: min(420px, 92vw); background: rgba(18,22,30,.92);
+      border: 1px solid rgba(255,255,255,.25); border-radius: 10px; padding: 14px 16px;
+      color: #eee; font: 14px/1.6 'Noto Sans KR', sans-serif; z-index: 25;
+    }
+    #dlg h3 { margin: 0 0 6px; font-size: 15px; color: #ffd98a; }
+    #dlg .btns { margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end; }
+    #dlg button {
+      font: 600 13px 'Noto Sans KR', sans-serif; color: #fff; background: #3a6db5;
+      border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer;
+    }
+    #dlg button.sub { background: #555; }
+    /* 작은 화면: HUD 겹침·가림 방지 */
+    @media (max-width: 640px) {
+      #hud { font-size: 10px; padding: 4px 6px; }
+      #hpwrap { top: auto; bottom: 52px; left: 8px; transform: none; width: 130px; height: 10px; }
+      #quest { top: 6px; font-size: 10px; padding: 4px 6px; max-width: 40vw; }
+      #msg { font-size: 10px; bottom: 8px; padding: 4px 8px; max-width: 70vw; }
+      #atk { width: 56px; height: 56px; right: 14px; bottom: 40px; font-size: 12px; }
+      #prompt { bottom: 96px; font-size: 11px; padding: 6px 12px; }
+      #dlg { bottom: 40px; font-size: 12px; padding: 10px 12px; }
+    }
   </style>
 </head>
 <body>
@@ -45,6 +81,9 @@
   <div id="hpwrap"><div id="hpfill"></div></div>
   <div id="atk">공격</div>
   <div id="over">쓰러졌습니다<br><span style="font-size:14px;font-weight:400">탭하면 마을에서 다시 일어납니다</span></div>
+  <div id="prompt">E · 대화하기</div>
+  <div id="quest"></div>
+  <div id="dlg"><h3 id="dlg-name"></h3><div id="dlg-text"></div><div class="btns" id="dlg-btns"></div></div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
