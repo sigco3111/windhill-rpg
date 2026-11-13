@@ -27,6 +27,7 @@ mkdir -p "$TMP/kaykit-skeletons" && unzip -q -o "$TMP/s-full.zip" -d "$TMP/kayki
 
 mkdir -p public/assets/characters public/assets/nature/gltf public/assets/town public/fonts
 cp "$TMP/kaykit-adventurers/addons/kaykit_character_pack_adventures/Characters/gltf/Knight.glb" public/assets/characters/
+cp "$TMP/kaykit-adventurers/addons/kaykit_character_pack_adventures/Characters/gltf/Mage.glb" public/assets/characters/
 cp "$TMP/kaykit-skeletons/addons/kaykit_character_pack_skeletons/Characters/gltf/Skeleton_Minion.glb" public/assets/characters/
 cp "$TMP/kaykit-skeletons/addons/kaykit_character_pack_skeletons/Characters/gltf/Skeleton_Warrior.glb" public/assets/characters/
 mkdir -p public/assets/dungeon
