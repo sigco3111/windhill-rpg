@@ -16,6 +16,50 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87b5d9);
 scene.fog = new THREE.Fog(0x87b5d9, 40, 120);
 
+// ---------- 날씨 (비) ----------
+const RAIN_N = 700;
+const rainGeo = new THREE.BufferGeometry();
+{
+  const arr = new Float32Array(RAIN_N * 3);
+  for (let i = 0; i < RAIN_N; i++) {
+    arr[i * 3] = (Math.random() - 0.5) * 40;
+    arr[i * 3 + 1] = Math.random() * 18;
+    arr[i * 3 + 2] = (Math.random() - 0.5) * 40;
+  }
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+}
+const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0x9db8d8, size: 0.12, transparent: true, opacity: 0.75 }));
+rain.visible = false;
+rain.frustumCulled = false;
+scene.add(rain);
+const weather = { mode: 'clear', until: 0, nextAt: 70 + Math.random() * 60 };
+const _skyCol = new THREE.Color();
+function updateWeather(dt, now) {
+  if (weather.mode === 'clear' && now >= weather.nextAt) {
+    weather.mode = 'rain';
+    weather.until = now + 35 + Math.random() * 15;
+    toast('비가 내리기 시작합니다');
+  } else if (weather.mode === 'rain' && now >= weather.until) {
+    weather.mode = 'clear';
+    weather.nextAt = now + 80 + Math.random() * 80;
+    toast('비가 그쳤습니다');
+  }
+  const raining = weather.mode === 'rain';
+  rain.visible = raining;
+  _skyCol.setHex(raining ? 0x5f7a8d : 0x87b5d9);
+  scene.background.lerp(_skyCol, Math.min(1, dt * 0.8));
+  scene.fog.color.copy(scene.background);
+  if (raining && state.player) {
+    rain.position.copy(state.player.position);
+    const arr = rainGeo.attributes.position.array;
+    for (let i = 0; i < RAIN_N; i++) {
+      arr[i * 3 + 1] -= 14 * dt;
+      if (arr[i * 3 + 1] < 0) arr[i * 3 + 1] += 18;
+    }
+    rainGeo.attributes.position.needsUpdate = true;
+  }
+}
+
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 300);
 // 세로 화면(모바일 포트레잇)에서는 수평 시야가 좁아지므로 FOV를 넓힘
 function applyCamFraming() {
@@ -328,6 +372,13 @@ let toastTimer = 0;
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
+  // 튜토리얼이 떠 있으면 그 아래로 내려 겹침 방지 (토스트가 여러 줄이어도 안전)
+  const tutEl = document.getElementById('tut');
+  if (tutEl && tutEl.style.display !== 'none' && getComputedStyle(tutEl).display !== 'none') {
+    el.style.top = `${Math.round(tutEl.getBoundingClientRect().bottom + 8)}px`;
+  } else {
+    el.style.top = '';
+  }
   el.style.opacity = '1';
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.style.opacity = '0'; }, 1500);
@@ -849,6 +900,7 @@ async function build() {
     setFlowersSold(n) { state.flowersSold = n; },
     setMat(name, n) { state.mats[name] = n; },
     setDialog(v) { state.dialog = !!v; },
+    setRain(sec) { weather.mode = 'rain'; weather.until = clock.elapsedTime + sec; },
     flowerPos(i) { return state.flowers ? state.flowers[i].root.position.toArray() : null; },
     debug() { return { dungeon: { ...DUNGEON }, colliders, hp: state.hp, dead: state.dead, dialog: state.dialog }; },
   };
@@ -1922,6 +1974,7 @@ function tick() {
     updateFlowers(dt, now);
     updateChests();
     checkAch();
+    updateWeather(dt, now);
 
     // NPC들: 대기 애니메이션 + 근접 시 대화 프롬프트
     let npcNear = false;
@@ -2031,7 +2084,7 @@ function tick() {
     quest: state.quest.state, qidx: state.quest.idx, qprog: questProgress(), dialog: state.dialog,
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
-    bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
+    bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
