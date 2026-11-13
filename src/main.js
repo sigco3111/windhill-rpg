@@ -299,7 +299,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
-  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, // 도감: 종류별 처치 수 / mats: 재료 보유
+  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
@@ -307,13 +307,13 @@ const state = {
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
 };
 // 장비 효과표 (등급 0=없음)
-const GEAR_ATK = [0, 4, 9];        // 검: 공격력 추가
-const GEAR_DEF = [0, 2, 4];        // 갑옷: 받는 피해 감소(최소 1)
-const GEAR_SPD = [1, 1.12, 1.25];  // 부츠: 이동속도 배율
+const GEAR_ATK = [0, 4, 9, 15];        // 검: 공격력 추가
+const GEAR_DEF = [0, 2, 4, 6];         // 갑옷: 받는 피해 감소(최소 1)
+const GEAR_SPD = [1, 1.12, 1.25, 1.4]; // 부츠: 이동속도 배율
 const GEAR_SHOP = [
-  { key: 'sword', names: ['강철 검', '기사의 검'], prices: [80, 200], desc: ['공격력 +4', '공격력 +9'] },
-  { key: 'armor', names: ['가죽 갑옷', '철 갑옷'], prices: [60, 150], desc: ['받는 피해 -2', '받는 피해 -4'] },
-  { key: 'boots', names: ['바람 부츠', '폭풍 부츠'], prices: [100, 220], desc: ['이동속도 +12%', '이동속도 +25%'] },
+  { key: 'sword', names: ['강철 검', '기사의 검', '폭풍의 검'], prices: [80, 200, 300], desc: ['공격력 +4', '공격력 +9', '공격력 +15'], mats: [null, null, [['투구 파편', 3]]] },
+  { key: 'armor', names: ['가죽 갑옷', '철 갑옷', '뼈 갑옷'], prices: [60, 150, 250], desc: ['받는 피해 -2', '받는 피해 -4', '받는 피해 -6'], mats: [null, null, [['뼈 조각', 5]]] },
+  { key: 'boots', names: ['바람 부츠', '폭풍 부츠', '천둥 부츠'], prices: [100, 220, 280], desc: ['이동속도 +12%', '이동속도 +25%', '이동속도 +40%'], mats: [null, null, [['거미줄', 4]]] },
 ];
 const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4, skel: true, label: '스켈레톤', windup: 0.45, gold: 5, teleH: 1.9 };
 const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2, skel: true, warrior: true, label: '스켈레톤 전사', windup: 0.55, combo: true, gold: 12, teleH: 2.1 };
@@ -848,6 +848,7 @@ async function build() {
     setFlowers(n) { state.flowerCount = n; },
     setFlowersSold(n) { state.flowersSold = n; },
     setMat(name, n) { state.mats[name] = n; },
+    setDialog(v) { state.dialog = !!v; },
     flowerPos(i) { return state.flowers ? state.flowers[i].root.position.toArray() : null; },
     debug() { return { dungeon: { ...DUNGEON }, colliders, hp: state.hp, dead: state.dead, dialog: state.dialog }; },
   };
@@ -916,8 +917,8 @@ const dlgEl = () => document.getElementById('dlg');
 function questProgress() { const d = QUESTS[state.quest.idx]; return d ? Math.min(questCounter(state.quest) - state.quest.startKills, d.goal) : 0; }
 function tryInteract() {
   if (!state.ready || state.dead || state.dialog) return;
-  if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { openDialog(); return; }
-  if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) openCollectorDialog();
+  if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { state.dlgFocus = state.npc.pos; openDialog(); return; }
+  if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); }
 }
 function openDialog() {
   state.dialog = true;
@@ -1016,7 +1017,10 @@ function openShop() {
   const gearBtns = GEAR_SHOP.map((g) => mkRow('', '', () => {
     const lvl = state.gear[g.key];
     if (lvl >= g.names.length || state.gold < g.prices[lvl]) return;
+    const req = g.mats && g.mats[lvl];
+    if (req && !req.every(([mn, n]) => (state.mats[mn] || 0) >= n)) return;
     state.gold -= g.prices[lvl];
+    if (req) for (const [mn, n] of req) state.mats[mn] -= n;
     state.gear[g.key] = lvl + 1;
     sfx('reward', 1);
     toast(`${g.names[lvl]}을(를) 장착했습니다`);
@@ -1039,9 +1043,11 @@ function openShop() {
         return;
       }
       const ownedPrev = lvl > 0 ? ` <small>(보유: ${g.names[lvl - 1]})</small>` : '';
-      rows[i + 1].info.innerHTML = `${g.names[lvl]} <small>${g.desc[lvl]}</small>${ownedPrev}`;
-      b.textContent = `${g.prices[lvl]}G`;
-      b.disabled = state.gold < g.prices[lvl];
+      const req = g.mats && g.mats[lvl];
+      const reqStr = req ? ` · 재료: ${req.map(([mn, n]) => `${mn}×${n}(보유 ${state.mats[mn] || 0})`).join(', ')}` : '';
+      rows[i + 1].info.innerHTML = `${g.names[lvl]} <small>${g.desc[lvl]}${reqStr}</small>${ownedPrev}`;
+      b.textContent = `${g.prices[lvl]}G${req ? ' + 재료' : ''}`;
+      b.disabled = state.gold < g.prices[lvl] || (req && !req.every(([mn, n]) => (state.mats[mn] || 0) >= n));
     });
   };
   const back = document.createElement('button');
@@ -1197,6 +1203,7 @@ function openCollectorDialog() {
   document.getElementById('dlgback').style.display = 'block';
 }
 function closeDialog() {
+  state.dlgFocus = null;
   state.dialog = false;
   dlgEl().style.display = 'none';
   document.getElementById('dlgback').style.display = 'none';
@@ -1461,6 +1468,7 @@ const ACH = [
   { id: 'elite3', name: '엘리트 사냥꾼 (엘리트 3마리)', cond: () => (state.eliteKills || 0) >= 3 },
   { id: 'lvl5', name: '모험가 (레벨 5)', cond: () => (state.level || 1) >= 5 },
   { id: 'geared', name: '무장한 유랑자 (장비 3종)', cond: () => state.gear.sword >= 1 && state.gear.armor >= 1 && state.gear.boots >= 1 },
+  { id: 'legend', name: '전설의 유랑자 (최고 등급 3종)', cond: () => state.gear.sword >= 3 && state.gear.armor >= 3 && state.gear.boots >= 3 },
   { id: 'rich300', name: '부유한 유랑자 (300G)', cond: () => state.gold >= 300 },
 ];
 function checkAch() {
@@ -1731,7 +1739,11 @@ function updateEnemy(e, dt, now) {
   const d = to.length();
 
   if (e.tele && e.tele.visible && e.teleUntil && now > e.teleUntil) e.tele.visible = false;
-  if (state.dead) { e.mode = 'wander'; }
+  if (state.dead || state.dialog) {
+    e.mode = 'wander';
+    // 대화 중에는 공격 중단: 예고·예약 피격·돌진 취소 (닫히면 재추적)
+    if (state.dialog && (e.pendingHit || e.combo2 || e.leapFrom)) { e.pendingHit = 0; e.combo2 = 0; e.leapFrom = null; if (e.tele) e.tele.visible = false; }
+  }
   else if (d < e.stats.range) {
     e.mode = 'attack';
     if (now >= e.cdUntil) {
@@ -1952,6 +1964,17 @@ function tick() {
     if (fixedCam) {
       camera.position.set(fixedCam[0], fixedCam[1], fixedCam[2]);
       camera.lookAt(fixedCam[3] ?? p.x, fixedCam[4] ?? 1, fixedCam[5] ?? p.z);
+    } else if (state.dialog && state.dlgFocus) {
+      // 대화 구도: 플레이어와 NPC가 나란히 보이게 측면 카메라 (정면 접근 시 가려짐 방지)
+      const f = state.dlgFocus;
+      const mx = (p.x + f.x) / 2, mz = (p.z + f.z) / 2;
+      const ddx = f.x - p.x, ddz = f.z - p.z;
+      const dl = Math.hypot(ddx, ddz) || 1;
+      const px = -ddz / dl, pz = ddx / dl;
+      const side = (camera.position.x - mx) * px + (camera.position.z - mz) * pz >= 0 ? 1 : -1;
+      const want = new THREE.Vector3(mx + px * 4.2 * side, 2.5, mz + pz * 4.2 * side);
+      camera.position.lerp(want, Math.min(1, dt * 3.5));
+      camera.lookAt(mx, 1.1, mz);
     } else {
       const portrait = innerWidth / innerHeight < 0.9;
       const dist = portrait ? 7.8 : 5.2;
