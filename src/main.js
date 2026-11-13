@@ -299,7 +299,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
-  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, boss: null,
+  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, boss: null, dex: {}, // 도감: 종류별 처치 수
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
@@ -1034,6 +1034,10 @@ function openInv() {
     const gearOwned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? `${g.names[state.gear[g.key] - 1]}(${g.key === 'sword' ? '검' : g.key === 'armor' ? '갑옷' : '부츠'})` : null).filter(Boolean);
     list.innerHTML =
       `<div class="shoprow"><div class="info">장비 <small>${gearOwned.length ? gearOwned.join(', ') : '없음'}</small></div></div>` +
+      `<div class="shoprow"><div class="info"><b>몬스터 도감 ${Object.keys(state.dex).length}종</b></div></div>` +
+      (Object.keys(state.dex).length
+        ? Object.entries(state.dex).sort((a, b) => b[1] - a[1]).map(([label, n]) => `<div class="shoprow"><div class="info">${label} <small>${n}마리 처치</small></div></div>`).join('')
+        : '<div class="shoprow"><div class="info"><small>아직 처치한 몬스터가 없습니다</small></div></div>') +
       `<div class="shoprow"><div class="info"><b>업적 ${Object.keys(state.ach).length}/${ACH.length}</b></div></div>` +
       ACH.map((a) => `<div class="shoprow"><div class="info">${state.ach[a.id] ? '<b style="color:#8fd68f">[달성]</b>' : '<small>[미달성]</small>'} ${a.name}</div></div>`).join('');
   };
@@ -1112,7 +1116,7 @@ function saveGame() {
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
-      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0,
+      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, dex: state.dex,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -1136,6 +1140,7 @@ function loadGame() {
     state.bossKills = s.bossKills || 0;
     state.eliteKills = s.eliteKills || 0;
     state.flowerCount = s.flowerCount || 0;
+    state.dex = s.dex || {};
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.chestsOpened = s.chestsOpened || [];
     if (s.gear) state.gear = { sword: s.gear.sword || 0, armor: s.gear.armor || 0, boots: s.gear.boots || 0 };
@@ -1586,6 +1591,7 @@ function playerAttackHit() {
       sfx('death', 0.9);
       e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
       state.kills++;
+      state.dex[e.stats.label] = (state.dex[e.stats.label] || 0) + 1;
       if (e.stats.skel) state.skKills++;
       if (e.stats.warrior) state.wKills++;
       if (e.stats.boss) state.bossKills++;
@@ -1896,7 +1902,7 @@ function tick() {
     bossHp: state.boss ? state.boss.hp : null, bossDead: state.boss ? state.boss.dead : null,
     bossPos: state.boss ? state.boss.root.position.toArray().map((v) => +v.toFixed(1)) : null,
     now: +clock.elapsedTime.toFixed(2), atkUntil: +(state.attackUntil || 0).toFixed(2), cdUntil: +(state.attackCdUntil || 0).toFixed(2), didHit: state.didHit,
-    eliteKills: state.eliteKills || 0,
+    eliteKills: state.eliteKills || 0, dex: { ...state.dex },
     enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1), tele: !!(e.tele && e.tele.visible), elite: !!e.stats.elite, label: e.stats.label, pos: e.root.position.toArray().map((v) => +v.toFixed(1)) })),
   } : null;
   window.__camDbg = { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: camera.fov, yaw: +camYaw.toFixed(2), pitch: +camPitch.toFixed(2), w: innerWidth, h: innerHeight };
