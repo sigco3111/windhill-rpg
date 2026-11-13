@@ -210,6 +210,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') usePotion();
   if (e.code === 'KeyT') toggleAuto();
   if (e.code === 'KeyI') toggleInv();
+  if (e.code === 'KeyM') toggleMinimap();
 });
 addEventListener('keyup', (e) => {
   if (e.code === 'Space' && state.chargeStart >= 0) {
@@ -1057,6 +1058,41 @@ function toggleInv() {
   if (state.dialog) return; // 다른 대화·상점이 열려 있으면 열지 않음
   openInv();
 }
+// ---------- 미니맵 (M 키로 켜기/끄기, 탭하면 크기 전환) ----------
+const mmap = document.getElementById('minimap');
+const mctx = mmap.getContext('2d');
+const MMAP_RANGE = 85; // 플레이어 중심 ±85m 표시
+let mmapLast = -1;
+function toggleMinimap() { mmap.classList.toggle('off'); }
+mmap.addEventListener('click', (e) => { e.stopPropagation(); mmap.classList.toggle('big'); });
+mmap.addEventListener('touchstart', (e) => { e.stopPropagation(); mmap.classList.toggle('big'); }, { passive: true });
+function drawMinimap() {
+  if (mmap.classList.contains('off')) return;
+  const now = clock.elapsedTime;
+  if (now - mmapLast < 0.25) return;
+  mmapLast = now;
+  const W = mmap.width, H = mmap.height, cx = W / 2, cz = H / 2;
+  const p = state.player.position;
+  const px = (x) => cx + ((x - p.x) / MMAP_RANGE) * (W / 2);
+  const pz = (z) => cz + ((z - p.z) / MMAP_RANGE) * (H / 2);
+  mctx.clearRect(0, 0, W, H);
+  const dot = (x, z, color, r) => { mctx.fillStyle = color; mctx.beginPath(); mctx.arc(px(x), pz(z), r, 0, Math.PI * 2); mctx.fill(); };
+  if (DUNGEON.half) {
+    mctx.strokeStyle = 'rgba(150,120,255,.7)';
+    mctx.strokeRect(px(DUNGEON.cx - DUNGEON.half), pz(DUNGEON.cz - DUNGEON.half), ((DUNGEON.half * 2) / MMAP_RANGE) * (W / 2), ((DUNGEON.half * 2) / MMAP_RANGE) * (H / 2));
+  }
+  if (state.chests) for (const c of state.chests) if (!c.opened) dot(c.x, c.z, '#ffd94d', 3);
+  if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
+  if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
+  for (const e of state.enemies) { if (e.dead) continue; dot(e.root.position.x, e.root.position.z, e.stats.elite ? '#ff9040' : '#ff5555', e.stats.elite ? 3.5 : 2.5); }
+  if (state.boss && !state.boss.dead) dot(state.boss.root.position.x, state.boss.root.position.z, '#c080ff', 4);
+  mctx.save();
+  mctx.translate(cx, cz);
+  mctx.rotate(Math.PI - state.heading);
+  mctx.fillStyle = '#fff';
+  mctx.beginPath(); mctx.moveTo(0, -5); mctx.lineTo(3.5, 4); mctx.lineTo(-3.5, 4); mctx.closePath(); mctx.fill();
+  mctx.restore();
+}
 function closeDialog() {
   state.dialog = false;
   dlgEl().style.display = 'none';
@@ -1824,6 +1860,7 @@ function tick() {
 
     hpbar.style.width = `${(state.hp / state.maxHp) * 100}%`;
     hpbar.style.background = state.hp > 40 ? '#5ad06a' : '#e05252';
+    drawMinimap();
     // 골드/물약 표시
     const goldEl = document.getElementById('gold');
     goldEl.style.display = (state.gold > 0 || state.potions > 0) ? 'block' : 'none';
@@ -1850,7 +1887,7 @@ function tick() {
     hp: state.hp, maxHp: state.maxHp, dead: state.dead, kills: state.kills, dmg: PLAYER.dmg,
     quest: state.quest.state, qidx: state.quest.idx, qprog: questProgress(), dialog: state.dialog,
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
-    gold: state.gold, potions: state.potions, autoOn: state.autoOn, inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
+    gold: state.gold, potions: state.potions, autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
