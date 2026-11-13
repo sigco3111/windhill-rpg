@@ -17,6 +17,7 @@ fetch() { # name url
 fetch kaykit-adventurers "$BASE/v1.1/kaykit-adventurers-1.0.zip"
 fetch kaykit-forest-nature "$BASE/v8.13/kaykit-forest-nature-pack.zip"
 fetch fantasy-town "$BASE/v1.0/fantasy-town-kit-1.0.zip"
+fetch kaykit-dungeon "$BASE/v1.1/kaykit-dungeon-remastered-1.0.zip"
 # KayKit Skeletons는 분할 zip이라 결합이 필요하다
 curl -sSL -o "$TMP/s.zip"  "$BASE/v2.0/kaykit-skeletons-1.0.zip"
 curl -sSL -o "$TMP/s.z01" "$BASE/v2.0/kaykit-skeletons-1.0.z01"
@@ -27,6 +28,9 @@ mkdir -p "$TMP/kaykit-skeletons" && unzip -q -o "$TMP/s-full.zip" -d "$TMP/kayki
 mkdir -p public/assets/characters public/assets/nature/gltf public/assets/town public/fonts
 cp "$TMP/kaykit-adventurers/addons/kaykit_character_pack_adventures/Characters/gltf/Knight.glb" public/assets/characters/
 cp "$TMP/kaykit-skeletons/addons/kaykit_character_pack_skeletons/Characters/gltf/Skeleton_Minion.glb" public/assets/characters/
+cp "$TMP/kaykit-skeletons/addons/kaykit_character_pack_skeletons/Characters/gltf/Skeleton_Warrior.glb" public/assets/characters/
+mkdir -p public/assets/dungeon
+cp "$TMP/kaykit-dungeon/addons/kaykit_dungeon_remastered/Assets/gltf/"*.glb public/assets/dungeon/
 N="$TMP/kaykit-forest-nature/KayKit_Forest_Nature_Pack_1.0_FREE"
 cp $N/Assets/gltf/Tree_1_*.gltf $N/Assets/gltf/Tree_1_*.bin \
    $N/Assets/gltf/Tree_2_E_Color1.* \
