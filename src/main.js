@@ -345,7 +345,7 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
   level: 1, xp: 0,
-  bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [],
+  bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
@@ -641,6 +641,7 @@ async function build() {
   spawn(skel, FSKEL, 30, 8);
   spawn(skel, FSKEL, -8, 32);
   state.spawn = spawn;
+  state.spawnTrial = (stats, x, z) => { const e = spawn(skel, stats, x, z); e.trial = true; return e; };
 
 
   // 마을 (Kenney Fantasy Town Kit, CC0)
@@ -837,6 +838,7 @@ async function build() {
   // 보물상자 (탐험 요소) — 언덕 곳곳 5개
   buildChests();
   buildShrines();
+  buildTrialStone();
 
   // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
   try {
@@ -995,7 +997,8 @@ function questProgress() { const d = QUESTS[state.quest.idx]; return d ? Math.mi
 function tryInteract() {
   if (!state.ready || state.dead || state.dialog) return;
   if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { state.dlgFocus = state.npc.pos; openDialog(); return; }
-  if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); }
+  if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); return; }
+  if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); }
 }
 function openDialog() {
   state.dialog = true;
@@ -1330,7 +1333,7 @@ function saveGame() {
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
-      bounty: state.bounty, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      bounty: state.bounty, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1363,6 +1366,7 @@ function loadGame() {
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.chestsOpened = s.chestsOpened || [];
     state.shrinesPrayed = s.shrinesPrayed || [];
+    state.trialDone = s.trialDone || 0;
     if (state.shrines) state.shrines.forEach((r, i) => { r.prayed = state.shrinesPrayed.includes(i); r.beam.visible = !r.prayed; });
     if (s.gear) state.gear = { sword: s.gear.sword || 0, armor: s.gear.armor || 0, boots: s.gear.boots || 0 };
     if (s.ach) state.ach = s.ach;
@@ -1568,6 +1572,110 @@ function updateChests() {
   }
 }
 
+// ---------- 시련의 돌: 3연속 웨이브 도전 (전투 콘텐츠) ----------
+const TRIAL_POS = { x: -26, z: 6 };
+const TRIAL_WAVES = [
+  { mobs: [[ENEMY, 3]], label: '스켈레톤 3마리' },
+  { mobs: [[ENEMY, 2], [FSKEL, 2]], label: '스켈레톤 2 + 서리 스켈레톤 2' },
+  { mobs: [[{ ...ENEMY, hp: 60, dmg: 10, gold: 20, label: '시련 수호자', tint: 0xd4a017, emis: 0x2a1f00 }, 1]], label: '시련 수호자' },
+];
+function buildTrialStone() {
+  const root = new THREE.Group();
+  const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.0), new THREE.MeshLambertMaterial({ color: 0x6b7280 }));
+  rock.scale.set(1, 1.7, 1); rock.position.y = 1.5; rock.castShadow = true; root.add(rock);
+  const rune = new THREE.Mesh(new THREE.TorusGeometry(1.9, 0.1, 8, 32), new THREE.MeshBasicMaterial({ color: 0xffc84a }));
+  rune.rotation.x = -Math.PI / 2; rune.position.y = 0.06; root.add(rune);
+  const glow = new THREE.Mesh(new THREE.OctahedronGeometry(0.3), new THREE.MeshBasicMaterial({ color: 0xffc84a }));
+  glow.position.y = 3.6; root.add(glow);
+  root.position.set(TRIAL_POS.x, 0, TRIAL_POS.z);
+  scene.add(root);
+  state.trialStone = { root, rune, glow };
+}
+function openTrialDialog() {
+  state.dialog = true;
+  state.dlgFocus = new THREE.Vector3(TRIAL_POS.x, 0, TRIAL_POS.z);
+  sfx('dialog', 0.7);
+  document.getElementById('dlg-name').textContent = '시련의 돌';
+  const text = document.getElementById('dlg-text');
+  const btns = document.getElementById('dlg-btns');
+  btns.innerHTML = '';
+  const mk = (label, cls, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener('click', fn);
+    btns.appendChild(b);
+  };
+  const t = state.trial;
+  if (t && t.active) {
+    text.innerHTML = `시련이 진행 중일세. <b>웨이브 ${t.wave} / ${TRIAL_WAVES.length}</b> — 남은 적을 모두 쓰러뜨리게.`;
+    mk('계속', '', closeDialog);
+  } else {
+    const first = !(state.trialDone > 0);
+    text.innerHTML = `오래된 수호자의 돌일세. 세 번의 웨이브를 견디면 수호자의 증표를 내리겠네.<br>${TRIAL_WAVES.map((w, i) => `웨이브 ${i + 1}: ${w.label}`).join('<br>')}<br>사례: <b>골드 ${first ? 50 : 25}G</b>${first ? ' · 수호자의 증표(업적)' : ''}.`;
+    mk('시련을 시작한다', '', () => { startTrial(); closeDialog(); });
+    mk('닫기', 'sub', closeDialog);
+  }
+  document.getElementById('dlg-list').innerHTML = '';
+  dlgEl().style.display = 'block';
+  document.getElementById('dlgback').style.display = 'block';
+}
+function startTrial() {
+  state.trial = { active: true, wave: 0, enemies: [] };
+  nextTrialWave();
+}
+function nextTrialWave() {
+  const t = state.trial;
+  t.wave++;
+  const w = TRIAL_WAVES[t.wave - 1];
+  let i = 0;
+  for (const [stats, n] of w.mobs) {
+    for (let k = 0; k < n; k++) {
+      const a = (i / 6) * Math.PI * 2;
+      const e = state.spawnTrial(stats, TRIAL_POS.x + Math.cos(a) * 7, TRIAL_POS.z + Math.sin(a) * 7);
+      t.enemies.push(e);
+      i++;
+    }
+  }
+  sfx('dialog', 1);
+  toast(`시련 웨이브 ${t.wave} / ${TRIAL_WAVES.length}: ${w.label}`);
+}
+function endTrial(win) {
+  const t = state.trial;
+  if (!t) return;
+  for (const e of t.enemies) {
+    if (!e.dead) { e.dead = true; e.mode = 'dead'; e.root.visible = false; if (e.tele) e.tele.visible = false; }
+    const idx = state.enemies.indexOf(e);
+    if (idx >= 0) state.enemies.splice(idx, 1);
+    scene.remove(e.root);
+  }
+  t.active = false;
+  if (win) {
+    const first = !(state.trialDone > 0);
+    state.trialDone = (state.trialDone || 0) + 1;
+    state.gold += first ? 50 : 25;
+    sfx('reward', 1);
+    toast(first ? '시련 완료! 수호자의 증표를 얻었습니다 (+50G)' : '시련 완료! (+25G)');
+    checkAch();
+    saveGame();
+  }
+}
+function updateTrial(now) {
+  const st = state.trialStone;
+  if (st) {
+    st.glow.rotation.y = now * 2;
+    st.glow.position.y = 3.6 + Math.sin(now * 2.6) * 0.15;
+    st.rune.material.color.setHex(state.trial && state.trial.active ? 0xff5544 : 0xffc84a);
+  }
+  const t = state.trial;
+  if (!t || !t.active) return;
+  if (state.dead) { endTrial(false); return; }
+  if (t.enemies.every((e) => e.dead)) {
+    if (t.wave >= TRIAL_WAVES.length) { endTrial(true); return; }
+    nextTrialWave();
+  }
+}
+
 // ---------- 바람 제단 (탐험 요소): 외곽 3곳, 근접 시 기도 → 최대 체력 +5·물약 1·골드 10 ----------
 const SHRINES = [ // 섬(반경 80) 안쪽, 외곽 탐험 유도 지점
   { x: -56, z: 38, name: '서쪽 바람 제단' },
@@ -1639,6 +1747,7 @@ const ACH = [
   { id: 'order3', name: '단골 납품꾼 (특별 주문 3회)', cond: () => (state.orderDone || 0) >= 3 },
   { id: 'bounty5', name: '언덕의 해결사 (반복 의뢰 5회)', cond: () => (state.bounty && state.bounty.count || 0) >= 5 },
   { id: 'shrine3', name: '바람 제단 순례 (제단 3곳)', cond: () => (state.shrinesPrayed || []).length >= 3 },
+  { id: 'trial1', name: '시련의 돌 정복 (웨이브 3 클리어)', cond: () => (state.trialDone || 0) >= 1 },
 ];
 function checkAch() {
   let changed = false;
@@ -1903,7 +2012,7 @@ function playerAttackHit() {
 
 function updateEnemy(e, dt, now) {
   if (e.dead) {
-    if (now > e.respawnAt) respawnEnemy(e);
+    if (!e.trial && now > e.respawnAt) respawnEnemy(e);
     e.anim.update(dt);
     return;
   }
@@ -2030,6 +2139,12 @@ function tick() {
     ix += stick.x; iz += stick.y;
     const manualMove = Math.hypot(ix, iz) > 0.05;
     if (state.dialog) { ix = 0; iz = 0; }
+    // 공격 판정은 신규 공격 입력 처리보다 먼저: 초저FPS(프레임>재입력 간격)에서
+    // 다음 tryAttack이 didHit을 리셋하기 전에 직전 공격의 판정을 반드시 해소한다
+    if (!state.didHit && state.attackUntil > 0 && now > state.attackUntil - 0.35) {
+      state.didHit = true;
+      playerAttackHit();
+    }
     // 자동 전투: 수동 이동 입력이 없을 때만 조향/공격 (수동이 항상 우선)
     if (state.autoOn && !state.dead && !state.dialog && !manualMove && now >= state.dodgeUntil) {
       const t = autoTarget();
@@ -2047,15 +2162,9 @@ function tick() {
         if (state.hp < state.maxHp * 0.35 && state.potions > 0) usePotion();
       }
     }
+    const attacking = now < state.attackUntil;
     const m = Math.hypot(ix, iz);
     if (m > 1) { ix /= m; iz /= m; }
-
-    const attacking = now < state.attackUntil;
-    // 저FPS에서 프레임이 판정 순간을 건너뛰어 공격이 헛나가지 않도록 1초 유예
-    if (!state.didHit && state.attackUntil > 0 && now > state.attackUntil - 0.35 && now < state.attackUntil + 1.0) {
-      state.didHit = true;
-      playerAttackHit();
-    }
 
     const running = keys.has('ShiftLeft') || keys.has('ShiftRight') || (stick.active && m > 0.92);
     let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) * GEAR_SPD[state.gear.boots] : 0;
@@ -2096,6 +2205,7 @@ function tick() {
     updateFlowers(dt, now);
     updateChests();
     updateShrines(now);
+    updateTrial(now);
     checkAch();
     updateWeather(dt, now);
 
@@ -2111,10 +2221,19 @@ function tick() {
         n.root.rotation.y = Math.atan2(to.x, to.z);
       }
     }
-    document.getElementById('prompt').style.display = npcNear && !state.dialog ? 'block' : 'none';
+    const trialNear = state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8 && !state.dead;
+    const promptEl = document.getElementById('prompt');
+    promptEl.textContent = npcNear ? 'E · 대화하기' : 'E · 시련의 돌';
+    promptEl.style.display = (npcNear || trialNear) && !state.dialog ? 'block' : 'none';
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
+    const tr = state.trial;
+    if (tr && tr.active) {
+      qEl.style.display = 'block';
+      qEl.innerHTML = `시련 · 웨이브 ${tr.wave} / ${TRIAL_WAVES.length} · 남은 적 ${tr.enemies.filter((e) => !e.dead).length}`;
+    }
+    else {
     const qd = QUESTS[state.quest.idx];
     if (qd && state.quest.state === 'active') {
       qEl.style.display = 'block';
@@ -2133,6 +2252,7 @@ function tick() {
       }
     } else {
       qEl.style.display = 'none';
+    }
     }
 
     // 카메라 (?cam=px,py,pz 고정 시점 — 촬영용)
@@ -2208,7 +2328,7 @@ function tick() {
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0, order: state.order, orderDone: state.orderDone || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
-    chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
+    chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
