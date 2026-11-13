@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 // ---------- 기본 씬 ----------
@@ -178,13 +179,16 @@ addEventListener('touchend', (e) => {
 const state = {
   ready: false, player: null, anim: null, enemies: [], npc: null,
   heading: 0, hp: 100, maxHp: 100, dead: false,
-  attackUntil: 0, attackCdUntil: 0, didHit: false, kills: 0,
+  attackUntil: 0, attackCdUntil: 0, didHit: false, kills: 0, skKills: 0,
   dialog: false,
   quest: { state: 'none', startKills: 0, goal: 3 }, // none → active → done
 };
-const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4 };
-const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2 };
+const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4, skel: true };
+const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2, skel: true };
 const PLAYER = { dmg: 10, range: 2.4, arc: Math.PI * 0.6 };
+const FROG = { hp: 15, dmg: 3, speed: 2.0, aggro: 9, range: 1.4, cd: 1.6 };
+const RAT = { hp: 10, dmg: 2, speed: 3.2, aggro: 8, range: 1.2, cd: 1.1 };
+const SPIDER = { hp: 25, dmg: 6, speed: 2.6, aggro: 10, range: 1.5, cd: 1.5 };
 
 // ---------- 충돌체 (원형 + 던전 벽) ----------
 const colliders = []; // {x, z, r}
@@ -244,7 +248,7 @@ function respawnEnemy(e) {
   e.root.position.copy(e.home).add(new THREE.Vector3(Math.cos(a) * 4, 0, Math.sin(a) * 4));
   e.hp = e.stats.hp; e.mode = 'wander'; e.dead = false;
   e.root.visible = true;
-  e.anim.play('walking', 'idle');
+  e.anim.play('walking', 'walk', 'jump', 'idle');
 }
 
 // ---------- 월드 구성 ----------
@@ -264,7 +268,7 @@ async function build() {
     root.position.set(x, 0, z);
     scene.add(root);
     const anim = new AnimSet(root, gltf.animations);
-    anim.play('walking', 'idle');
+    anim.play('walking', 'walk', 'jump', 'idle');
     state.enemies.push({ root, anim, angle: Math.atan2(x, z), stats, home: new THREE.Vector3(x, 0, z), hp: stats.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 });
   };
   for (let i = 0; i < 3; i++) {
@@ -272,6 +276,7 @@ async function build() {
     spawn(skel, ENEMY, Math.cos(a) * 20, Math.sin(a) * 20);
   }
   state.spawn = spawn;
+
 
   // 마을 (Kenney Fantasy Town Kit, CC0)
   const knightH = new THREE.Box3().setFromObject(player).getSize(new THREE.Vector3()).y || 1.2;
@@ -330,6 +335,29 @@ async function build() {
       scene.add(o);
       colliders.push({ x, z, r: cR });
     } catch (err) { console.warn('house load fail', name, err); }
+  }));
+
+  // 들판 몬스터 (Quaternius Easy Enemy Pack, CC0 — 공식 팩 페이지 문구 직접 확인)
+  // FBX 단위가 커서 bbox 높이 기준으로 축소하고, 발이 지면에 닿도록 래퍼로 오프셋
+  const fbxLoader = new FBXLoader();
+  const fieldMobs = [
+    ['Frog', FROG, 0.5, [[14, 16], [-18, 22]]],
+    ['Rat', RAT, 0.42, [[24, 6], [8, 26], [-26, 10]]],
+    ['Spider', SPIDER, 0.55, [[32, -14], [-30, -18]]],
+  ];
+  await Promise.all(fieldMobs.map(async ([name, stats, hMul, spots]) => {
+    try {
+      const fbx = await fbxLoader.loadAsync(`/assets/enemies/${name}.fbx`);
+      const bb = new THREE.Box3().setFromObject(fbx);
+      const sz = bb.getSize(new THREE.Vector3());
+      const sc = (knightH * hMul) / (sz.y || 1);
+      fbx.scale.setScalar(sc);
+      fbx.position.y = -bb.min.y * sc;
+      const wrap = new THREE.Group();
+      wrap.add(fbx);
+      shadowify(wrap);
+      for (const [x, z] of spots) spawn({ scene: wrap, animations: fbx.animations }, stats, x, z);
+    } catch (err) { console.warn('enemy fbx load fail', name, err); }
   }));
 
   // 광장 돌길
@@ -429,7 +457,7 @@ async function build() {
 
 // ---------- NPC 대화 / 의뢰 ----------
 const dlgEl = () => document.getElementById('dlg');
-function questProgress() { return Math.min(state.kills - state.quest.startKills, state.quest.goal); }
+function questProgress() { return Math.min((state.skKills || 0) - state.quest.startKills, state.quest.goal); }
 function tryInteract() {
   if (!state.ready || state.dead || state.dialog || !state.npc) return;
   if (state.player.position.distanceTo(state.npc.pos) > 2.6) return;
@@ -452,7 +480,7 @@ function openDialog() {
   name.textContent = '마을 장로';
   if (q.state === 'none') {
     text.innerHTML = '유랑자여, 잘 왔네. 언덕에 스켈레톤이 들끓어 마을 사람들이 불안해하고 있네.<br>스켈레톤 <b>3마리</b>를 처치해주게. 사례는 하겠네.';
-    mk('수락한다', '', () => { q.state = 'active'; q.startKills = state.kills; closeDialog(); saveGame(); });
+    mk('수락한다', '', () => { q.state = 'active'; q.startKills = state.skKills || 0; closeDialog(); saveGame(); });
     mk('나중에', 'sub', closeDialog);
   } else if (q.state === 'active' && questProgress() >= q.goal) {
     text.innerHTML = '스켈레톤 3마리를 모두 해치웠군! 마을이 자네 덕분에 한시름 놓았네.<br>약속한 사례일세: <b>최대 체력 100 → 130</b>.';
@@ -484,7 +512,7 @@ function saveGame() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       x: state.player.position.x, z: state.player.position.z,
-      hp: state.hp, maxHp: state.maxHp, kills: state.kills,
+      hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0,
       heading: state.heading, quest: state.quest,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -500,6 +528,7 @@ function loadGame() {
     state.hp = s.hp ?? state.maxHp;
     state.maxHp = s.maxHp || 100;
     state.kills = s.kills || 0;
+    state.skKills = s.skKills || 0;
     if (s.quest) state.quest = s.quest;
   } catch (e) { console.warn('load fail', e); }
 }
@@ -597,12 +626,13 @@ function playerAttackHit() {
     hitFlash(e.root);
     if (e.hp <= 0) {
       e.dead = true; e.mode = 'dead';
-      e.anim.playOnce('death_a');
+      e.anim.playOnce('death_a', 'death');
       e.respawnAt = clock.elapsedTime + 6;
       state.kills++;
+      if (e.stats.skel) state.skKills++;
       setTimeout(() => { e.root.visible = false; }, 1600);
     } else {
-      e.anim.playOnce('hit_a');
+      e.anim.playOnce('hit_a', 'hit');
       e.hitUntil = clock.elapsedTime + 0.4;
     }
   }
@@ -650,7 +680,7 @@ function updateEnemy(e, dt, now) {
     to.normalize();
     e.root.position.addScaledVector(to, e.stats.speed * dt);
     e.root.rotation.y = Math.atan2(to.x, to.z);
-    e.anim.play('running', 'walking');
+    e.anim.play('running', 'run', 'walking', 'walk', 'jump');
   } else {
     e.angle += dt * 0.25;
     const wx = e.home.x + Math.cos(e.angle) * 6, wz = e.home.z + Math.sin(e.angle) * 6;
@@ -660,7 +690,7 @@ function updateEnemy(e, dt, now) {
       e.root.position.addScaledVector(wdir, 1.2 * dt);
       e.root.rotation.y = Math.atan2(wdir.x, wdir.z);
     }
-    e.anim.play('walking', 'idle');
+    e.anim.play('walking', 'walk', 'jump', 'idle');
   }
   e.anim.update(dt);
 }
