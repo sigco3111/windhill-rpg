@@ -1360,7 +1360,6 @@ function loadGame() {
     state.dex = s.dex || {};
     state.level = s.level || 1;
     state.xp = s.xp || 0;
-    applyProgression();
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.chestsOpened = s.chestsOpened || [];
     state.shrinesPrayed = s.shrinesPrayed || [];
