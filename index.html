@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>바람 언덕의 유랑자 - 프로토타입</title>
+  <link rel="stylesheet" href="/fonts/fonts.css" />
+  <style>
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #87b5d9; touch-action: none; font-family: 'Noto Sans KR', sans-serif; }
+    #app { position: fixed; inset: 0; }
+    #hud {
+      position: fixed; top: 8px; left: 8px; color: #fff; font: 12px/1.5 'Noto Sans KR', sans-serif;
+      background: rgba(0,0,0,.35); padding: 6px 8px; border-radius: 6px; pointer-events: none;
+      white-space: pre; z-index: 10;
+    }
+    #msg {
+      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      color: #fff; font: 13px 'Noto Sans KR', sans-serif; background: rgba(0,0,0,.35);
+      padding: 6px 12px; border-radius: 6px; pointer-events: none; z-index: 10;
+      max-width: 92vw; text-align: center;
+    }
+    #hpwrap {
+      position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+      width: 220px; height: 14px; background: rgba(0,0,0,.4); border-radius: 7px;
+      overflow: hidden; z-index: 10; border: 1px solid rgba(255,255,255,.35);
+    }
+    #hpfill { height: 100%; width: 100%; background: #5ad06a; transition: width .15s; }
+    #atk {
+      position: fixed; right: 22px; bottom: 60px; width: 72px; height: 72px; border-radius: 50%;
+      background: rgba(200,60,50,.75); color: #fff; font: 700 15px 'Noto Sans KR', sans-serif;
+      display: flex; align-items: center; justify-content: center; z-index: 11;
+      border: 2px solid rgba(255,255,255,.6); user-select: none; -webkit-user-select: none;
+    }
+    #over {
+      position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,.55); color: #fff; font: 700 20px 'Noto Sans KR', sans-serif;
+      z-index: 20; text-align: center; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud"></div>
+  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격 · 드래그 시점 (모바일: 왼쪽 이동 · 오른쪽 시점 · 빨간 버튼 공격)</div>
+  <div id="hpwrap"><div id="hpfill"></div></div>
+  <div id="atk">공격</div>
+  <div id="over">쓰러졌습니다<br><span style="font-size:14px;font-weight:400">탭하면 마을에서 다시 일어납니다</span></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
