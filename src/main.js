@@ -299,7 +299,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
-  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, boss: null, dex: {}, // 도감: 종류별 처치 수
+  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, // 도감: 종류별 처치 수
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
@@ -786,6 +786,27 @@ async function build() {
     state.npc.anim.play('Idle');
   } catch (e) { console.warn('npc fail', e); }
 
+  // NPC 수집가 (Mage 청록 틴트 변형) — 마을 서쪽, 바람꽃 매입 (송이당 6G)
+  try {
+    const col = await load('assets/characters/Mage.glb');
+    const croot = shadowify(col.scene);
+    croot.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const tint = (m) => {
+        const c = m.clone();
+        if (c.color) c.color.lerp(new THREE.Color(0x40c8a0), 0.45);
+        return c;
+      };
+      o.material = Array.isArray(o.material) ? o.material.map(tint) : tint(o.material);
+    });
+    croot.position.set(-6, 0, -14);
+    croot.rotation.y = Math.PI * 0.75;
+    scene.add(croot);
+    state.npc2 = { root: croot, anim: new AnimSet(croot, col.animations), pos: croot.position };
+    colliders.push({ x: -6, z: -14, r: 0.5 });
+    state.npc2.anim.play('Idle');
+  } catch (e) { console.warn('npc2 fail', e); }
+
   // 지하묘지 (KayKit Dungeon Remastered, CC0) — 북동쪽 (48, -48)
   await buildDungeon(48, -48);
 
@@ -825,6 +846,7 @@ async function build() {
     addXp(n) { gainXp(n); },
     setQuest(idx, st) { state.quest = { idx, state: st, startKills: st === 'active' ? questCounter({ idx }) : 0 }; applyProgression(); },
     setFlowers(n) { state.flowerCount = n; },
+    setFlowersSold(n) { state.flowersSold = n; },
     flowerPos(i) { return state.flowers ? state.flowers[i].root.position.toArray() : null; },
     debug() { return { dungeon: { ...DUNGEON }, colliders, hp: state.hp, dead: state.dead, dialog: state.dialog }; },
   };
@@ -892,9 +914,9 @@ function gainXp(n) {
 const dlgEl = () => document.getElementById('dlg');
 function questProgress() { const d = QUESTS[state.quest.idx]; return d ? Math.min(questCounter(state.quest) - state.quest.startKills, d.goal) : 0; }
 function tryInteract() {
-  if (!state.ready || state.dead || state.dialog || !state.npc) return;
-  if (state.player.position.distanceTo(state.npc.pos) > 2.6) return;
-  openDialog();
+  if (!state.ready || state.dead || state.dialog) return;
+  if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { openDialog(); return; }
+  if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) openCollectorDialog();
 }
 function openDialog() {
   state.dialog = true;
@@ -1046,7 +1068,7 @@ function openInv() {
   const renderInv = () => {
     document.getElementById('dlg-text').innerHTML =
       `레벨 <b>${state.level || 1}</b> (경험치 ${state.xp || 0}/${xpNeed(state.level || 1)}) · 공격력 <b>${PLAYER.dmg + GEAR_ATK[state.gear.sword]}</b> · 받는 피해 감소 <b>${GEAR_DEF[state.gear.armor]}</b> · 이동속도 <b>×${GEAR_SPD[state.gear.boots]}</b><br>` +
-      `골드 <b>${state.gold}G</b> · 물약 <b>${state.potions}/${SHOP.potionMax}</b> · 바람꽃 <b>${state.flowerCount}송이</b> · 보물 상자 <b>${(state.chestsOpened || []).length}개</b>`;
+      `골드 <b>${state.gold}G</b> · 물약 <b>${state.potions}/${SHOP.potionMax}</b> · 바람꽃 <b>${state.flowerCount}송이(판매 가능 ${(state.flowerCount || 0) - (state.flowersSold || 0)})</b> · 보물 상자 <b>${(state.chestsOpened || []).length}개</b>`;
     const gearOwned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? `${g.names[state.gear[g.key] - 1]}(${g.key === 'sword' ? '검' : g.key === 'armor' ? '갑옷' : '부츠'})` : null).filter(Boolean);
     list.innerHTML =
       `<div class="shoprow"><div class="info">장비 <small>${gearOwned.length ? gearOwned.join(', ') : '없음'}</small></div></div>` +
@@ -1104,6 +1126,7 @@ function drawMinimap() {
   if (state.chests) for (const c of state.chests) if (!c.opened) dot(c.x, c.z, '#ffd94d', 3);
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
+  if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
   for (const e of state.enemies) { if (e.dead) continue; dot(e.root.position.x, e.root.position.z, e.stats.elite ? '#ff9040' : '#ff5555', e.stats.elite ? 3.5 : 2.5); }
   if (state.boss && !state.boss.dead) dot(state.boss.root.position.x, state.boss.root.position.z, '#c080ff', 4);
   mctx.save();
@@ -1112,6 +1135,40 @@ function drawMinimap() {
   mctx.fillStyle = '#fff';
   mctx.beginPath(); mctx.moveTo(0, -5); mctx.lineTo(3.5, 4); mctx.lineTo(-3.5, 4); mctx.closePath(); mctx.fill();
   mctx.restore();
+}
+const COLLECTOR = { flowerPrice: 6 };
+function openCollectorDialog() {
+  state.dialog = true;
+  sfx('dialog', 0.7);
+  const name = document.getElementById('dlg-name');
+  const text = document.getElementById('dlg-text');
+  const btns = document.getElementById('dlg-btns');
+  btns.innerHTML = '';
+  const mk = (label, cls, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener('click', fn);
+    btns.appendChild(b);
+  };
+  name.textContent = '수집가';
+  const sellable = (state.flowerCount || 0) - (state.flowersSold || 0);
+  text.innerHTML = sellable > 0
+    ? `오, 바람꽃을 가져왔군! 좋은 약재지.<br>지금 팔 수 있는 <b>${sellable}송이</b>를 송이당 <b>${COLLECTOR.flowerPrice}G</b>에 사주겠네.`
+    : `바람꽃은 서쪽 숲에서 나오네. 빛나는 꽃을 꺾어오면 송이당 <b>${COLLECTOR.flowerPrice}G</b>에 사주지.<br>장로 의뢰에 쓴 꽃은 팔 수 없으니 유의하게.`;
+  if (sellable > 0) {
+    mk(`바람꽃 ${sellable}송이 판매 (+${sellable * COLLECTOR.flowerPrice}G)`, '', () => {
+      state.gold += sellable * COLLECTOR.flowerPrice;
+      state.flowersSold = (state.flowersSold || 0) + sellable;
+      sfx('reward', 1);
+      toast(`바람꽃 ${sellable}송이 판매 · +${sellable * COLLECTOR.flowerPrice}G`);
+      closeDialog(); saveGame();
+    });
+  }
+  mk('닫기', 'sub', closeDialog);
+  document.getElementById('dlg-list').innerHTML = '';
+  dlgEl().style.display = 'block';
+  document.getElementById('dlgback').style.display = 'block';
 }
 function closeDialog() {
   state.dialog = false;
@@ -1132,7 +1189,7 @@ function saveGame() {
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
-      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, dex: state.dex, level: state.level || 1, xp: state.xp || 0,
+      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -1156,6 +1213,7 @@ function loadGame() {
     state.bossKills = s.bossKills || 0;
     state.eliteKills = s.eliteKills || 0;
     state.flowerCount = s.flowerCount || 0;
+    state.flowersSold = s.flowersSold || 0;
     state.dex = s.dex || {};
     state.level = s.level || 1;
     state.xp = s.xp || 0;
@@ -1821,16 +1879,19 @@ function tick() {
     updateChests();
     checkAch();
 
-    // NPC: 대기 애니메이션 + 근접 시 대화 프롬프트
-    if (state.npc) {
-      state.npc.anim.update(dt);
-      const near = state.player.position.distanceTo(state.npc.pos) < 2.6 && !state.dead;
-      document.getElementById('prompt').style.display = near && !state.dialog ? 'block' : 'none';
+    // NPC들: 대기 애니메이션 + 근접 시 대화 프롬프트
+    let npcNear = false;
+    for (const n of [state.npc, state.npc2]) {
+      if (!n) continue;
+      n.anim.update(dt);
+      const near = state.player.position.distanceTo(n.pos) < 2.6 && !state.dead;
       if (near) {
-        const to = state.player.position.clone().sub(state.npc.pos);
-        state.npc.root.rotation.y = Math.atan2(to.x, to.z);
+        npcNear = true;
+        const to = state.player.position.clone().sub(n.pos);
+        n.root.rotation.y = Math.atan2(to.x, to.z);
       }
     }
+    document.getElementById('prompt').style.display = npcNear && !state.dialog ? 'block' : 'none';
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
@@ -1915,7 +1976,7 @@ function tick() {
     quest: state.quest.state, qidx: state.quest.idx, qprog: questProgress(), dialog: state.dialog,
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
-    bossKills: state.bossKills, flowerCount: state.flowerCount,
+    bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
