@@ -106,12 +106,22 @@
       color: #ffe9a8; font: 600 14px 'Noto Sans KR', sans-serif; z-index: 12;
       pointer-events: none; opacity: 0; transition: opacity .3s; text-shadow: 0 1px 3px #000;
     }
+    #dlgback {
+      position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 24; display: none;
+    }
     #dlg {
       position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%);
-      display: none; width: min(420px, 92vw); background: rgba(18,22,30,.92);
+      display: none; width: min(440px, 92vw); background: #12161e;
       border: 1px solid rgba(255,255,255,.25); border-radius: 10px; padding: 14px 16px;
       color: #eee; font: 14px/1.6 'Noto Sans KR', sans-serif; z-index: 25;
     }
+    #dlg .shoprow {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 7px 0; border-top: 1px solid rgba(255,255,255,.12); text-align: left;
+    }
+    #dlg .shoprow .info { flex: 1; min-width: 0; }
+    #dlg .shoprow .info small { color: #9fb4c8; }
+    #dlg .shoprow button { flex-shrink: 0; min-width: 74px; }
     #dlg h3 { margin: 0 0 6px; font-size: 15px; color: #ffd98a; }
     #dlg .btns { margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end; }
     #dlg button {
@@ -157,7 +167,8 @@
   <div id="nav"><span class="arrow" id="navarrow">▲</span> <span id="navtext"></span></div>
   <div id="tut"><span id="tuttext"></span><span class="skip" id="tutskip">건너뛰기</span></div>
   <div id="toast"></div>
-  <div id="dlg"><h3 id="dlg-name"></h3><div id="dlg-text"></div><div class="btns" id="dlg-btns"></div></div>
+  <div id="dlgback"></div>
+  <div id="dlg"><h3 id="dlg-name"></h3><div id="dlg-text"></div><div id="dlg-list"></div><div class="btns" id="dlg-btns"></div></div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
