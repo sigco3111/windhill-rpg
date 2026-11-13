@@ -27,5 +27,6 @@ npm run build               # 배포 빌드 (dist/)
 | KayKit Skeletons | Kay Lousberg | CC0 |
 | KayKit Forest Nature Pack | Kay Lousberg | CC0 |
 | Fantasy Town Kit | Kenney | CC0 |
+| KayKit Dungeon Remastered | Kay Lousberg | CC0 |
 
 UI 폰트: Noto Sans KR (Google Fonts, SIL OFL) — `public/fonts`에 둔다.
