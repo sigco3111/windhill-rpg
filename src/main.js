@@ -298,6 +298,7 @@ const state = {
   bossKills: 0, flowers: null, flowerCount: 0, boss: null,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
+  ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
 };
 // 장비 효과표 (등급 0=없음)
@@ -1001,7 +1002,7 @@ function saveGame() {
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, flowerCount: state.flowerCount || 0,
-      bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear,
+      bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach,
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1026,6 +1027,7 @@ function loadGame() {
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.chestsOpened = s.chestsOpened || [];
     if (s.gear) state.gear = { sword: s.gear.sword || 0, armor: s.gear.armor || 0, boots: s.gear.boots || 0 };
+    if (s.ach) state.ach = s.ach;
     if (state.chests) state.chests.forEach((c, i) => { c.opened = state.chestsOpened.includes(i); c.beam.visible = !c.opened; });
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
@@ -1226,6 +1228,28 @@ function updateChests() {
       saveGame();
     }
   }
+}
+
+// ---------- 업적 ----------
+const ACH = [
+  { id: 'firstKill', name: '첫 사냥', cond: () => state.kills >= 1 },
+  { id: 'hunter25', name: '언덕의 사냥꾼 (25마리)', cond: () => state.kills >= 25 },
+  { id: 'flowers8', name: '바람꽃 수집가 (8송이)', cond: () => state.flowerCount >= 8 },
+  { id: 'treasure5', name: '보물 사냥꾼 (상자 5개)', cond: () => (state.chestsOpened || []).length >= 5 },
+  { id: 'boss1', name: '묘지 정복자', cond: () => state.bossKills >= 1 },
+  { id: 'geared', name: '무장한 유랑자 (장비 3종)', cond: () => state.gear.sword >= 1 && state.gear.armor >= 1 && state.gear.boots >= 1 },
+  { id: 'rich300', name: '부유한 유랑자 (300G)', cond: () => state.gold >= 300 },
+];
+function checkAch() {
+  let changed = false;
+  for (const a of ACH) {
+    if (state.ach[a.id] || !a.cond()) continue;
+    state.ach[a.id] = true;
+    changed = true;
+    sfx('reward', 1);
+    toast(`업적 달성: ${a.name}`);
+  }
+  if (changed) saveGame();
 }
 
 function mulberry32(a) {
@@ -1648,6 +1672,7 @@ function tick() {
     for (const e of state.enemies) updateEnemy(e, dt, now);
     updateFlowers(dt, now);
     updateChests();
+    checkAch();
 
     // NPC: 대기 애니메이션 + 근접 시 대화 프롬프트
     if (state.npc) {
@@ -1716,7 +1741,7 @@ function tick() {
     // 골드/물약 표시
     const goldEl = document.getElementById('gold');
     goldEl.style.display = (state.gold > 0 || state.potions > 0) ? 'block' : 'none';
-    goldEl.textContent = `골드 ${state.gold}G` + (state.chestsOpened && state.chestsOpened.length ? ` · 보물 ${state.chestsOpened.length}/${CHESTS.length}` : '');
+    goldEl.textContent = `골드 ${state.gold}G` + (state.chestsOpened && state.chestsOpened.length ? ` · 보물 ${state.chestsOpened.length}/${CHESTS.length}` : '') + (Object.keys(state.ach).length ? ` · 업적 ${Object.keys(state.ach).length}/${ACH.length}` : '');
     const potBtn = document.getElementById('pot');
     const potLabel = `물약 ${state.potions}`;
     if (potBtn.textContent !== potLabel) potBtn.textContent = potLabel;
@@ -1743,6 +1768,7 @@ function tick() {
     bossKills: state.bossKills, flowerCount: state.flowerCount,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
+    achCount: Object.keys(state.ach).length, ach: { ...state.ach },
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
     bossHp: state.boss ? state.boss.hp : null, bossDead: state.boss ? state.boss.dead : null,
     bossPos: state.boss ? state.boss.root.position.toArray().map((v) => +v.toFixed(1)) : null,
