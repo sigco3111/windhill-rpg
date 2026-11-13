@@ -348,6 +348,7 @@ const state = {
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
+  golden: null, // 황금 쥐: { nextAt, active, until }
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
@@ -372,6 +373,8 @@ const SPIDER = { hp: 25, dmg: 6, speed: 2.6, aggro: 10, range: 1.5, cd: 1.5, lab
 const PFROG = { ...FROG, hp: 24, dmg: 5, speed: 2.4, cd: 1.3, gold: 8, label: '독 개구리', tint: 0x6fd94f };
 const SRAT = { ...RAT, hp: 16, dmg: 4, speed: 3.8, gold: 7, label: '그림자 쥐', tint: 0x3a3a55 };
 const FSKEL = { ...ENEMY, hp: 32, dmg: 7, speed: 2.2, gold: 10, label: '서리 스켈레톤', tint: 0x55bbff, emis: 0x0a2a3a };
+// 황금 쥐: 희귀 출현, 플레이어에게서 도망, 60초 한정
+const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, emis: 0x553f00, flee: true, noElite: true };
 
 // ---------- 토스트 (짧은 알림) ----------
 let toastTimer = 0;
@@ -607,7 +610,7 @@ async function build() {
     spawnSeq++;
     // 6마리마다 1마리는 엘리트: 체력·공격력 강화, 골드 3배, 붉은 색감·큰 덩치 (보스 제외)
     let st = stats;
-    if (!stats.boss && spawnSeq % 6 === 0) {
+    if (!stats.boss && !stats.noElite && spawnSeq % 6 === 0) {
       st = { ...stats, hp: Math.round(stats.hp * 2.2), dmg: Math.max(1, Math.round(stats.dmg * 1.5)), gold: (stats.gold || 3) * 3, label: '엘리트 ' + stats.label, elite: true };
     }
     const root = shadowify(SkeletonUtils.clone(gltf.scene));
@@ -923,6 +926,7 @@ async function build() {
     setFlowersSold(n) { state.flowersSold = n; },
     setMat(name, n) { state.mats[name] = n; },
     setMapFrags(n) { state.mapFrags = n; if (n >= 3 && !state.treasureDone) spawnTreasure(); },
+    spawnGolden(x, z) { if (!state.protos || !state.protos.Rat) return false; if (!state.golden) state.golden = { nextAt: 0, active: null, until: 0 }; const e = state.spawn(state.protos.Rat, GOLDEN, x, z); e.home.set(x, 0, z); state.golden.active = e; state.golden.until = clock.elapsedTime + 60; return true; },
     setDialog(v) { state.dialog = !!v; },
     setRain(sec) { weather.mode = 'rain'; weather.until = clock.elapsedTime + sec; },
     flowerPos(i) { return state.flowers ? state.flowers[i].root.position.toArray() : null; },
@@ -1223,6 +1227,7 @@ function drawMinimap() {
   if (state.chests) for (const c of state.chests) if (!c.opened) dot(c.x, c.z, '#ffd94d', 3);
   if (state.treasure && !state.treasureDone) dot(state.treasure.x, state.treasure.z, '#7de8ff', 4);
   if (state.dens) for (const d of state.dens) if (!d.cleared) dot(d.x, d.z, '#ff6a5a', 3);
+  if (state.golden && state.golden.active && !state.golden.active.dead) dot(state.golden.active.root.position.x, state.golden.active.root.position.z, '#fff04a', 4.5);
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
   if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
@@ -1695,6 +1700,30 @@ function updateChests() {
   }
 }
 
+// ---------- 황금 쥐: 희귀 출현 · 도망형 · 60초 한정 보상 ----------
+function updateGolden(now) {
+  if (!state.golden) state.golden = { nextAt: now + 100 + Math.random() * 60, active: null, until: 0 };
+  const g = state.golden;
+  if (g.active) {
+    const e = g.active;
+    if (e.dead && !e.despawned) { g.active = null; g.nextAt = now + 120 + Math.random() * 90; }
+    else if (!e.dead && now > g.until) {
+      e.dead = true; e.despawned = true; e.mode = 'dead'; e.root.visible = false; e.respawnAt = 1e12;
+      g.active = null; g.nextAt = now + 90 + Math.random() * 90;
+      toast('황금 쥐가 도망쳐 버렸다…');
+    }
+    return;
+  }
+  if (state.dead || now < g.nextAt) return;
+  if (!state.protos || !state.protos.Rat) return;
+  const a = Math.random() * Math.PI * 2, r = 22 + Math.random() * 28;
+  const e = state.spawn(state.protos.Rat, GOLDEN, Math.cos(a) * r, Math.sin(a) * r);
+  e.home.set(e.root.position.x, 0, e.root.position.z);
+  g.active = e; g.until = now + 60;
+  toast('황금 쥐가 나타났다! 60초 안에 잡으면 50G');
+  sfx('reward', 0.8);
+}
+
 // ---------- 시련의 돌: 3연속 웨이브 도전 (전투 콘텐츠) ----------
 const TRIAL_POS = { x: -26, z: 6 };
 const TRIAL_WAVES = [
@@ -1873,6 +1902,7 @@ const ACH = [
   { id: 'trial1', name: '시련의 돌 정복 (웨이브 3 클리어)', cond: () => (state.trialDone || 0) >= 1 },
   { id: 'treasureHidden', name: '숨겨진 보물 (지도 완성)', cond: () => !!state.treasureDone },
   { id: 'den3', name: '소굴 정리 (몬스터 소굴 3곳)', cond: () => (state.densCleared || []).length >= 3 },
+  { id: 'golden1', name: '황금 쥐를 잡아라', cond: () => (state.dex['황금 쥐'] || 0) >= 1 },
 ];
 function checkAch() {
   let changed = false;
@@ -2148,6 +2178,21 @@ function updateEnemy(e, dt, now) {
   const d = to.length();
 
   if (e.tele && e.tele.visible && e.teleUntil && now > e.teleUntil) e.tele.visible = false;
+  if (e.stats.flee) {
+    if (state.dead || state.dialog || d >= 14) { e.mode = 'wander'; }
+    else {
+      e.mode = 'flee';
+      const away = e.root.position.clone().sub(p); away.y = 0;
+      if (away.lengthSq() > 0.001) {
+        away.normalize();
+        e.root.position.addScaledVector(away, e.stats.speed * dt);
+        e.root.rotation.y = Math.atan2(away.x, away.z);
+        e.anim.play('running', 'run', 'walking', 'walk', 'jump');
+      }
+      e.anim.update(dt);
+      return;
+    }
+  }
   if (state.dead || state.dialog) {
     e.mode = 'wander';
     // 대화 중에는 공격 중단: 예고·예약 피격·돌진 취소 (닫히면 재추적)
@@ -2332,6 +2377,7 @@ function tick() {
     updateChests();
     updateTreasure();
     updateDens();
+    updateGolden(now);
     updateShrines(now);
     updateTrial(now);
     checkAch();
@@ -2459,6 +2505,7 @@ function tick() {
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
+    golden: state.golden ? { active: !!state.golden.active, mode: state.golden.active ? state.golden.active.mode : null, pos: state.golden.active ? state.golden.active.root.position.toArray().map((v) => +v.toFixed(1)) : null, until: +state.golden.until.toFixed(1) } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
