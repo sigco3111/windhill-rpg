@@ -41,11 +41,11 @@ async function loadObj(base) {
   // 로더는 호출마다 새로 생성 (공유 시 병렬 로드에서 재질이 섞임)
   const mtlLoader = new MTLLoader();
   const objLoader = new OBJLoader();
-  const mtl = await mtlLoader.loadAsync(`/assets/village/${base}.mtl`);
+  const mtl = await mtlLoader.loadAsync(`assets/village/${base}.mtl`);
   mtl.preload();
   // OBJ 안의 라인(l)/포인트(p) 요소는 버린다: OBJLoader는 객체에 'l' 요소가 하나라도
   // 있으면 해당 객체 전체를 LineSegments로 만들어 면이 와이어프레임처럼 보이는 문제가 있음
-  const objText = await (await fetch(`/assets/village/${base}.obj`)).text();
+  const objText = await (await fetch(`assets/village/${base}.obj`)).text();
   const stripped = objText.split('\n').filter((l) => !/^[lp] /.test(l)).join('\n');
   const obj = objLoader.setMaterials(mtl).parse(stripped);
   obj.traverse((o) => {
@@ -363,7 +363,7 @@ async function build() {
   const townCache = {};
   await Promise.all(village.map(async ([name, x, z, rot, hMul, cR]) => {
     try {
-      if (!townCache[name]) townCache[name] = (await load(`/assets/town/${name}.glb`)).scene;
+      if (!townCache[name]) townCache[name] = (await load(`assets/town/${name}.glb`)).scene;
       const o = shadowify(townCache[name].clone());
       const sz = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
       const maxDim = Math.max(sz.x, sz.y, sz.z) || 2;
@@ -418,7 +418,7 @@ async function build() {
   ];
   await Promise.all(fieldMobs.map(async ([name, stats, hMul, spots]) => {
     try {
-      const fbx = await fbxLoader.loadAsync(`/assets/enemies/${name}.fbx`);
+      const fbx = await fbxLoader.loadAsync(`assets/enemies/${name}.fbx`);
       const bb = new THREE.Box3().setFromObject(fbx);
       const sz = bb.getSize(new THREE.Vector3());
       const sc = (knightH * hMul) / (sz.y || 1);
@@ -466,7 +466,7 @@ async function build() {
     'Grass_1_A_Color1', 'Grass_1_B_Color1', 'Grass_1_C_Color1',
   ];
   const rng = mulberry32(42);
-  const natureGs = await Promise.all(natureFiles.map((f) => load(`/assets/nature/gltf/${f}.gltf`).catch((e) => { console.warn('nature load fail', f, e); return null; })));
+  const natureGs = await Promise.all(natureFiles.map((f) => load(`assets/nature/gltf/${f}.gltf`).catch((e) => { console.warn('nature load fail', f, e); return null; })));
   natureGs.forEach((g, fi) => {
     if (!g) return;
     const f = natureFiles[fi];
