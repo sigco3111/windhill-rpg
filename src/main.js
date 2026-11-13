@@ -296,6 +296,7 @@ const state = {
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   bossKills: 0, flowers: null, flowerCount: 0, boss: null,
+  bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
 };
 const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4, skel: true, label: '스켈레톤', windup: 0.45, gold: 5, teleH: 1.9 };
@@ -448,6 +449,8 @@ function tryDodge() {
   state.dodgeUntil = now + 0.45;
   state.dodgeCdUntil = now + 2.5;
   state.invUntil = now + 0.55;
+  state.dodgeFrom = state.player.position.clone();
+  state.dodgeStart = now;
   state.dodgeCount++;
   state.anim.playOnce('dodge_forward', 'dodge');
   sfx('step1', 0.6);
@@ -732,6 +735,8 @@ async function build() {
 
   // 바람꽃 (수집 의뢰) — 서쪽 숲에 8송이
   buildFlowers(-45, 18);
+  // 보물상자 (탐험 요소) — 언덕 곳곳 5개
+  buildChests();
 
   // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
   try {
@@ -858,8 +863,20 @@ function openDialog() {
   };
   name.textContent = '마을 장로';
   if (!d) {
-    text.innerHTML = '마을의 모든 부탁을 들어주었네. 자네는 이제 이 언덕의 영웅일세.<br>바람 언덕에서 마음껏 유랑하게나.';
-    mk('닫기', '', closeDialog);
+    // 모든 의뢰 완료 후: 반복 현상금 의뢰
+    const b = state.bounty;
+    const reward = 35 + Math.min(b.count * 5, 25);
+    if (b.active && state.kills - b.startKills >= 8) {
+      text.innerHTML = `현상금 의뢰를 마쳤군! 몬스터 <b>8마리</b> 처치를 확인했네.<br>사례일세: <b>골드 ${reward}</b>.`;
+      mk('사례를 받는다', '', () => { state.gold += reward; b.count++; b.active = false; sfx('reward', 1); closeDialog(); saveGame(); });
+    } else if (b.active) {
+      text.innerHTML = `현상금 의뢰: 몬스터 <b>${state.kills - b.startKills} / 8</b> 마리 처치했네.<br>조금만 더 힘내주게.`;
+      mk('계속', '', closeDialog);
+    } else {
+      text.innerHTML = '마을의 모든 부탁을 들어주었네. 자네는 이제 이 언덕의 영웅일세.<br>바람 언덕에서 마음껏 유랑하게나.<br><br>언덕의 몬스터는 계속 불어나니, <b>현상금 의뢰</b>(몬스터 8마리 처치)도 맡아주면 고맙겠네.';
+      mk('현상금을 받는다', '', () => { b.active = true; b.startKills = state.kills; sfx('dialog', 0.7); closeDialog(); saveGame(); toast('현상금 의뢰: 몬스터 8마리 처치'); });
+      mk('닫기', '', closeDialog);
+    }
   } else if (q.state === 'none') {
     text.innerHTML = d.offer;
     mk('수락한다', '', () => { q.state = 'active'; q.startKills = questCounter(q); closeDialog(); saveGame(); });
@@ -930,6 +947,7 @@ function saveGame() {
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, flowerCount: state.flowerCount || 0,
+      bounty: state.bounty, chestsOpened: state.chestsOpened || [],
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -951,6 +969,9 @@ function loadGame() {
     state.potions = s.potions || 0;
     state.bossKills = s.bossKills || 0;
     state.flowerCount = s.flowerCount || 0;
+    state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
+    state.chestsOpened = s.chestsOpened || [];
+    if (state.chests) state.chests.forEach((c, i) => { c.opened = state.chestsOpened.includes(i); c.beam.visible = !c.opened; });
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
       if (s.quest.idx === undefined) {
@@ -1102,6 +1123,56 @@ function updateFlowers(dt, now) {
   }
 }
 
+// ---------- 보물상자 (탐험 요소): 언덕 곳곳 5개, 근접 시 개봉 ----------
+const CHESTS = [
+  { x: 34, z: 44, gold: 15 },
+  { x: -62, z: -24, gold: 20 },
+  { x: 22, z: -42, gold: 15 },
+  { x: -48, z: 30, gold: 25 },
+  { x: 58, z: 18, gold: 30 },
+];
+async function buildChests() {
+  try {
+    const gl = await load('assets/dungeon/chest_gold.glb');
+    const bb = new THREE.Box3().setFromObject(gl.scene);
+    const sz = bb.getSize(new THREE.Vector3());
+    const sc = 0.6 / (sz.y || 1);
+    state.chests = [];
+    CHESTS.forEach((c, i) => {
+      const root = shadowify(gl.scene.clone(true));
+      root.scale.setScalar(sc);
+      root.position.set(c.x, 0, c.z);
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35, 0.55, 6, 10, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      beam.position.y = 3;
+      root.add(beam);
+      scene.add(root);
+      const opened = (state.chestsOpened || []).includes(i);
+      beam.visible = !opened;
+      state.chests.push({ root, beam, x: c.x, z: c.z, gold: c.gold, opened });
+    });
+  } catch (e) { console.warn('chest fail', e); }
+}
+function updateChests() {
+  if (!state.chests || state.dead) return;
+  for (let i = 0; i < state.chests.length; i++) {
+    const c = state.chests[i];
+    if (c.opened) continue;
+    if (state.player.position.distanceTo(c.root.position) < 1.4) {
+      c.opened = true;
+      c.beam.visible = false;
+      state.gold += c.gold;
+      state.chestsOpened = state.chests.map((o, j) => (o.opened ? j : -1)).filter((j) => j >= 0);
+      sfx('reward', 1);
+      toast(`보물상자! +${c.gold} 골드 (${state.chestsOpened.length}/${CHESTS.length})`);
+      state.anim.playOnce('pick_up', 'pick');
+      saveGame();
+    }
+  }
+}
+
 function mulberry32(a) {
   return function () {
     a |= 0; a = (a + 0x6d2b79f5) | 0;
@@ -1209,7 +1280,13 @@ function objectiveTarget() {
   if (!state.npc) return null;
   const q = state.quest, d = QUESTS[q.idx];
   const npcPos = { x: state.npc.pos.x, z: state.npc.pos.z, label: '마을 장로' };
-  if (!d) return null;
+  if (!d) {
+    const b = state.bounty;
+    if (!b || !b.active) return null;
+    if (state.kills - b.startKills >= 8) return { ...npcPos, label: '장로에게 보고' };
+    const bp = nearestEnemyPos(() => true);
+    return bp ? { x: bp.x, z: bp.z, label: '현상금 사냥' } : null;
+  }
   if (q.state !== 'active') return npcPos;
   if (questProgress() >= d.goal) return { ...npcPos, label: '장로에게 보고' };
   let pos = null;
@@ -1481,9 +1558,12 @@ function tick() {
     const running = keys.has('ShiftLeft') || keys.has('ShiftRight') || (stick.active && m > 0.92);
     let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) : 0;
     // 회피 구르기 중: 구르기 방향으로 빠르게 이동, 다른 조작/공격 불가
-    if (!state.dead && now < state.dodgeUntil) {
-      state.player.position.addScaledVector(state.dodgeDir, 9 * dt);
+    if (!state.dead && state.dodgeFrom && now < state.dodgeUntil + 0.5) {
+      // 시간 기반 보간: 프레임률과 무관하게 0.45초 동안 정확히 4m 이동 (저FPS에서 회피 거리 축소 방지)
+      const k = Math.min(1, Math.max(0, (now - state.dodgeStart) / 0.45));
+      state.player.position.copy(state.dodgeFrom).addScaledVector(state.dodgeDir, 4 * k);
       resolveCollisions(state.player.position);
+      if (now >= state.dodgeUntil) state.dodgeFrom = null; // 창이 지난 첫 프레임에 최종 위치 확정
       speed = 0;
     }
 
@@ -1512,6 +1592,7 @@ function tick() {
 
     for (const e of state.enemies) updateEnemy(e, dt, now);
     updateFlowers(dt, now);
+    updateChests();
 
     // NPC: 대기 애니메이션 + 근접 시 대화 프롬프트
     if (state.npc) {
@@ -1531,8 +1612,15 @@ function tick() {
       qEl.style.display = 'block';
       qEl.innerHTML = `의뢰 · ${qd.name} ${questProgress()} / ${qd.goal}${questProgress() >= qd.goal ? '<br>장로에게 돌아가기' : ''}`;
     } else if (!qd) {
-      qEl.style.display = 'block';
-      qEl.textContent = '모든 의뢰 완료';
+      const b = state.bounty;
+      if (b && b.active) {
+        const bp = Math.min(state.kills - b.startKills, 8);
+        qEl.style.display = 'block';
+        qEl.innerHTML = `현상금 · 몬스터 처치 ${bp} / 8${bp >= 8 ? '<br>장로에게 돌아가기' : ''}`;
+      } else {
+        qEl.style.display = 'block';
+        qEl.textContent = '모든 의뢰 완료';
+      }
     } else {
       qEl.style.display = 'none';
     }
@@ -1573,7 +1661,7 @@ function tick() {
     // 골드/물약 표시
     const goldEl = document.getElementById('gold');
     goldEl.style.display = (state.gold > 0 || state.potions > 0) ? 'block' : 'none';
-    goldEl.textContent = `골드 ${state.gold}G`;
+    goldEl.textContent = `골드 ${state.gold}G` + (state.chestsOpened && state.chestsOpened.length ? ` · 보물 ${state.chestsOpened.length}/${CHESTS.length}` : '');
     const potBtn = document.getElementById('pot');
     const potLabel = `물약 ${state.potions}`;
     if (potBtn.textContent !== potLabel) potBtn.textContent = potLabel;
@@ -1598,6 +1686,7 @@ function tick() {
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, autoOn: state.autoOn, inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount,
+    chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
     bossHp: state.boss ? state.boss.hp : null, bossDead: state.boss ? state.boss.dead : null,
     bossPos: state.boss ? state.boss.root.position.toArray().map((v) => +v.toFixed(1)) : null,
