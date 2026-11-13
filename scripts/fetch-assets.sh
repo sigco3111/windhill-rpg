@@ -20,6 +20,12 @@ fetch fantasy-town "$BASE/v1.0/fantasy-town-kit-1.0.zip"
 fetch kaykit-dungeon "$BASE/v1.1/kaykit-dungeon-remastered-1.0.zip"
 fetch quaternius-village "$BASE/v4.0/quaternius-medieval-village.zip"
 fetch easy-enemy "$BASE/v8.7/easy-enemy-pack.zip"
+# 오디오 (sigco3111/assets-audio: Kenney zip은 루트 blob, chiptune은 릴리스)
+AB="https://github.com/sigco3111/assets-audio"
+fetch kenney-rpg-audio "$AB/raw/main/kenney_rpgaudio.zip"
+fetch kenney-impact-sounds "$AB/raw/main/kenney_impactsounds.zip"
+fetch kenney-music-jingles "$AB/raw/main/kenney_musicjingles.zip"
+fetch chiptune-exploration "$AB/releases/download/v5.0/chiptune-exploration.zip"
 # KayKit Skeletons는 분할 zip이라 결합이 필요하다
 curl -sSL -o "$TMP/s.zip"  "$BASE/v2.0/kaykit-skeletons-1.0.zip"
 curl -sSL -o "$TMP/s.z01" "$BASE/v2.0/kaykit-skeletons-1.0.z01"
