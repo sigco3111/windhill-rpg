@@ -374,7 +374,7 @@ const PFROG = { ...FROG, hp: 24, dmg: 5, speed: 2.4, cd: 1.3, gold: 8, label: '�
 const SRAT = { ...RAT, hp: 16, dmg: 4, speed: 3.8, gold: 7, label: '그림자 쥐', tint: 0x3a3a55 };
 const FSKEL = { ...ENEMY, hp: 32, dmg: 7, speed: 2.2, gold: 10, label: '서리 스켈레톤', tint: 0x55bbff, emis: 0x0a2a3a };
 // 황금 쥐: 희귀 출현, 플레이어에게서 도망, 60초 한정
-const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, emis: 0x553f00, flee: true, noElite: true };
+const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, tintMix: 0.85, emis: 0x7a5c00, flee: true, noElite: true };
 
 // ---------- 토스트 (짧은 알림) ----------
 let toastTimer = 0;
@@ -621,7 +621,7 @@ async function build() {
         if (!o.isMesh || !o.material) return;
         const tint = (m) => {
           const c = m.clone();
-          if (c.color && st.tint) c.color.lerp(new THREE.Color(st.tint), 0.55);
+          if (c.color && st.tint) c.color.lerp(new THREE.Color(st.tint), st.tintMix ?? 0.55);
           if (c.emissive && st.emis) c.emissive.setHex(st.emis);
           if (st.elite) {
             if (c.color) c.color.lerp(new THREE.Color(0xff4040), 0.5);
