@@ -366,6 +366,10 @@ const PLAYER = { dmg: 10, range: 2.4, arc: Math.PI * 0.6 };
 const FROG = { hp: 15, dmg: 3, speed: 2.0, aggro: 9, range: 1.4, cd: 1.6, label: '개구리', windup: 0.5, leap: 2.8, gold: 4, teleH: 1.1 };
 const RAT = { hp: 10, dmg: 2, speed: 3.2, aggro: 8, range: 1.2, cd: 1.1, label: '쥐', windup: 0.28, gold: 3, teleH: 0.7 };
 const SPIDER = { hp: 25, dmg: 6, speed: 2.6, aggro: 10, range: 1.5, cd: 1.5, label: '거미', windup: 0.6, gold: 6, teleH: 1.3 };
+// Batch P — 틴트 변형 신규 종 (도감은 label 기준으로 자동 집계)
+const PFROG = { ...FROG, hp: 24, dmg: 5, speed: 2.4, cd: 1.3, gold: 8, label: '독 개구리', tint: 0x6fd94f };
+const SRAT = { ...RAT, hp: 16, dmg: 4, speed: 3.8, gold: 7, label: '그림자 쥐', tint: 0x3a3a55 };
+const FSKEL = { ...ENEMY, hp: 32, dmg: 7, speed: 2.2, gold: 10, label: '서리 스켈레톤', tint: 0x55bbff, emis: 0x0a2a3a };
 
 // ---------- 토스트 (짧은 알림) ----------
 let toastTimer = 0;
@@ -606,14 +610,18 @@ async function build() {
     }
     const root = shadowify(SkeletonUtils.clone(gltf.scene));
     root.position.set(x, 0, z);
-    if (st.elite) {
-      root.scale.multiplyScalar(1.22);
+    if (st.elite || st.tint) {
+      if (st.elite) root.scale.multiplyScalar(1.22);
       root.traverse((o) => {
         if (!o.isMesh || !o.material) return;
         const tint = (m) => {
           const c = m.clone();
-          if (c.color) c.color.lerp(new THREE.Color(0xff4040), 0.5);
-          if (c.emissive) c.emissive.setHex(0x330000);
+          if (c.color && st.tint) c.color.lerp(new THREE.Color(st.tint), 0.55);
+          if (c.emissive && st.emis) c.emissive.setHex(st.emis);
+          if (st.elite) {
+            if (c.color) c.color.lerp(new THREE.Color(0xff4040), 0.5);
+            if (c.emissive) c.emissive.setHex(0x330000);
+          }
           return c;
         };
         o.material = Array.isArray(o.material) ? o.material.map(tint) : tint(o.material);
@@ -630,6 +638,8 @@ async function build() {
     const a = (i / 3) * Math.PI * 2 + 0.8;
     spawn(skel, ENEMY, Math.cos(a) * 20, Math.sin(a) * 20);
   }
+  spawn(skel, FSKEL, 30, 8);
+  spawn(skel, FSKEL, -8, 32);
   state.spawn = spawn;
 
 
@@ -698,6 +708,7 @@ async function build() {
   const fieldMobs = [
     ['Frog', FROG, 0.42, [[14, 16], [-18, 22]]],
     ['Rat', RAT, 0.42, [[24, 6], [8, 26], [-26, 10]]],
+    ['Rat', SRAT, 0.42, [[20, -22], [-28, -4]]],
     ['Spider', SPIDER, 0.55, [[32, -14], [-30, -18]]],
   ];
   await Promise.all(fieldMobs.map(async ([name, stats, hMul, spots]) => {
@@ -802,6 +813,7 @@ async function build() {
     const fbx2 = new FBXLoader();
     const forestMobs = [
       ['Frog', FROG, 0.42, [[-40, 24], [-50, 12]]],
+      ['Frog', PFROG, 0.42, [[-44, 18], [-36, 30]]],
       ['Spider', SPIDER, 0.55, [[-38, 10], [-52, 26]]],
     ];
     await Promise.all(forestMobs.map(async ([name, stats, hMul, spots]) => {
@@ -1522,6 +1534,7 @@ const ACH = [
   { id: 'geared', name: '무장한 유랑자 (장비 3종)', cond: () => state.gear.sword >= 1 && state.gear.armor >= 1 && state.gear.boots >= 1 },
   { id: 'legend', name: '전설의 유랑자 (최고 등급 3종)', cond: () => state.gear.sword >= 3 && state.gear.armor >= 3 && state.gear.boots >= 3 },
   { id: 'rich300', name: '부유한 유랑자 (300G)', cond: () => state.gold >= 300 },
+  { id: 'variant3', name: '변종 사냥꾼 (새 몬스터 3종)', cond: () => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].every((l) => (state.dex[l] || 0) >= 1) },
 ];
 function checkAch() {
   let changed = false;
