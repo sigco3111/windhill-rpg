@@ -19,7 +19,8 @@ npm run build               # 배포 빌드 (dist/)
 ## 에셋 출처와 라이선스
 
 에셋은 저장소에 포함하지 않고 `scripts/fetch-assets.sh`가
-[sigco3111/assets-3d-lowpoly](https://github.com/sigco3111/assets-3d-lowpoly) 릴리스에서 내려받는다.
+모델은 [sigco3111/assets-3d-lowpoly](https://github.com/sigco3111/assets-3d-lowpoly) 릴리스에서,
+오디오는 [sigco3111/assets-audio](https://github.com/sigco3111/assets-audio)에서 내려받는다.
 
 | 팩 | 제작자 | 라이선스 |
 | --- | --- | --- |
@@ -30,5 +31,10 @@ npm run build               # 배포 빌드 (dist/)
 | KayKit Dungeon Remastered | Kay Lousberg | CC0 |
 | Quaternius Medieval Village | Quaternius | CC0 (공식 팩 페이지 직접 확인) |
 | Easy Enemy Pack | Quaternius | CC0 (공식 팩 페이지 직접 확인) |
+| Kenney RPG Audio | Kenney | CC0 (zip 동봉 License.txt 확인) |
+| Kenney Impact Sounds | Kenney | CC0 (zip 동봉 License.txt 확인) |
+| Kenney Music Jingles | Kenney | CC0 |
+| Chiptune: Exploration | ansimuz (OpenGameArt) | CC0 (수집 라이선스 파일 확인) |
 
 UI 폰트: Noto Sans KR (Google Fonts, SIL OFL) — `public/fonts`에 둔다.
+
