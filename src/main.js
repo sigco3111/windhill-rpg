@@ -44,16 +44,26 @@ scene.add(ground);
 
 // ---------- 로딩 유틸 ----------
 const gltfLoader = new GLTFLoader();
-const load = (url) => new Promise((res, rej) => gltfLoader.load(url, res, undefined, rej));
+// 로딩 진행 표시: 추적 대상 로드 수/완료 수를 #loadmsg에 반영
+let loadTotal = 0, loadDone = 0;
+function updLoading() {
+  const el = document.getElementById('loadmsg');
+  if (el) el.textContent = loadTotal ? `불러오는 중… ${loadDone}/${loadTotal}` : '불러오는 중…';
+}
+function track(p) {
+  loadTotal++; updLoading();
+  return p.then((v) => { loadDone++; updLoading(); return v; }, (e) => { loadDone++; updLoading(); throw e; });
+}
+const load = (url) => track(new Promise((res, rej) => gltfLoader.load(url, res, undefined, rej)));
 async function loadObj(base) {
   // 로더는 호출마다 새로 생성 (공유 시 병렬 로드에서 재질이 섞임)
   const mtlLoader = new MTLLoader();
   const objLoader = new OBJLoader();
-  const mtl = await mtlLoader.loadAsync(`assets/village/${base}.mtl`);
+  const mtl = await track(mtlLoader.loadAsync(`assets/village/${base}.mtl`));
   mtl.preload();
   // OBJ 안의 라인(l)/포인트(p) 요소는 버린다: OBJLoader는 객체에 'l' 요소가 하나라도
   // 있으면 해당 객체 전체를 LineSegments로 만들어 면이 와이어프레임처럼 보이는 문제가 있음
-  const objText = await (await fetch(`assets/village/${base}.obj`)).text();
+  const objText = await (await track(fetch(`assets/village/${base}.obj`))).text();
   const stripped = objText.split('\n').filter((l) => !/^[lp] /.test(l)).join('\n');
   const obj = objLoader.setMaterials(mtl).parse(stripped);
   obj.traverse((o) => {
@@ -426,7 +436,7 @@ async function build() {
   ];
   await Promise.all(fieldMobs.map(async ([name, stats, hMul, spots]) => {
     try {
-      const fbx = await fbxLoader.loadAsync(`assets/enemies/${name}.fbx`);
+      const fbx = await track(fbxLoader.loadAsync(`assets/enemies/${name}.fbx`));
       const bb = new THREE.Box3().setFromObject(fbx);
       const sz = bb.getSize(new THREE.Vector3());
       const sc = (knightH * hMul) / (sz.y || 1);
@@ -513,6 +523,8 @@ async function build() {
 
   state.ready = true;
   window.__gameReady = true;
+  const lo = document.getElementById('loading');
+  if (lo) lo.style.display = 'none';
   if (params.get('reset') === '1') localStorage.removeItem(SAVE_KEY);
   loadGame();
   window.__animNames = state.anim.names;
@@ -992,5 +1004,15 @@ if (tp) {
   }, 300);
 }
 
-build().catch((e) => { console.error(e); window.__loadError = String(e); });
+build().catch((e) => {
+  console.error(e);
+  window.__loadError = String(e);
+  const lo = document.getElementById('loading');
+  if (lo) {
+    lo.style.display = 'flex';
+    lo.innerHTML = '<div class="ttl">불러오기에 실패했습니다</div><div id="loadmsg">네트워크 상태를 확인한 뒤 다시 시도해 주세요.</div><button id="retry">다시 시도</button>';
+    const b = document.getElementById('retry');
+    if (b) b.onclick = () => location.reload();
+  }
+});
 tick();
