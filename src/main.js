@@ -346,6 +346,7 @@ const state = {
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
+  mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
@@ -916,6 +917,7 @@ async function build() {
     setFlowers(n) { state.flowerCount = n; },
     setFlowersSold(n) { state.flowersSold = n; },
     setMat(name, n) { state.mats[name] = n; },
+    setMapFrags(n) { state.mapFrags = n; if (n >= 3 && !state.treasureDone) spawnTreasure(); },
     setDialog(v) { state.dialog = !!v; },
     setRain(sec) { weather.mode = 'rain'; weather.until = clock.elapsedTime + sec; },
     flowerPos(i) { return state.flowers ? state.flowers[i].root.position.toArray() : null; },
@@ -1214,6 +1216,7 @@ function drawMinimap() {
     mctx.strokeRect(px(DUNGEON.cx - DUNGEON.half), pz(DUNGEON.cz - DUNGEON.half), ((DUNGEON.half * 2) / MMAP_RANGE) * (W / 2), ((DUNGEON.half * 2) / MMAP_RANGE) * (H / 2));
   }
   if (state.chests) for (const c of state.chests) if (!c.opened) dot(c.x, c.z, '#ffd94d', 3);
+  if (state.treasure && !state.treasureDone) dot(state.treasure.x, state.treasure.z, '#7de8ff', 4);
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
   if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
@@ -1334,6 +1337,7 @@ function saveGame() {
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone,
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1371,6 +1375,10 @@ function loadGame() {
     if (s.gear) state.gear = { sword: s.gear.sword || 0, armor: s.gear.armor || 0, boots: s.gear.boots || 0 };
     if (s.ach) state.ach = s.ach;
     if (state.chests) state.chests.forEach((c, i) => { c.opened = state.chestsOpened.includes(i); c.beam.visible = !c.opened; });
+    // 지도 조각: 구버전 세이브는 이미 연 조각 상자 수로 소급 산정
+    state.mapFrags = s.mapFrags !== undefined ? s.mapFrags : (s.chestsOpened || []).filter((i) => FRAG_CHESTS.has(i)).length;
+    state.treasureDone = !!s.treasureDone;
+    if (state.mapFrags >= 3 && !state.treasureDone) spawnTreasure();
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
       if (s.quest.idx === undefined) {
@@ -1530,12 +1538,53 @@ const CHESTS = [
   { x: -48, z: 30, gold: 25 },
   { x: 58, z: 18, gold: 30 },
 ];
+// 숨겨진 보물: 이 상자들에서 낡은 지도 조각 획득, 3개 모으면 보물 위치 공개
+const FRAG_CHESTS = new Set([1, 3, 4]);
+const TREASURE_POS = { x: -20, z: -58 };
+const TREASURE_GOLD = 150;
+function spawnTreasure() {
+  if (state.treasure || state.treasureDone) return;
+  let root;
+  if (state.chestProto) {
+    root = shadowify(state.chestProto.clone(true));
+    root.scale.setScalar(state.chestScale * 1.6);
+    root.traverse((o) => { if (o.isMesh && o.material) { o.material = o.material.clone(); if (o.material.color) o.material.color.lerp(new THREE.Color(0xffd24a), 0.55); if (o.material.emissive) o.material.emissive.setHex(0x332200); } });
+  } else {
+    root = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.7), new THREE.MeshLambertMaterial({ color: 0xd4a017, emissive: 0x332200 }));
+    root.position.y = 0.35;
+  }
+  root.position.x = TREASURE_POS.x; root.position.z = TREASURE_POS.z;
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.5, 0.8, 10, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0x7de8ff, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })
+  );
+  beam.position.y = 5;
+  root.add(beam);
+  scene.add(root);
+  state.treasure = { root, beam, x: TREASURE_POS.x, z: TREASURE_POS.z };
+}
+function updateTreasure() {
+  const t = state.treasure;
+  if (!t || state.treasureDone || state.dead) return;
+  if (state.player.position.distanceTo(t.root.position) < 1.8) {
+    state.treasureDone = true;
+    t.beam.visible = false;
+    state.gold += TREASURE_GOLD;
+    state.potions = Math.min(SHOP.potionMax, state.potions + 2);
+    sfx('reward', 1);
+    toast(`숨겨진 보물! +${TREASURE_GOLD} 골드 · 물약 +2`);
+    state.anim.playOnce('pick_up', 'pick');
+    checkAch();
+    saveGame();
+  }
+}
 async function buildChests() {
   try {
     const gl = await load('assets/dungeon/chest_gold.glb');
     const bb = new THREE.Box3().setFromObject(gl.scene);
     const sz = bb.getSize(new THREE.Vector3());
     const sc = 0.6 / (sz.y || 1);
+    state.chestProto = gl.scene; state.chestScale = sc;
     state.chests = [];
     CHESTS.forEach((c, i) => {
       const root = shadowify(gl.scene.clone(true));
@@ -1565,7 +1614,13 @@ function updateChests() {
       state.gold += c.gold;
       state.chestsOpened = state.chests.map((o, j) => (o.opened ? j : -1)).filter((j) => j >= 0);
       sfx('reward', 1);
-      toast(`보물상자! +${c.gold} 골드 (${state.chestsOpened.length}/${CHESTS.length})`);
+      let extra = '';
+      if (FRAG_CHESTS.has(i) && !state.treasureDone) {
+        state.mapFrags = Math.min(3, (state.mapFrags || 0) + 1);
+        extra = ` · 낡은 지도 조각 (${state.mapFrags}/3)`;
+        if (state.mapFrags >= 3) { spawnTreasure(); extra += ' — 지도 완성! 빛기둥을 찾아보세요'; }
+      }
+      toast(`보물상자! +${c.gold} 골드 (${state.chestsOpened.length}/${CHESTS.length})${extra}`);
       state.anim.playOnce('pick_up', 'pick');
       saveGame();
     }
@@ -1748,6 +1803,7 @@ const ACH = [
   { id: 'bounty5', name: '언덕의 해결사 (반복 의뢰 5회)', cond: () => (state.bounty && state.bounty.count || 0) >= 5 },
   { id: 'shrine3', name: '바람 제단 순례 (제단 3곳)', cond: () => (state.shrinesPrayed || []).length >= 3 },
   { id: 'trial1', name: '시련의 돌 정복 (웨이브 3 클리어)', cond: () => (state.trialDone || 0) >= 1 },
+  { id: 'treasureHidden', name: '숨겨진 보물 (지도 완성)', cond: () => !!state.treasureDone },
 ];
 function checkAch() {
   let changed = false;
@@ -1909,7 +1965,8 @@ function nearestFlowerPos() {
 }
 function updateGuidance(now) {
   const nav = document.getElementById('nav');
-  const t = state.tutDone || state.quest.idx > 0 || state.quest.state === 'active' ? objectiveTarget() : (state.npc ? { x: state.npc.pos.x, z: state.npc.pos.z, label: '마을 장로' } : null);
+  let t = state.tutDone || state.quest.idx > 0 || state.quest.state === 'active' ? objectiveTarget() : (state.npc ? { x: state.npc.pos.x, z: state.npc.pos.z, label: '마을 장로' } : null);
+  if (!t && state.treasure && !state.treasureDone) t = { x: state.treasure.x, z: state.treasure.z, label: '숨겨진 보물' };
   if (!t || state.dead) { marker.visible = false; nav.style.display = 'none'; return; }
   marker.visible = true;
   marker.position.set(t.x, 0, t.z);
@@ -2204,6 +2261,7 @@ function tick() {
     for (const e of state.enemies) updateEnemy(e, dt, now);
     updateFlowers(dt, now);
     updateChests();
+    updateTreasure();
     updateShrines(now);
     updateTrial(now);
     checkAch();
@@ -2303,7 +2361,7 @@ function tick() {
     // 골드/물약 표시
     const goldEl = document.getElementById('gold');
     goldEl.style.display = 'block';
-    goldEl.textContent = `Lv ${state.level || 1} · 골드 ${state.gold}G` + (state.chestsOpened && state.chestsOpened.length ? ` · 보물 ${state.chestsOpened.length}/${CHESTS.length}` : '') + (Object.keys(state.ach).length ? ` · 업적 ${Object.keys(state.ach).length}/${ACH.length}` : '');
+    goldEl.textContent = `Lv ${state.level || 1} · 골드 ${state.gold}G` + (state.chestsOpened && state.chestsOpened.length ? ` · 보물 ${state.chestsOpened.length}/${CHESTS.length}` : '') + (state.mapFrags > 0 && !state.treasureDone ? ` · 지도 ${state.mapFrags}/3` : '') + (Object.keys(state.ach).length ? ` · 업적 ${Object.keys(state.ach).length}/${ACH.length}` : '');
     const potBtn = document.getElementById('pot');
     const potLabel = `물약 ${state.potions}`;
     if (potBtn.textContent !== potLabel) potBtn.textContent = potLabel;
@@ -2329,6 +2387,7 @@ function tick() {
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0, order: state.order, orderDone: state.orderDone || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
+    mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
