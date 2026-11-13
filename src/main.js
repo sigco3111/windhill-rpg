@@ -349,6 +349,7 @@ const state = {
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
   golden: null, // 황금 쥐: { nextAt, active, until }
+  rings: null, ringsPassed: [], // 바람의 고리: 5곳 통과 탐험 요소
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
@@ -890,6 +891,7 @@ async function build() {
   const lo = document.getElementById('loading');
   if (lo) lo.style.display = 'none';
   if (params.get('reset') === '1') localStorage.removeItem(SAVE_KEY);
+  spawnRings();
   loadGame();
   window.__animNames = state.anim.names;
   window.__game = {
@@ -1228,6 +1230,7 @@ function drawMinimap() {
   if (state.treasure && !state.treasureDone) dot(state.treasure.x, state.treasure.z, '#7de8ff', 4);
   if (state.dens) for (const d of state.dens) if (!d.cleared) dot(d.x, d.z, '#ff6a5a', 3);
   if (state.golden && state.golden.active && !state.golden.active.dead) dot(state.golden.active.root.position.x, state.golden.active.root.position.z, '#fff04a', 4.5);
+  if (state.rings) for (const r of state.rings) if (!r.passed) dot(r.x, r.z, '#9fdcff', 3.5);
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
   if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
@@ -1348,7 +1351,7 @@ function saveGame() {
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
-      mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [],
+      mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [],
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1391,6 +1394,8 @@ function loadGame() {
     state.treasureDone = !!s.treasureDone;
     if (state.mapFrags >= 3 && !state.treasureDone) spawnTreasure();
     state.densCleared = s.densCleared || [];
+    state.ringsPassed = s.ringsPassed || [];
+    if (state.rings) state.rings.forEach((r, i) => { r.passed = state.ringsPassed.includes(i); r.mesh.visible = !r.passed; r.halo.visible = !r.passed; });
     if (state.dens) state.dens.forEach((d, i) => { d.cleared = state.densCleared.includes(i); d.beam.visible = !d.cleared; });
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
@@ -1724,6 +1729,59 @@ function updateGolden(now) {
   sfx('reward', 0.8);
 }
 
+// ---------- 바람의 고리 5곳: 통과하는 탐험 요소 (1회성, XP·보상) ----------
+const RINGS = [
+  { x: 0, z: -25, name: '마을 외곽' },
+  { x: 28, z: 18, name: '숲' },
+  { x: -42, z: 16, name: '호숫가' },
+  { x: 30, z: -38, name: '묘지 외곽' },
+  { x: -8, z: 60, name: '언덕 북쪽' },
+];
+const RING_XP = 8, RING_ALL_GOLD = 80;
+function spawnRings() {
+  if (state.rings) return;
+  state.rings = RINGS.map((r, i) => {
+    const m = new THREE.Mesh(
+      new THREE.TorusGeometry(2.2, 0.12, 8, 32),
+      new THREE.MeshBasicMaterial({ color: 0x9fdcff, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    m.position.set(r.x, 1.5, r.z);
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(2.2, 0.4, 8, 32),
+      new THREE.MeshBasicMaterial({ color: 0x9fdcff, transparent: true, opacity: 0.15, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    halo.position.copy(m.position);
+    scene.add(m); scene.add(halo);
+    const passed = state.ringsPassed.includes(i);
+    m.visible = !passed; halo.visible = !passed;
+    return { mesh: m, halo, x: r.x, z: r.z, name: r.name, passed };
+  });
+}
+function updateRings(dt) {
+  if (!state.rings || state.dead) return;
+  for (let i = 0; i < state.rings.length; i++) {
+    const r = state.rings[i];
+    if (r.passed) continue;
+    r.mesh.rotation.z += dt * 0.8; r.halo.rotation.z -= dt * 0.5;
+    const dx = state.player.position.x - r.x, dz = state.player.position.z - r.z;
+    if (dx * dx + dz * dz < 1.8 * 1.8) {
+      r.passed = true; r.mesh.visible = false; r.halo.visible = false;
+      state.ringsPassed.push(i);
+      gainXp(RING_XP);
+      sfx('reward', 0.6);
+      const n = state.ringsPassed.length;
+      if (n >= RINGS.length) {
+        state.gold += RING_ALL_GOLD;
+        toast(`바람의 고리 모두 통과! +${RING_ALL_GOLD} 골드`);
+      } else {
+        toast(`바람의 고리 (${n}/${RINGS.length}) +${RING_XP} XP`);
+      }
+      checkAch();
+      saveGame();
+    }
+  }
+}
+
 // ---------- 시련의 돌: 3연속 웨이브 도전 (전투 콘텐츠) ----------
 const TRIAL_POS = { x: -26, z: 6 };
 const TRIAL_WAVES = [
@@ -1903,6 +1961,7 @@ const ACH = [
   { id: 'treasureHidden', name: '숨겨진 보물 (지도 완성)', cond: () => !!state.treasureDone },
   { id: 'den3', name: '소굴 정리 (몬스터 소굴 3곳)', cond: () => (state.densCleared || []).length >= 3 },
   { id: 'golden1', name: '황금 쥐를 잡아라', cond: () => (state.dex['황금 쥐'] || 0) >= 1 },
+  { id: 'wind5', name: '바람의 고리 (5곳 통과)', cond: () => (state.ringsPassed || []).length >= 5 },
 ];
 function checkAch() {
   let changed = false;
@@ -2378,6 +2437,7 @@ function tick() {
     updateTreasure();
     updateDens();
     updateGolden(now);
+    updateRings(dt);
     updateShrines(now);
     updateTrial(now);
     checkAch();
@@ -2513,6 +2573,7 @@ function tick() {
     bossPos: state.boss ? state.boss.root.position.toArray().map((v) => +v.toFixed(1)) : null,
     now: +clock.elapsedTime.toFixed(2), atkUntil: +(state.attackUntil || 0).toFixed(2), cdUntil: +(state.attackCdUntil || 0).toFixed(2), didHit: state.didHit,
     eliteKills: state.eliteKills || 0, dex: { ...state.dex },
+    rings: state.rings ? state.rings.map((r) => ({ x: r.x, z: r.z, name: r.name, passed: r.passed })) : null, ringsDone: state.ringsPassed.length,
     enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1), tele: !!(e.tele && e.tele.visible), elite: !!e.stats.elite, label: e.stats.label, pos: e.root.position.toArray().map((v) => +v.toFixed(1)) })),
   } : null;
   window.__camDbg = { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: camera.fov, yaw: +camYaw.toFixed(2), pitch: +camPitch.toFixed(2), w: innerWidth, h: innerHeight };
