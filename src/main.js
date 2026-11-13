@@ -117,6 +117,68 @@ class AnimSet {
   update(dt) { this.mixer.update(dt); }
 }
 
+// ---------- 오디오 (Kenney RPG Audio / Impact Sounds, ansimuz Chiptune: Exploration — 모두 CC0) ----------
+const audio = { ctx: null, buffers: {}, muted: false, musicOn: false, stepAt: 0, stepN: 0 };
+const AUDIO_FILES = {
+  swing1: '/assets/audio/knifeSlice.ogg', swing2: '/assets/audio/knifeSlice2.ogg',
+  hit1: '/assets/audio/impactPunch_medium_000.ogg', hit2: '/assets/audio/impactPunch_medium_001.ogg',
+  death: '/assets/audio/impactSoft_heavy_000.ogg', hurt: '/assets/audio/impactPunch_heavy_000.ogg',
+  reward: '/assets/audio/handleCoins.ogg', dialog: '/assets/audio/bookOpen.ogg',
+  step1: '/assets/audio/footstep_grass_000.ogg', step2: '/assets/audio/footstep_grass_001.ogg',
+  step3: '/assets/audio/footstep_grass_002.ogg', step4: '/assets/audio/footstep_grass_003.ogg',
+  music: '/assets/audio/exploration.ogg',
+};
+function initAudio() {
+  if (audio.ctx) { if (audio.ctx.state === 'suspended') audio.ctx.resume(); return; }
+  try {
+    audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    audio.master = audio.ctx.createGain();
+    audio.master.gain.value = 0.8;
+    audio.master.connect(audio.ctx.destination);
+    audio.musicGain = audio.ctx.createGain();
+    audio.musicGain.gain.value = 0.3;
+    audio.musicGain.connect(audio.master);
+    for (const [k, url] of Object.entries(AUDIO_FILES)) {
+      fetch(url).then((r) => r.arrayBuffer()).then((ab) => audio.ctx.decodeAudioData(ab))
+        .then((buf) => { audio.buffers[k] = buf; if (k === 'music') startMusic(); })
+        .catch((e) => console.warn('audio load fail', k, e));
+    }
+  } catch (e) { console.warn('audio init fail', e); }
+}
+function sfx(key, vol = 1) {
+  if (!audio.ctx || audio.muted || !audio.buffers[key]) return;
+  const src = audio.ctx.createBufferSource();
+  src.buffer = audio.buffers[key];
+  src.playbackRate.value = 0.95 + Math.random() * 0.1;
+  const g = audio.ctx.createGain();
+  g.gain.value = vol;
+  src.connect(g); g.connect(audio.master);
+  src.start();
+}
+function startMusic() {
+  if (!audio.ctx || audio.musicOn || !audio.buffers.music) return;
+  const src = audio.ctx.createBufferSource();
+  src.buffer = audio.buffers.music;
+  src.loop = true;
+  src.connect(audio.musicGain);
+  src.start();
+  audio.musicOn = true;
+}
+// 소리 토글 버튼 (#snd) — 초기 상태는 '소리 끔'(아직 AudioContext 미생성, 첫 입력 후 재생)
+window.__audio = audio; // 검증용
+const sndBtn = document.getElementById('snd');
+function syncSndBtn() { sndBtn.textContent = audio.muted ? '소리 켜기' : '소리 끄기'; }
+sndBtn.textContent = '소리 켜기';
+sndBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  initAudio();
+  audio.muted = !audio.muted;
+  if (audio.master) audio.master.gain.value = audio.muted ? 0 : 0.8;
+  syncSndBtn();
+});
+addEventListener('pointerdown', () => { initAudio(); if (!audio.muted) syncSndBtn(); }, { passive: true });
+addEventListener('keydown', () => { initAudio(); if (!audio.muted) syncSndBtn(); });
+
 // ---------- 입력 ----------
 const keys = new Set();
 addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'Space') { e.preventDefault(); tryAttack(); } if (e.code === 'KeyE') tryInteract(); });
@@ -229,6 +291,7 @@ function tryAttack() {
   state.attackUntil = now + Math.min(dur * 0.8, 0.7);
   state.attackCdUntil = now + Math.max(dur * 0.9, 0.5);
   state.didHit = false;
+  sfx(Math.random() < 0.5 ? 'swing1' : 'swing2', 0.7);
 }
 
 function hitFlash(root) {
@@ -499,6 +562,7 @@ function tryInteract() {
 }
 function openDialog() {
   state.dialog = true;
+  sfx('dialog', 0.7);
   const q = state.quest;
   const d = QUESTS[q.idx];
   const name = document.getElementById('dlg-name');
@@ -525,6 +589,7 @@ function openDialog() {
     mk('사례를 받는다', '', () => {
       q.idx++; q.state = 'none'; q.startKills = 0;
       applyProgression(); state.hp = state.maxHp;
+      sfx('reward', 1);
       closeDialog(); saveGame();
     });
   } else if (q.state === 'active') {
@@ -668,9 +733,11 @@ function playerAttackHit() {
     if (fwd.angleTo(to.normalize()) > PLAYER.arc / 2) continue;
     e.hp -= PLAYER.dmg;
     hitFlash(e.root);
+    sfx(Math.random() < 0.5 ? 'hit1' : 'hit2', 0.9);
     if (e.hp <= 0) {
       e.dead = true; e.mode = 'dead';
       e.anim.playOnce('death_a', 'death');
+      sfx('death', 0.9);
       e.respawnAt = clock.elapsedTime + 6;
       state.kills++;
       if (e.stats.skel) state.skKills++;
@@ -710,6 +777,7 @@ function updateEnemy(e, dt, now) {
       if (!state.dead && e.root.position.distanceTo(p) < e.stats.range + 0.4) {
         state.hp = Math.max(0, state.hp - e.stats.dmg);
         hitFlash(state.player);
+        sfx('hurt', 0.9);
         if (state.hp <= 0) playerDie();
       }
     }
@@ -799,6 +867,11 @@ function tick() {
       const d = Math.hypot(state.player.position.x, state.player.position.z);
       if (d > 78) state.player.position.multiplyScalar(78 / d);
       state.anim.play(running ? 'running' : 'walking');
+      if (now >= audio.stepAt) {
+        audio.stepAt = now + (running ? 0.27 : 0.36);
+        audio.stepN = (audio.stepN + 1) % 4;
+        sfx('step' + (audio.stepN + 1), running ? 0.35 : 0.28);
+      }
     } else if (!attacking && !state.dead) {
       state.anim.play('Idle');
     }
