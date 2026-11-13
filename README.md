@@ -38,3 +38,4 @@ npm run build               # 배포 빌드 (dist/)
 
 UI 폰트: Noto Sans KR (Google Fonts, SIL OFL) — `public/fonts`에 둔다.
 
+배포: GitHub Pages로 공개 배포 진행 중.
