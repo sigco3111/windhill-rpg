@@ -300,6 +300,7 @@ const state = {
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, boss: null, dex: {}, // 도감: 종류별 처치 수
+  level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
@@ -821,6 +822,7 @@ async function build() {
     setCamYaw(v) { camYaw = v; },
     setHp(v) { state.hp = Math.max(0, Math.min(state.maxHp, v)); },
     setGold(v) { state.gold = Math.max(0, v); },
+    addXp(n) { gainXp(n); },
     setQuest(idx, st) { state.quest = { idx, state: st, startKills: st === 'active' ? questCounter({ idx }) : 0 }; applyProgression(); },
     setFlowers(n) { state.flowerCount = n; },
     flowerPos(i) { return state.flowers ? state.flowers[i].root.position.toArray() : null; },
@@ -870,7 +872,21 @@ function applyProgression() {
   if (done >= 2) PLAYER.dmg = 14;
   if (done >= 3) state.maxHp = 160;
   if (done >= 5) state.maxHp = 190;
+  state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
   state.hp = Math.min(state.hp, state.maxHp);
+}
+// ---------- 레벨·경험치 ----------
+function xpNeed(level) { return 40 + (level - 1) * 20; }
+function gainXp(n) {
+  state.xp = (state.xp || 0) + n;
+  while (state.xp >= xpNeed(state.level || 1)) {
+    state.xp -= xpNeed(state.level || 1);
+    state.level = (state.level || 1) + 1;
+    applyProgression();
+    state.hp = state.maxHp; // 레벨 업 시 완전 회복
+    sfx('reward', 1);
+    toast(`레벨 업! Lv ${state.level} — 최대 체력이 늘었습니다`);
+  }
 }
 
 const dlgEl = () => document.getElementById('dlg');
@@ -1029,7 +1045,7 @@ function openInv() {
   btns.innerHTML = '';
   const renderInv = () => {
     document.getElementById('dlg-text').innerHTML =
-      `공격력 <b>${PLAYER.dmg + GEAR_ATK[state.gear.sword]}</b> · 받는 피해 감소 <b>${GEAR_DEF[state.gear.armor]}</b> · 이동속도 <b>×${GEAR_SPD[state.gear.boots]}</b><br>` +
+      `레벨 <b>${state.level || 1}</b> (경험치 ${state.xp || 0}/${xpNeed(state.level || 1)}) · 공격력 <b>${PLAYER.dmg + GEAR_ATK[state.gear.sword]}</b> · 받는 피해 감소 <b>${GEAR_DEF[state.gear.armor]}</b> · 이동속도 <b>×${GEAR_SPD[state.gear.boots]}</b><br>` +
       `골드 <b>${state.gold}G</b> · 물약 <b>${state.potions}/${SHOP.potionMax}</b> · 바람꽃 <b>${state.flowerCount}송이</b> · 보물 상자 <b>${(state.chestsOpened || []).length}개</b>`;
     const gearOwned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? `${g.names[state.gear[g.key] - 1]}(${g.key === 'sword' ? '검' : g.key === 'armor' ? '갑옷' : '부츠'})` : null).filter(Boolean);
     list.innerHTML =
@@ -1116,7 +1132,7 @@ function saveGame() {
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
-      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, dex: state.dex,
+      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, dex: state.dex, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -1141,6 +1157,9 @@ function loadGame() {
     state.eliteKills = s.eliteKills || 0;
     state.flowerCount = s.flowerCount || 0;
     state.dex = s.dex || {};
+    state.level = s.level || 1;
+    state.xp = s.xp || 0;
+    applyProgression();
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.chestsOpened = s.chestsOpened || [];
     if (s.gear) state.gear = { sword: s.gear.sword || 0, armor: s.gear.armor || 0, boots: s.gear.boots || 0 };
@@ -1355,6 +1374,7 @@ const ACH = [
   { id: 'treasure5', name: '보물 사냥꾼 (상자 5개)', cond: () => (state.chestsOpened || []).length >= 5 },
   { id: 'boss1', name: '묘지 정복자', cond: () => state.bossKills >= 1 },
   { id: 'elite3', name: '엘리트 사냥꾼 (엘리트 3마리)', cond: () => (state.eliteKills || 0) >= 3 },
+  { id: 'lvl5', name: '모험가 (레벨 5)', cond: () => (state.level || 1) >= 5 },
   { id: 'geared', name: '무장한 유랑자 (장비 3종)', cond: () => state.gear.sword >= 1 && state.gear.armor >= 1 && state.gear.boots >= 1 },
   { id: 'rich300', name: '부유한 유랑자 (300G)', cond: () => state.gold >= 300 },
 ];
@@ -1592,6 +1612,7 @@ function playerAttackHit() {
       e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
       state.kills++;
       state.dex[e.stats.label] = (state.dex[e.stats.label] || 0) + 1;
+      gainXp(e.stats.gold || 3);
       if (e.stats.skel) state.skKills++;
       if (e.stats.warrior) state.wKills++;
       if (e.stats.boss) state.bossKills++;
@@ -1869,8 +1890,8 @@ function tick() {
     drawMinimap();
     // 골드/물약 표시
     const goldEl = document.getElementById('gold');
-    goldEl.style.display = (state.gold > 0 || state.potions > 0) ? 'block' : 'none';
-    goldEl.textContent = `골드 ${state.gold}G` + (state.chestsOpened && state.chestsOpened.length ? ` · 보물 ${state.chestsOpened.length}/${CHESTS.length}` : '') + (Object.keys(state.ach).length ? ` · 업적 ${Object.keys(state.ach).length}/${ACH.length}` : '');
+    goldEl.style.display = 'block';
+    goldEl.textContent = `Lv ${state.level || 1} · 골드 ${state.gold}G` + (state.chestsOpened && state.chestsOpened.length ? ` · 보물 ${state.chestsOpened.length}/${CHESTS.length}` : '') + (Object.keys(state.ach).length ? ` · 업적 ${Object.keys(state.ach).length}/${ACH.length}` : '');
     const potBtn = document.getElementById('pot');
     const potLabel = `물약 ${state.potions}`;
     if (potBtn.textContent !== potLabel) potBtn.textContent = potLabel;
@@ -1893,7 +1914,7 @@ function tick() {
     hp: state.hp, maxHp: state.maxHp, dead: state.dead, kills: state.kills, dmg: PLAYER.dmg,
     quest: state.quest.state, qidx: state.quest.idx, qprog: questProgress(), dialog: state.dialog,
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
-    gold: state.gold, potions: state.potions, autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
+    gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
