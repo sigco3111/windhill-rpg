@@ -17,6 +17,14 @@ scene.background = new THREE.Color(0x87b5d9);
 scene.fog = new THREE.Fog(0x87b5d9, 40, 120);
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 300);
+// 세로 화면(모바일 포트레잇)에서는 수평 시야가 좁아지므로 FOV를 넓힘
+function applyCamFraming() {
+  const portrait = innerWidth / innerHeight < 0.9;
+  camera.fov = portrait ? 72 : 55;
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+applyCamFraming();
 
 scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x6a8a5a, 0.9));
 const sun = new THREE.DirectionalLight(0xfff3dd, 1.6);
@@ -925,12 +933,14 @@ function tick() {
       camera.position.set(fixedCam[0], fixedCam[1], fixedCam[2]);
       camera.lookAt(fixedCam[3] ?? p.x, fixedCam[4] ?? 1, fixedCam[5] ?? p.z);
     } else {
-      const dist = 5.2, h = 1.6 + Math.sin(camPitch) * 3.2;
+      const portrait = innerWidth / innerHeight < 0.9;
+      const dist = portrait ? 7.8 : 5.2;
+      const h = (portrait ? 2.3 : 1.6) + Math.sin(camPitch) * (portrait ? 4.2 : 3.2);
       camera.position.lerp(new THREE.Vector3(
         p.x - Math.sin(camYaw) * Math.cos(camPitch) * dist, h,
         p.z - Math.cos(camYaw) * Math.cos(camPitch) * dist
       ), Math.min(1, dt * 8));
-      camera.lookAt(p.x, p.y + 1.4, p.z);
+      camera.lookAt(p.x, p.y + (portrait ? 1.0 : 1.4), p.z);
     }
     sun.position.set(p.x + 20, 30, p.z + 12);
     sun.target.position.copy(p);
@@ -959,11 +969,11 @@ function tick() {
     now: +clock.elapsedTime.toFixed(2), atkUntil: +(state.attackUntil || 0).toFixed(2), cdUntil: +(state.attackCdUntil || 0).toFixed(2), didHit: state.didHit,
     enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1) })),
   } : null;
+  window.__camDbg = { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: camera.fov, yaw: +camYaw.toFixed(2), pitch: +camPitch.toFixed(2), w: innerWidth, h: innerHeight };
 }
 
 addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
+  applyCamFraming();
   renderer.setSize(innerWidth, innerHeight);
 });
 
