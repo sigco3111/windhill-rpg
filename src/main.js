@@ -404,7 +404,7 @@ async function build() {
   // FBX 단위가 커서 bbox 높이 기준으로 축소하고, 발이 지면에 닿도록 래퍼로 오프셋
   const fbxLoader = new FBXLoader();
   const fieldMobs = [
-    ['Frog', FROG, 0.5, [[14, 16], [-18, 22]]],
+    ['Frog', FROG, 0.42, [[14, 16], [-18, 22]]],
     ['Rat', RAT, 0.42, [[24, 6], [8, 26], [-26, 10]]],
     ['Spider', SPIDER, 0.55, [[32, -14], [-30, -18]]],
   ];
