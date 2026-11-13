@@ -942,6 +942,10 @@ const QUESTS = [
     offer: '마지막 부탁일세. 지하묘지 깊은 곳에 전사들의 왕, <b>묘지의 왕</b>이 깨어났다네.<br>그를 쓰러뜨려주면 언덕에 진정한 평화가 오겠네. 물약을 챙겨가게나.',
     progress: '지하묘지의 왕을 부탁했었지.',
     done: '묘지의 왕까지 해치우다니! 자네는 이 언덕의 영웅일세!<br>사례일세: <b>최대 체력 160 → 190</b>과 <b>골드 60G</b>.' },
+  { name: '변종 토벌', goal: 3, counter: 'variantKills', unit: '마리',
+    offer: '근래 평범하지 않은 몬스터가 목격된단다. 숲의 <b>독 개구리</b>, 들판의 <b>그림자 쥐</b>, 북쪽의 <b>서리 스켈레톤</b>... 변종들일세.<br>변종을 <b>3마리</b> 처치해주게. 어느 종이든 좋네.',
+    progress: '변종 토벌을 부탁했었지.',
+    done: '변종들까지 정리했군! 이제 언덕 어디든 안전하겠어.<br>사례일세: <b>공격력 14 → 18</b>과 <b>골드 80G</b>.' },
 ];
 function questCounter(q) {
   const d = QUESTS[q.idx];
@@ -951,6 +955,7 @@ function questCounter(q) {
   if (d.counter === 'fieldKills') return (state.kills || 0) - (state.skKills || 0); // 전사 포함 스켈레톤 제외
   if (d.counter === 'flowers') return state.flowerCount || 0;
   if (d.counter === 'bossKills') return state.bossKills || 0;
+  if (d.counter === 'variantKills') return Object.entries(state.dex || {}).filter(([k]) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => k === l || k === '엘리트 ' + l)).reduce((s, [, n]) => s + n, 0);
   return 0;
 }
 function applyProgression() {
@@ -960,6 +965,7 @@ function applyProgression() {
   if (done >= 2) PLAYER.dmg = 14;
   if (done >= 3) state.maxHp = 160;
   if (done >= 5) state.maxHp = 190;
+  if (done >= 6) PLAYER.dmg = 18;
   state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
   state.hp = Math.min(state.hp, state.maxHp);
 }
@@ -1033,6 +1039,7 @@ function openDialog() {
       // 의뢰별 추가 사례 (골드/물약은 수령 시 1회 지급, 세이브에 저장됨)
       if (claimed === 3) { state.gold += 40; state.potions = Math.min(SHOP.potionMax, state.potions + 2); }
       if (claimed === 4) { state.gold += 60; }
+      if (claimed === 5) { state.gold += 80; }
       sfx('reward', 1);
       closeDialog(); saveGame();
     });
@@ -1563,7 +1570,7 @@ const ACH = [
   { id: 'geared', name: '무장한 유랑자 (장비 3종)', cond: () => state.gear.sword >= 1 && state.gear.armor >= 1 && state.gear.boots >= 1 },
   { id: 'legend', name: '전설의 유랑자 (최고 등급 3종)', cond: () => state.gear.sword >= 3 && state.gear.armor >= 3 && state.gear.boots >= 3 },
   { id: 'rich300', name: '부유한 유랑자 (300G)', cond: () => state.gold >= 300 },
-  { id: 'variant3', name: '변종 사냥꾼 (새 몬스터 3종)', cond: () => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].every((l) => (state.dex[l] || 0) >= 1) },
+  { id: 'variant3', name: '변종 사냥꾼 (새 몬스터 3종)', cond: () => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].every((l) => (state.dex[l] || 0) >= 1 || (state.dex['엘리트 ' + l] || 0) >= 1) },
   { id: 'order3', name: '단골 납품꾼 (특별 주문 3회)', cond: () => (state.orderDone || 0) >= 3 },
 ];
 function checkAch() {
@@ -1706,6 +1713,7 @@ function objectiveTarget() {
   else if (d.counter === 'wKills') pos = nearestEnemyPos((e) => e.stats.warrior);
   else if (d.counter === 'flowers') pos = nearestFlowerPos();
   else if (d.counter === 'bossKills') pos = state.boss && !state.boss.dead ? state.boss.root.position : null;
+  else if (d.counter === 'variantKills') pos = nearestEnemyPos((e) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => e.stats.label === l || e.stats.label === '엘리트 ' + l));
   if (!pos) return null;
   return { x: pos.x, z: pos.z, label: d.name };
 }
