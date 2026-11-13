@@ -29,5 +29,6 @@ npm run build               # 배포 빌드 (dist/)
 | Fantasy Town Kit | Kenney | CC0 |
 | KayKit Dungeon Remastered | Kay Lousberg | CC0 |
 | Quaternius Medieval Village | Quaternius | CC0 (공식 팩 페이지 직접 확인) |
+| Easy Enemy Pack | Quaternius | CC0 (공식 팩 페이지 직접 확인) |
 
 UI 폰트: Noto Sans KR (Google Fonts, SIL OFL) — `public/fonts`에 둔다.
