@@ -343,7 +343,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
-  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치
+  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
@@ -1216,8 +1216,19 @@ const MATS = {
   '쥐': { name: '부드러운 가죽', price: 3 },
   '거미': { name: '거미줄', price: 5 },
   '묘지의 왕': { name: '왕의 유품', price: 40 },
+  '독 개구리': { name: '독 주머니', price: 6 },
+  '그림자 쥐': { name: '그림자 가죽', price: 5 },
+  '서리 스켈레톤': { name: '서리 뼈', price: 7 },
 };
 const MAT_PRICE = Object.fromEntries(Object.values(MATS).map((m) => [m.name, m.price]));
+// 수집가 특별 주문: 무작위 재료를 고급(기본가의 2.5배)에 매입. 납품하면 다음 주문 생성
+const ORDER_POOL = ['뼈 조각', '투구 파편', '개구리 기름', '부드러운 가죽', '거미줄', '독 주머니', '그림자 가죽', '서리 뼈'];
+function genOrder(exclude) {
+  const pool = ORDER_POOL.filter((m) => m !== exclude);
+  const mat = pool[Math.floor(Math.random() * pool.length)];
+  const count = 3 + Math.floor(Math.random() * 3);
+  return { mat, count, reward: Math.round((MAT_PRICE[mat] || 4) * count * 2.5) };
+}
 function openCollectorDialog() {
   state.dialog = true;
   sfx('dialog', 0.7);
@@ -1242,6 +1253,10 @@ function openCollectorDialog() {
   html += matEntries.length
     ? `<br>몬스터 재료도 사고 있네: ${matEntries.map(([mn, c]) => `${mn} ×${c}`).join(', ')} — 전부 <b>${matsTotal}G</b>에 사지.`
     : '<br>몬스터가 떨어뜨리는 재료도 가져오면 사주겠네.';
+  if (!state.order) state.order = genOrder();
+  const od = state.order;
+  const odHave = state.mats[od.mat] || 0;
+  html += `<br>특별 주문이 있네: <b>${od.mat} ×${od.count}</b> — 납품하면 두둑이 <b>${od.reward}G</b>를 주지. (보유 ${odHave}개, 지금까지 ${state.orderDone || 0}회 납품)`;
   text.innerHTML = html;
   if (sellable > 0) {
     mk(`바람꽃 ${sellable}송이 판매 (+${sellable * COLLECTOR.flowerPrice}G)`, '', () => {
@@ -1258,6 +1273,18 @@ function openCollectorDialog() {
       state.mats = {};
       sfx('reward', 1);
       toast(`재료 판매 · +${matsTotal}G`);
+      closeDialog(); saveGame();
+    });
+  }
+  if (odHave >= od.count) {
+    mk(`특별 주문 납품: ${od.mat} ×${od.count} (+${od.reward}G)`, '', () => {
+      state.mats[od.mat] -= od.count;
+      state.gold += od.reward;
+      state.orderDone = (state.orderDone || 0) + 1;
+      state.order = genOrder(od.mat);
+      sfx('reward', 1);
+      toast(`특별 주문 완료 · +${od.reward}G`);
+      checkAch();
       closeDialog(); saveGame();
     });
   }
@@ -1287,7 +1314,7 @@ function saveGame() {
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
-      bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach,
+      bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1312,6 +1339,8 @@ function loadGame() {
     state.flowerCount = s.flowerCount || 0;
     state.flowersSold = s.flowersSold || 0;
     state.mats = s.mats || {};
+    state.order = s.order || null;
+    state.orderDone = s.orderDone || 0;
     state.dex = s.dex || {};
     state.level = s.level || 1;
     state.xp = s.xp || 0;
@@ -1535,6 +1564,7 @@ const ACH = [
   { id: 'legend', name: '전설의 유랑자 (최고 등급 3종)', cond: () => state.gear.sword >= 3 && state.gear.armor >= 3 && state.gear.boots >= 3 },
   { id: 'rich300', name: '부유한 유랑자 (300G)', cond: () => state.gold >= 300 },
   { id: 'variant3', name: '변종 사냥꾼 (새 몬스터 3종)', cond: () => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].every((l) => (state.dex[l] || 0) >= 1) },
+  { id: 'order3', name: '단골 납품꾼 (특별 주문 3회)', cond: () => (state.orderDone || 0) >= 3 },
 ];
 function checkAch() {
   let changed = false;
@@ -2096,7 +2126,7 @@ function tick() {
     hp: state.hp, maxHp: state.maxHp, dead: state.dead, kills: state.kills, dmg: PLAYER.dmg,
     quest: state.quest.state, qidx: state.quest.idx, qprog: questProgress(), dialog: state.dialog,
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
-    gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
+    gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0, order: state.order, orderDone: state.orderDone || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
