@@ -107,6 +107,13 @@
       color: #ffe9a8; font: 600 14px 'Noto Sans KR', sans-serif; z-index: 12;
       pointer-events: none; opacity: 0; transition: opacity .3s; text-shadow: 0 1px 3px #000;
     }
+    #minimap {
+      position: fixed; top: 10px; left: 10px; z-index: 10;
+      background: rgba(8,14,22,.55); border: 1px solid rgba(255,255,255,.3); border-radius: 8px;
+      cursor: pointer; user-select: none; -webkit-user-select: none;
+    }
+    #minimap.off { display: none; }
+    #minimap.big { width: 240px; height: 240px; }
     #dlgback {
       position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 24; display: none;
     }
@@ -143,8 +150,9 @@
       #dodge { bottom: 104px; }
       #pot { bottom: 158px; }
       #inv { bottom: 212px; }
-      #tut { top: 8px; font-size: 11px; padding: 6px 12px; max-width: 56vw; }
+      #tut { top: 112px; font-size: 11px; padding: 6px 12px; max-width: 70vw; }
       #toast { top: 96px; font-size: 12px; }
+      #minimap { width: 96px; height: 96px; }
       #msg { font-size: 10px; bottom: 8px; padding: 4px 8px; max-width: 70vw; }
       #atk { width: 56px; height: 56px; right: 14px; bottom: 40px; font-size: 12px; }
       #prompt { bottom: 96px; font-size: 11px; padding: 6px 12px; }
@@ -156,7 +164,8 @@
   <div id="app"></div>
   <div id="loading"><div class="ttl">바람 언덕의 유랑자</div><div id="loadmsg">불러오는 중…</div></div>
   <div id="hud"></div>
-  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격(길게 강공격) · Q 회피 · R 물약 · T 자동 전투 · I 가방 · 드래그 시점</div>
+  <canvas id="minimap" width="150" height="150" title="미니맵 (M)"></canvas>
+  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격(길게 강공격) · Q 회피 · R 물약 · T 자동 전투 · I 가방 · M 미니맵 · 드래그 시점</div>
   <div id="hpwrap"><div id="hpfill"></div></div>
   <div id="atk">공격</div>
   <div id="snd">소리 끔</div>
