@@ -908,32 +908,35 @@ function openDialog() {
     mk('계속', '', closeDialog);
   }
   mk('상점', 'sub', openShop);
+  document.getElementById('dlg-list').innerHTML = '';
   dlgEl().style.display = 'block';
+  document.getElementById('dlgback').style.display = 'block';
 }
 const SHOP = { potionPrice: 30, potionMax: 5, potionHeal: 60 };
 function openShop() {
   sfx('dialog', 0.5);
   const text = document.getElementById('dlg-text');
+  const list = document.getElementById('dlg-list');
   const btns = document.getElementById('dlg-btns');
   document.getElementById('dlg-name').textContent = '마을 장로 · 상점';
   btns.innerHTML = '';
-  const gearBtns = [];
-  const render = () => {
-    const owned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? g.names[state.gear[g.key] - 1] : null).filter(Boolean);
-    text.innerHTML = `보유 골드: <b>${state.gold}G</b><br>체력 물약(회복 ${SHOP.potionHeal}): <b>${SHOP.potionPrice}G</b> · 보유 ${state.potions}/${SHOP.potionMax}개`
-      + `<br>장비: ${owned.length ? owned.join(' · ') : '없음'}`;
-    buyBtn.textContent = state.potions >= SHOP.potionMax ? '물약이 가득 찼습니다' : state.gold < SHOP.potionPrice ? '골드가 부족합니다' : `물약 구매 (${SHOP.potionPrice}G)`;
-    buyBtn.disabled = state.potions >= SHOP.potionMax || state.gold < SHOP.potionPrice;
-    GEAR_SHOP.forEach((g, i) => {
-      const lvl = state.gear[g.key];
-      const b = gearBtns[i];
-      if (lvl >= g.names.length) { b.textContent = `${g.names[lvl - 1]} (최고 등급 보유)`; b.disabled = true; return; }
-      b.textContent = `${g.names[lvl]} 구매 (${g.prices[lvl]}G) · ${g.desc[lvl]}`;
-      b.disabled = state.gold < g.prices[lvl];
-    });
+  // 상품 행(카드) 배치: 이름·효과는 좌측, 구매 버튼은 우측
+  const rows = [];
+  const mkRow = (infoHtml, btnLabel, onBuy) => {
+    const row = document.createElement('div');
+    row.className = 'shoprow';
+    const info = document.createElement('div');
+    info.className = 'info';
+    info.innerHTML = infoHtml;
+    const b = document.createElement('button');
+    b.addEventListener('click', () => { if (b.disabled) return; onBuy(); });
+    b._label = btnLabel;
+    row.appendChild(info); row.appendChild(b);
+    list.appendChild(row);
+    rows.push({ b, info });
+    return b;
   };
-  const buyBtn = document.createElement('button');
-  buyBtn.addEventListener('click', () => {
+  const potionBtn = mkRow('', '', () => {
     if (state.gold < SHOP.potionPrice || state.potions >= SHOP.potionMax) return;
     state.gold -= SHOP.potionPrice;
     state.potions++;
@@ -942,22 +945,37 @@ function openShop() {
     saveGame();
     render();
   });
-  btns.appendChild(buyBtn);
-  GEAR_SHOP.forEach((g) => {
-    const b = document.createElement('button');
-    b.addEventListener('click', () => {
+  const gearBtns = GEAR_SHOP.map((g) => mkRow('', '', () => {
+    const lvl = state.gear[g.key];
+    if (lvl >= g.names.length || state.gold < g.prices[lvl]) return;
+    state.gold -= g.prices[lvl];
+    state.gear[g.key] = lvl + 1;
+    sfx('reward', 1);
+    toast(`${g.names[lvl]}을(를) 장착했습니다`);
+    saveGame();
+    render();
+  }));
+  const render = () => {
+    const owned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? g.names[state.gear[g.key] - 1] : null).filter(Boolean);
+    text.innerHTML = `보유 골드: <b>${state.gold}G</b> · 장비: ${owned.length ? owned.join(', ') : '없음'}`;
+    rows[0].info.innerHTML = `체력 물약 <small>회복 ${SHOP.potionHeal} · 보유 ${state.potions}/${SHOP.potionMax}개</small>`;
+    potionBtn.textContent = state.potions >= SHOP.potionMax ? '가득 참' : `${SHOP.potionPrice}G`;
+    potionBtn.disabled = state.potions >= SHOP.potionMax || state.gold < SHOP.potionPrice;
+    GEAR_SHOP.forEach((g, i) => {
       const lvl = state.gear[g.key];
-      if (lvl >= g.names.length || state.gold < g.prices[lvl]) return;
-      state.gold -= g.prices[lvl];
-      state.gear[g.key] = lvl + 1;
-      sfx('reward', 1);
-      toast(`${g.names[lvl]}을(를) 장착했습니다`);
-      saveGame();
-      render();
+      const b = gearBtns[i];
+      if (lvl >= g.names.length) {
+        rows[i + 1].info.innerHTML = `${g.names[lvl - 1]} <small>최고 등급 보유 중</small>`;
+        b.textContent = '보유';
+        b.disabled = true;
+        return;
+      }
+      const ownedPrev = lvl > 0 ? ` <small>(보유: ${g.names[lvl - 1]})</small>` : '';
+      rows[i + 1].info.innerHTML = `${g.names[lvl]} <small>${g.desc[lvl]}</small>${ownedPrev}`;
+      b.textContent = `${g.prices[lvl]}G`;
+      b.disabled = state.gold < g.prices[lvl];
     });
-    gearBtns.push(b);
-    btns.appendChild(b);
-  });
+  };
   const back = document.createElement('button');
   back.textContent = '돌아가기';
   back.className = 'sub';
@@ -968,6 +986,7 @@ function openShop() {
 function closeDialog() {
   state.dialog = false;
   dlgEl().style.display = 'none';
+  document.getElementById('dlgback').style.display = 'none';
 }
 document.getElementById('prompt').addEventListener('click', tryInteract);
 document.getElementById('prompt').addEventListener('touchstart', (e) => { e.stopPropagation(); tryInteract(); }, { passive: true });
