@@ -299,7 +299,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
-  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, // 도감: 종류별 처치 수
+  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, // 도감: 종류별 처치 수 / mats: 재료 보유
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
@@ -799,11 +799,11 @@ async function build() {
       };
       o.material = Array.isArray(o.material) ? o.material.map(tint) : tint(o.material);
     });
-    croot.position.set(-6, 0, -14);
+    croot.position.set(2, 0, -17);
     croot.rotation.y = Math.PI * 0.75;
     scene.add(croot);
     state.npc2 = { root: croot, anim: new AnimSet(croot, col.animations), pos: croot.position };
-    colliders.push({ x: -6, z: -14, r: 0.5 });
+    colliders.push({ x: 2, z: -17, r: 0.5 });
     state.npc2.anim.play('Idle');
   } catch (e) { console.warn('npc2 fail', e); }
 
@@ -847,6 +847,7 @@ async function build() {
     setQuest(idx, st) { state.quest = { idx, state: st, startKills: st === 'active' ? questCounter({ idx }) : 0 }; applyProgression(); },
     setFlowers(n) { state.flowerCount = n; },
     setFlowersSold(n) { state.flowersSold = n; },
+    setMat(name, n) { state.mats[name] = n; },
     flowerPos(i) { return state.flowers ? state.flowers[i].root.position.toArray() : null; },
     debug() { return { dungeon: { ...DUNGEON }, colliders, hp: state.hp, dead: state.dead, dialog: state.dialog }; },
   };
@@ -1068,7 +1069,7 @@ function openInv() {
   const renderInv = () => {
     document.getElementById('dlg-text').innerHTML =
       `레벨 <b>${state.level || 1}</b> (경험치 ${state.xp || 0}/${xpNeed(state.level || 1)}) · 공격력 <b>${PLAYER.dmg + GEAR_ATK[state.gear.sword]}</b> · 받는 피해 감소 <b>${GEAR_DEF[state.gear.armor]}</b> · 이동속도 <b>×${GEAR_SPD[state.gear.boots]}</b><br>` +
-      `골드 <b>${state.gold}G</b> · 물약 <b>${state.potions}/${SHOP.potionMax}</b> · 바람꽃 <b>${state.flowerCount}송이(판매 가능 ${(state.flowerCount || 0) - (state.flowersSold || 0)})</b> · 보물 상자 <b>${(state.chestsOpened || []).length}개</b>`;
+      `골드 <b>${state.gold}G</b> · 물약 <b>${state.potions}/${SHOP.potionMax}</b> · 바람꽃 <b>${state.flowerCount}송이(판매 가능 ${(state.flowerCount || 0) - (state.flowersSold || 0)})</b> · 보물 상자 <b>${(state.chestsOpened || []).length}개</b> · 재료 <b>${Object.entries(state.mats || {}).filter(([, n]) => n > 0).map(([mn, c]) => `${mn}×${c}`).join(' ') || '없음'}</b>`;
     const gearOwned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? `${g.names[state.gear[g.key] - 1]}(${g.key === 'sword' ? '검' : g.key === 'armor' ? '갑옷' : '부츠'})` : null).filter(Boolean);
     list.innerHTML =
       `<div class="shoprow"><div class="info">장비 <small>${gearOwned.length ? gearOwned.join(', ') : '없음'}</small></div></div>` +
@@ -1137,6 +1138,16 @@ function drawMinimap() {
   mctx.restore();
 }
 const COLLECTOR = { flowerPrice: 6 };
+// 몬스터 재료 드롭 (일반 45%, 엘리트 100%×2, 보스 100%×3) — 수집가가 매입
+const MATS = {
+  '스켈레톤': { name: '뼈 조각', price: 4 },
+  '스켈레톤 전사': { name: '투구 파편', price: 8 },
+  '개구리': { name: '개구리 기름', price: 3 },
+  '쥐': { name: '부드러운 가죽', price: 3 },
+  '거미': { name: '거미줄', price: 5 },
+  '묘지의 왕': { name: '왕의 유품', price: 40 },
+};
+const MAT_PRICE = Object.fromEntries(Object.values(MATS).map((m) => [m.name, m.price]));
 function openCollectorDialog() {
   state.dialog = true;
   sfx('dialog', 0.7);
@@ -1153,15 +1164,30 @@ function openCollectorDialog() {
   };
   name.textContent = '수집가';
   const sellable = (state.flowerCount || 0) - (state.flowersSold || 0);
-  text.innerHTML = sellable > 0
+  const matEntries = Object.entries(state.mats || {}).filter(([, n]) => n > 0);
+  const matsTotal = matEntries.reduce((s, [mn, c]) => s + (MAT_PRICE[mn] || 0) * c, 0);
+  let html = sellable > 0
     ? `오, 바람꽃을 가져왔군! 좋은 약재지.<br>지금 팔 수 있는 <b>${sellable}송이</b>를 송이당 <b>${COLLECTOR.flowerPrice}G</b>에 사주겠네.`
     : `바람꽃은 서쪽 숲에서 나오네. 빛나는 꽃을 꺾어오면 송이당 <b>${COLLECTOR.flowerPrice}G</b>에 사주지.<br>장로 의뢰에 쓴 꽃은 팔 수 없으니 유의하게.`;
+  html += matEntries.length
+    ? `<br>몬스터 재료도 사고 있네: ${matEntries.map(([mn, c]) => `${mn} ×${c}`).join(', ')} — 전부 <b>${matsTotal}G</b>에 사지.`
+    : '<br>몬스터가 떨어뜨리는 재료도 가져오면 사주겠네.';
+  text.innerHTML = html;
   if (sellable > 0) {
     mk(`바람꽃 ${sellable}송이 판매 (+${sellable * COLLECTOR.flowerPrice}G)`, '', () => {
       state.gold += sellable * COLLECTOR.flowerPrice;
       state.flowersSold = (state.flowersSold || 0) + sellable;
       sfx('reward', 1);
       toast(`바람꽃 ${sellable}송이 판매 · +${sellable * COLLECTOR.flowerPrice}G`);
+      closeDialog(); saveGame();
+    });
+  }
+  if (matsTotal > 0) {
+    mk(`재료 모두 판매 (+${matsTotal}G)`, '', () => {
+      state.gold += matsTotal;
+      state.mats = {};
+      sfx('reward', 1);
+      toast(`재료 판매 · +${matsTotal}G`);
       closeDialog(); saveGame();
     });
   }
@@ -1189,7 +1215,7 @@ function saveGame() {
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
-      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, level: state.level || 1, xp: state.xp || 0,
+      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -1214,6 +1240,7 @@ function loadGame() {
     state.eliteKills = s.eliteKills || 0;
     state.flowerCount = s.flowerCount || 0;
     state.flowersSold = s.flowersSold || 0;
+    state.mats = s.mats || {};
     state.dex = s.dex || {};
     state.level = s.level || 1;
     state.xp = s.xp || 0;
@@ -1677,6 +1704,11 @@ function playerAttackHit() {
       if (e.stats.elite) state.eliteKills = (state.eliteKills || 0) + 1;
       const g = e.stats.gold || 3;
       state.gold += g;
+      const mat = MATS[(e.stats.label || '').replace(/^엘리트 /, '')];
+      if (mat) {
+        const dn = e.stats.boss ? 3 : e.stats.elite ? 2 : (Math.random() < 0.45 ? 1 : 0);
+        if (dn > 0) { state.mats[mat.name] = (state.mats[mat.name] || 0) + dn; toast(`재료 획득: ${mat.name}${dn > 1 ? ' ×' + dn : ''}`); }
+      }
       toast(e.stats.elite ? `엘리트 처치! +${g} 골드` : `처치! +${g} 골드`);
       if (e.tele) e.tele.visible = false;
       setTimeout(() => { e.root.visible = false; }, 1600);
@@ -1976,7 +2008,7 @@ function tick() {
     quest: state.quest.state, qidx: state.quest.idx, qprog: questProgress(), dialog: state.dialog,
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
-    bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
+    bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
