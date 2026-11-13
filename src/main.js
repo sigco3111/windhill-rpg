@@ -297,8 +297,18 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   bossKills: 0, flowers: null, flowerCount: 0, boss: null,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
+  gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
 };
+// 장비 효과표 (등급 0=없음)
+const GEAR_ATK = [0, 4, 9];        // 검: 공격력 추가
+const GEAR_DEF = [0, 2, 4];        // 갑옷: 받는 피해 감소(최소 1)
+const GEAR_SPD = [1, 1.12, 1.25];  // 부츠: 이동속도 배율
+const GEAR_SHOP = [
+  { key: 'sword', names: ['강철 검', '기사의 검'], prices: [80, 200], desc: ['공격력 +4', '공격력 +9'] },
+  { key: 'armor', names: ['가죽 갑옷', '철 갑옷'], prices: [60, 150], desc: ['받는 피해 -2', '받는 피해 -4'] },
+  { key: 'boots', names: ['바람 부츠', '폭풍 부츠'], prices: [100, 220], desc: ['이동속도 +12%', '이동속도 +25%'] },
+];
 const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4, skel: true, label: '스켈레톤', windup: 0.45, gold: 5, teleH: 1.9 };
 const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2, skel: true, warrior: true, label: '스켈레톤 전사', windup: 0.55, combo: true, gold: 12, teleH: 2.1 };
 const BOSS = { hp: 150, dmg: 12, speed: 2.6, aggro: 15, range: 2.2, cd: 1.5, skel: true, warrior: true, boss: true, label: '묘지의 왕', windup: 0.65, combo: true, gold: 60, teleH: 3.4 };
@@ -907,10 +917,20 @@ function openShop() {
   const btns = document.getElementById('dlg-btns');
   document.getElementById('dlg-name').textContent = '마을 장로 · 상점';
   btns.innerHTML = '';
+  const gearBtns = [];
   const render = () => {
-    text.innerHTML = `보유 골드: <b>${state.gold}G</b><br>체력 물약(회복 ${SHOP.potionHeal}): <b>${SHOP.potionPrice}G</b> · 보유 ${state.potions}/${SHOP.potionMax}개`;
+    const owned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? g.names[state.gear[g.key] - 1] : null).filter(Boolean);
+    text.innerHTML = `보유 골드: <b>${state.gold}G</b><br>체력 물약(회복 ${SHOP.potionHeal}): <b>${SHOP.potionPrice}G</b> · 보유 ${state.potions}/${SHOP.potionMax}개`
+      + `<br>장비: ${owned.length ? owned.join(' · ') : '없음'}`;
     buyBtn.textContent = state.potions >= SHOP.potionMax ? '물약이 가득 찼습니다' : state.gold < SHOP.potionPrice ? '골드가 부족합니다' : `물약 구매 (${SHOP.potionPrice}G)`;
     buyBtn.disabled = state.potions >= SHOP.potionMax || state.gold < SHOP.potionPrice;
+    GEAR_SHOP.forEach((g, i) => {
+      const lvl = state.gear[g.key];
+      const b = gearBtns[i];
+      if (lvl >= g.names.length) { b.textContent = `${g.names[lvl - 1]} (최고 등급 보유)`; b.disabled = true; return; }
+      b.textContent = `${g.names[lvl]} 구매 (${g.prices[lvl]}G) · ${g.desc[lvl]}`;
+      b.disabled = state.gold < g.prices[lvl];
+    });
   };
   const buyBtn = document.createElement('button');
   buyBtn.addEventListener('click', () => {
@@ -923,6 +943,21 @@ function openShop() {
     render();
   });
   btns.appendChild(buyBtn);
+  GEAR_SHOP.forEach((g) => {
+    const b = document.createElement('button');
+    b.addEventListener('click', () => {
+      const lvl = state.gear[g.key];
+      if (lvl >= g.names.length || state.gold < g.prices[lvl]) return;
+      state.gold -= g.prices[lvl];
+      state.gear[g.key] = lvl + 1;
+      sfx('reward', 1);
+      toast(`${g.names[lvl]}을(를) 장착했습니다`);
+      saveGame();
+      render();
+    });
+    gearBtns.push(b);
+    btns.appendChild(b);
+  });
   const back = document.createElement('button');
   back.textContent = '돌아가기';
   back.className = 'sub';
@@ -947,7 +982,7 @@ function saveGame() {
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, flowerCount: state.flowerCount || 0,
-      bounty: state.bounty, chestsOpened: state.chestsOpened || [],
+      bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear,
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -971,6 +1006,7 @@ function loadGame() {
     state.flowerCount = s.flowerCount || 0;
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.chestsOpened = s.chestsOpened || [];
+    if (s.gear) state.gear = { sword: s.gear.sword || 0, armor: s.gear.armor || 0, boots: s.gear.boots || 0 };
     if (state.chests) state.chests.forEach((c, i) => { c.opened = state.chestsOpened.includes(i); c.beam.visible = !c.opened; });
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
@@ -1370,7 +1406,7 @@ function playerAttackHit() {
     const d = to.length();
     if (d > PLAYER.range) continue;
     if (fwd.angleTo(to.normalize()) > PLAYER.arc / 2) continue;
-    const dmg = Math.round(PLAYER.dmg * (state.attackStrong ? 2.2 : 1));
+    const dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * (state.attackStrong ? 2.2 : 1));
     e.hp -= dmg;
     window.__dbgDmg = (window.__dbgDmg || 0) + 1;
     hitFlash(e.root);
@@ -1442,7 +1478,7 @@ function updateEnemy(e, dt, now) {
     if (e.pendingHit && now >= e.pendingHit) {
       e.pendingHit = 0;
       if (!state.dead && now >= state.invUntil && e.root.position.distanceTo(p) < e.stats.range + 0.4) {
-        state.hp = Math.max(0, state.hp - e.stats.dmg);
+        state.hp = Math.max(0, state.hp - Math.max(1, e.stats.dmg - GEAR_DEF[state.gear.armor]));
         (window.__dbgEnemyHits = window.__dbgEnemyHits || []).push({ t: +now.toFixed(2), invU: +state.invUntil.toFixed(2), d: +e.root.position.distanceTo(p).toFixed(2), blocked: 0, dmg: e.stats.dmg });
         hitFlash(state.player);
         sfx('hurt', 0.9);
@@ -1456,7 +1492,7 @@ function updateEnemy(e, dt, now) {
       e.combo2 = 0;
       showTelegraph(e, 0.2);
       if (!state.dead && now >= state.invUntil && e.root.position.distanceTo(p) < e.stats.range + 0.5) {
-        state.hp = Math.max(0, state.hp - Math.ceil(e.stats.dmg / 2));
+        state.hp = Math.max(0, state.hp - Math.max(1, Math.ceil(e.stats.dmg / 2) - GEAR_DEF[state.gear.armor]));
         hitFlash(state.player);
         sfx('hurt', 0.7);
         if (state.hp <= 0) playerDie(e.stats.label);
@@ -1556,7 +1592,7 @@ function tick() {
     }
 
     const running = keys.has('ShiftLeft') || keys.has('ShiftRight') || (stick.active && m > 0.92);
-    let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) : 0;
+    let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) * GEAR_SPD[state.gear.boots] : 0;
     // 회피 구르기 중: 구르기 방향으로 빠르게 이동, 다른 조작/공격 불가
     if (!state.dead && state.dodgeFrom && now < state.dodgeUntil + 0.5) {
       // 시간 기반 보간: 프레임률과 무관하게 0.45초 동안 정확히 4m 이동 (저FPS에서 회피 거리 축소 방지)
@@ -1687,6 +1723,7 @@ function tick() {
     gold: state.gold, potions: state.potions, autoOn: state.autoOn, inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
+    gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
     bossHp: state.boss ? state.boss.hp : null, bossDead: state.boss ? state.boss.dead : null,
     bossPos: state.boss ? state.boss.root.position.toArray().map((v) => +v.toFixed(1)) : null,
