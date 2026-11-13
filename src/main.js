@@ -110,7 +110,7 @@ class AnimSet {
 
 // ---------- 입력 ----------
 const keys = new Set();
-addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'Space') { e.preventDefault(); tryAttack(); } });
+addEventListener('keydown', (e) => { keys.add(e.code); if (e.code === 'Space') { e.preventDefault(); tryAttack(); } if (e.code === 'KeyE') tryInteract(); });
 addEventListener('keyup', (e) => keys.delete(e.code));
 
 const stick = { active: false, id: -1, ox: 0, oy: 0, x: 0, y: 0 };
@@ -168,16 +168,48 @@ addEventListener('touchend', (e) => {
 
 // ---------- 게임 상태 ----------
 const state = {
-  ready: false, player: null, anim: null, enemies: [],
+  ready: false, player: null, anim: null, enemies: [], npc: null,
   heading: 0, hp: 100, maxHp: 100, dead: false,
   attackUntil: 0, attackCdUntil: 0, didHit: false, kills: 0,
+  dialog: false,
+  quest: { state: 'none', startKills: 0, goal: 3 }, // none → active → done
 };
 const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4 };
 const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2 };
 const PLAYER = { dmg: 10, range: 2.4, arc: Math.PI * 0.6 };
 
+// ---------- 충돌체 (원형 + 던전 벽) ----------
+const colliders = []; // {x, z, r}
+const DUNGEON = { cx: 48, cz: -48, half: 0, doorHalf: 0 }; // half는 던전 생성 시 채움
+function resolveCollisions(p) {
+  for (const c of colliders) {
+    const dx = p.x - c.x, dz = p.z - c.z;
+    const d = Math.hypot(dx, dz), min = c.r + 0.45;
+    if (d < min && d > 1e-4) { p.x = c.x + (dx / d) * min; p.z = c.z + (dz / d) * min; }
+  }
+  const { cx, cz, half, doorHalf } = DUNGEON;
+  if (!half) return;
+  const band = 0.8;
+  if (p.x < cx - half - band || p.x > cx + half + band || p.z < cz - half - band || p.z > cz + half + band) return;
+  const inDoorX = Math.abs(p.x - (DUNGEON.doorX ?? cx)) < doorHalf;
+  const insideRect = Math.abs(p.x - cx) < half && Math.abs(p.z - cz) < half;
+  if (insideRect) {
+    // 내부: 벽 띠에 들어가면 안쪽으로 밀어냄. 남문 띠는 통행 허용.
+    if (inDoorX && p.z > cz + half - band) return;
+    p.x = Math.max(cx - half + band, Math.min(cx + half - band, p.x));
+    p.z = Math.max(cz - half + band, Math.min(cz + half - band, p.z));
+  } else {
+    // 외부: 벽 띠에 들어가면 바깥으로 밀어냄. 남문 접근은 통행 허용.
+    if (inDoorX && p.z > cz + half) return;
+    if (Math.abs(p.x - cx) < half + band && Math.abs(p.z - cz) < half + band) {
+      if (p.x > cx + half) p.x = cx + half + band; else if (p.x < cx - half) p.x = cx - half - band;
+      if (p.z > cz + half) p.z = cz + half + band; else if (p.z < cz - half) p.z = cz - half - band;
+    }
+  }
+}
+
 function tryAttack() {
-  if (!state.ready || state.dead) return;
+  if (!state.ready || state.dead || state.dialog) return;
   const now = clock.elapsedTime;
   if (now < state.attackCdUntil) return;
   const dur = state.anim.clipDuration('slice_diagonal') || 0.7;
@@ -237,15 +269,15 @@ async function build() {
   const knightH = new THREE.Box3().setFromObject(player).getSize(new THREE.Vector3()).y || 1.2;
   // [모델, x, z, 회전, 목표높이(캐릭터 배율)]
   const village = [
-    ['windmill', -14, -22, 0.4, 6.0], ['watermill', 16, -24, -2.2, 4.5],
-    ['fountainRound', 0, -14, 0, 3.0],
-    ['stallRed', -7, -10, 0.9, 2.2], ['stallGreen', 7, -10, -0.9, 2.2],
-    ['cart', -12, -12, 0.6, 1.8], ['lantern', -3, -10, 0, 1.7], ['lantern', 3, -10, 0, 1.7],
-    ['lantern', -10, -18, 0, 1.7], ['lantern', 10, -18, 0, 1.7],
-    ['hedge', -16, -16, 0, 1.6], ['hedge', 16, -16, 0, 1.6],
+    ['windmill', -14, -22, 0.4, 6.0, 3.4], ['watermill', 16, -24, -2.2, 4.5, 3.0],
+    ['fountainRound', 0, -14, 0, 3.0, 2.2],
+    ['stallRed', -7, -10, 0.9, 2.2, 1.7], ['stallGreen', 7, -10, -0.9, 2.2, 1.7],
+    ['cart', -12, -12, 0.6, 1.8, 1.3], ['lantern', -3, -10, 0, 1.7, 0.35], ['lantern', 3, -10, 0, 1.7, 0.35],
+    ['lantern', -10, -18, 0, 1.7, 0.35], ['lantern', 10, -18, 0, 1.7, 0.35],
+    ['hedge', -16, -16, 0, 1.6, 2.4], ['hedge', 16, -16, 0, 1.6, 2.4],
   ];
   const townCache = {};
-  await Promise.all(village.map(async ([name, x, z, rot, hMul]) => {
+  await Promise.all(village.map(async ([name, x, z, rot, hMul, cR]) => {
     try {
       if (!townCache[name]) townCache[name] = (await load(`/assets/town/${name}.glb`)).scene;
       const o = shadowify(townCache[name].clone());
@@ -255,6 +287,7 @@ async function build() {
       o.position.set(x, 0, z);
       o.rotation.y = rot;
       scene.add(o);
+      colliders.push({ x, z, r: cR });
     } catch (err) { console.warn('town load fail', name, err); }
   }));
   // 광장 돌길
@@ -310,14 +343,29 @@ async function build() {
       inst.rotation.y = rng() * Math.PI * 2;
       inst.scale.setScalar(0.8 + rng() * 0.5);
       scene.add(inst);
+      if (isTree) colliders.push({ x, z, r: 0.6 });
     }
   });
+
+  // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
+  try {
+    const mage = await load('/assets/characters/Mage.glb');
+    const npc = shadowify(mage.scene);
+    npc.position.set(3, 0, -8);
+    npc.rotation.y = Math.PI;
+    scene.add(npc);
+    state.npc = { root: npc, anim: new AnimSet(npc, mage.animations), pos: npc.position };
+    colliders.push({ x: 3, z: -8, r: 0.5 });
+    state.npc.anim.play('Idle');
+  } catch (e) { console.warn('npc fail', e); }
 
   // 지하묘지 (KayKit Dungeon Remastered, CC0) — 북동쪽 (48, -48)
   await buildDungeon(48, -48);
 
   state.ready = true;
   window.__gameReady = true;
+  if (params.get('reset') === '1') localStorage.removeItem(SAVE_KEY);
+  loadGame();
   window.__animNames = state.anim.names;
   window.__game = {
     teleportNearEnemy() {
@@ -329,8 +377,91 @@ async function build() {
       state.player.rotation.y = state.heading;
     },
     heal() { state.hp = state.maxHp; if (state.dead) respawn(); },
+    talk() { tryInteract(); },
+    addKills(n) { state.kills += n; },
+    save() { saveGame(); },
+    teleport(x, z) { state.player.position.set(x, 0, z); },
+    debug() { return { dungeon: { ...DUNGEON }, colliders, hp: state.hp, dead: state.dead, dialog: state.dialog }; },
   };
 }
+
+// ---------- NPC 대화 / 의뢰 ----------
+const dlgEl = () => document.getElementById('dlg');
+function questProgress() { return Math.min(state.kills - state.quest.startKills, state.quest.goal); }
+function tryInteract() {
+  if (!state.ready || state.dead || state.dialog || !state.npc) return;
+  if (state.player.position.distanceTo(state.npc.pos) > 2.6) return;
+  openDialog();
+}
+function openDialog() {
+  state.dialog = true;
+  const q = state.quest;
+  const name = document.getElementById('dlg-name');
+  const text = document.getElementById('dlg-text');
+  const btns = document.getElementById('dlg-btns');
+  btns.innerHTML = '';
+  const mk = (label, cls, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener('click', fn);
+    btns.appendChild(b);
+  };
+  name.textContent = '마을 장로';
+  if (q.state === 'none') {
+    text.innerHTML = '유랑자여, 잘 왔네. 언덕에 스켈레톤이 들끓어 마을 사람들이 불안해하고 있네.<br>스켈레톤 <b>3마리</b>를 처치해주게. 사례는 하겠네.';
+    mk('수락한다', '', () => { q.state = 'active'; q.startKills = state.kills; closeDialog(); saveGame(); });
+    mk('나중에', 'sub', closeDialog);
+  } else if (q.state === 'active' && questProgress() >= q.goal) {
+    text.innerHTML = '스켈레톤 3마리를 모두 해치웠군! 마을이 자네 덕분에 한시름 놓았네.<br>약속한 사례일세: <b>최대 체력 100 → 130</b>.';
+    mk('사례를 받는다', '', () => {
+      q.state = 'done';
+      state.maxHp = 130; state.hp = 130;
+      closeDialog(); saveGame();
+    });
+  } else if (q.state === 'active') {
+    text.innerHTML = `스켈레톤 처치를 부탁했었지. 현재 <b>${questProgress()} / ${q.goal}</b> 마리네.<br>조금만 더 힘내주게.`;
+    mk('계속', '', closeDialog);
+  } else {
+    text.innerHTML = '덕분에 마을이 평온을 되찾았네. 언덕 저편 지하묘지에는 더 강한 스켈레톤 전사가 있다고 하니 조심하게.';
+    mk('닫기', '', closeDialog);
+  }
+  dlgEl().style.display = 'block';
+}
+function closeDialog() {
+  state.dialog = false;
+  dlgEl().style.display = 'none';
+}
+document.getElementById('prompt').addEventListener('click', tryInteract);
+document.getElementById('prompt').addEventListener('touchstart', (e) => { e.stopPropagation(); tryInteract(); }, { passive: true });
+
+// ---------- 세이브 (localStorage) ----------
+const SAVE_KEY = 'windhill-save';
+function saveGame() {
+  if (!state.ready) return;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      x: state.player.position.x, z: state.player.position.z,
+      hp: state.hp, maxHp: state.maxHp, kills: state.kills,
+      heading: state.heading, quest: state.quest,
+    }));
+  } catch (e) { console.warn('save fail', e); }
+}
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    state.player.position.set(s.x || 0, 0, s.z || 0);
+    state.heading = s.heading || 0;
+    state.player.rotation.y = state.heading;
+    state.hp = s.hp ?? state.maxHp;
+    state.maxHp = s.maxHp || 100;
+    state.kills = s.kills || 0;
+    if (s.quest) state.quest = s.quest;
+  } catch (e) { console.warn('load fail', e); }
+}
+setInterval(() => { if (state.ready && !state.dead) saveGame(); }, 4000);
 
 // ---------- 던전 생성 ----------
 async function buildDungeon(cx, cz) {
@@ -341,6 +472,10 @@ async function buildDungeon(cx, cz) {
   const wallH = new THREE.Box3().setFromObject(wallG.scene).getSize(new THREE.Vector3()).y;
   const N = 8; // 타일 수 (N x N)
   const half = (N * ts) / 2;
+  const doorI = Math.floor(N / 2);
+  DUNGEON.cx = cx; DUNGEON.cz = cz; DUNGEON.half = half;
+  DUNGEON.doorHalf = ts * 0.45;
+  DUNGEON.doorX = cx - half + ts / 2 + doorI * ts;
   const put = (proto, x, z, ry = 0, y = 0) => {
     const o = shadowify(proto.scene.clone());
     o.position.set(x, y, z);
@@ -353,7 +488,6 @@ async function buildDungeon(cx, cz) {
     put(floorG, cx - half + ts / 2 + i * ts, cz - half + ts / 2 + j * ts);
   }
   // 벽 (남쪽 중앙에 문)
-  const doorI = Math.floor(N / 2);
   for (let i = 0; i < N; i++) {
     const x = cx - half + ts / 2 + i * ts;
     if (i !== doorI) put(wallG, x, cz + half, 0);            // 남
@@ -369,6 +503,7 @@ async function buildDungeon(cx, cz) {
   for (const [sx, sz] of corners) {
     const px = cx + sx * (half - inset), pz = cz + sz * (half - inset);
     put(pillarG, px, pz);
+    colliders.push({ x: px, z: pz, r: 0.7 });
     put(torchG, px, pz, 0, wallH * 0.9);
     const l = new THREE.PointLight(0xff9a3c, 6, ts * 5, 1.6);
     l.position.set(px, wallH * 1.1, pz);
@@ -376,15 +511,18 @@ async function buildDungeon(cx, cz) {
   }
   // 소품
   const props = [
-    ['chest_gold.glb', 0, -half + inset, 0],
-    ['barrel_small.gltf.glb', -half + inset, half - inset, 0],
-    ['box_stacked.gltf.glb', half - inset, half - inset * 1.5, 0.4],
-    ['table_medium.gltf.glb', -half + inset * 1.2, 0, Math.PI / 2],
-    ['rubble_half.gltf.glb', half - inset, -half + inset, 0],
-    ['coin_stack_medium.gltf.glb', 0.8, -half + inset + 0.6, 0],
+    ['chest_gold.glb', 0, -half + inset, 0, 0.9],
+    ['barrel_small.gltf.glb', -half + inset, half - inset, 0, 0.55],
+    ['box_stacked.gltf.glb', half - inset, half - inset * 1.5, 0.4, 0.8],
+    ['table_medium.gltf.glb', -half + inset * 1.2, 0, Math.PI / 2, 1.0],
+    ['rubble_half.gltf.glb', half - inset, -half + inset, 0, 0.9],
+    ['coin_stack_medium.gltf.glb', 0.8, -half + inset + 0.6, 0, 0.4],
   ];
-  for (const [f, ox, oz, ry] of props) {
-    try { put(await load(D + f), cx + ox, cz + oz, ry); } catch (e) { console.warn('prop', f, e); }
+  for (const [f, ox, oz, ry, cr] of props) {
+    try {
+      put(await load(D + f), cx + ox, cz + oz, ry);
+      if (cr) colliders.push({ x: cx + ox, z: cz + oz, r: cr });
+    } catch (e) { console.warn('prop', f, e); }
   }
   // 던전 입구 표식 (남쪽 문 밖 계단)
   try { put(await load(`${D}stairs_wide.gltf.glb`), cx, cz + half + ts, Math.PI); } catch (e) {}
@@ -518,6 +656,7 @@ function tick() {
     if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1;
     if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
     ix += stick.x; iz += stick.y;
+    if (state.dialog) { ix = 0; iz = 0; }
     const m = Math.hypot(ix, iz);
     if (m > 1) { ix /= m; iz /= m; }
 
@@ -539,6 +678,7 @@ function tick() {
       state.heading += dh * Math.min(1, dt * 12);
       state.player.rotation.y = state.heading;
       state.player.position.addScaledVector(dir, speed * dt * Math.min(1, m * 1.2));
+      resolveCollisions(state.player.position);
       const d = Math.hypot(state.player.position.x, state.player.position.z);
       if (d > 78) state.player.position.multiplyScalar(78 / d);
       state.anim.play(running ? 'running' : 'walking');
@@ -548,6 +688,29 @@ function tick() {
     state.anim.update(dt);
 
     for (const e of state.enemies) updateEnemy(e, dt, now);
+
+    // NPC: 대기 애니메이션 + 근접 시 대화 프롬프트
+    if (state.npc) {
+      state.npc.anim.update(dt);
+      const near = state.player.position.distanceTo(state.npc.pos) < 2.6 && !state.dead;
+      document.getElementById('prompt').style.display = near && !state.dialog ? 'block' : 'none';
+      if (near) {
+        const to = state.player.position.clone().sub(state.npc.pos);
+        state.npc.root.rotation.y = Math.atan2(to.x, to.z);
+      }
+    }
+
+    // 의뢰 HUD
+    const qEl = document.getElementById('quest');
+    if (state.quest.state === 'active') {
+      qEl.style.display = 'block';
+      qEl.innerHTML = `의뢰 · 스켈레톤 처치 ${questProgress()} / ${state.quest.goal}${questProgress() >= state.quest.goal ? '<br>장로에게 돌아가기' : ''}`;
+    } else if (state.quest.state === 'done') {
+      qEl.style.display = 'block';
+      qEl.textContent = '의뢰 완료 · 스켈레톤 처치';
+    } else {
+      qEl.style.display = 'none';
+    }
 
     // 카메라
     const p = state.player.position;
@@ -579,7 +742,8 @@ function tick() {
   window.__probe = state.ready ? {
     pos: state.player.position.toArray().map((v) => +v.toFixed(2)),
     anim: state.anim.current,
-    hp: state.hp, dead: state.dead, kills: state.kills,
+    hp: state.hp, maxHp: state.maxHp, dead: state.dead, kills: state.kills,
+    quest: state.quest.state, qprog: questProgress(), dialog: state.dialog,
     enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1) })),
   } : null;
 }
@@ -590,7 +754,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// 스크린샷 검증용: ?demo=walk|running 이면 자동 전진, ?tp=x,z 텔레포트
+// 스크린샷 검증용: ?demo=walk|running 이면 자동 전진, ?tp=x,z 텔레포트, ?reset=1 세이브 초기화
 const params = new URLSearchParams(location.search);
 const demo = params.get('demo');
 if (demo) setTimeout(() => keys.add('KeyW'), 1500);
