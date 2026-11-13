@@ -298,7 +298,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
-  bossKills: 0, flowers: null, flowerCount: 0, boss: null,
+  bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, boss: null,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
@@ -543,13 +543,33 @@ async function build() {
   state.anim.play('Idle');
 
   const skel = await load('assets/characters/Skeleton_Minion.glb');
+  let spawnSeq = 0;
   const spawn = (gltf, stats, x, z) => {
+    spawnSeq++;
+    // 6마리마다 1마리는 엘리트: 체력·공격력 강화, 골드 3배, 붉은 색감·큰 덩치 (보스 제외)
+    let st = stats;
+    if (!stats.boss && spawnSeq % 6 === 0) {
+      st = { ...stats, hp: Math.round(stats.hp * 2.2), dmg: Math.max(1, Math.round(stats.dmg * 1.5)), gold: (stats.gold || 3) * 3, label: '엘리트 ' + stats.label, elite: true };
+    }
     const root = shadowify(SkeletonUtils.clone(gltf.scene));
     root.position.set(x, 0, z);
+    if (st.elite) {
+      root.scale.multiplyScalar(1.22);
+      root.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        const tint = (m) => {
+          const c = m.clone();
+          if (c.color) c.color.lerp(new THREE.Color(0xff4040), 0.5);
+          if (c.emissive) c.emissive.setHex(0x330000);
+          return c;
+        };
+        o.material = Array.isArray(o.material) ? o.material.map(tint) : tint(o.material);
+      });
+    }
     scene.add(root);
     const anim = new AnimSet(root, gltf.animations);
     anim.play('walking', 'walk', 'jump', 'idle');
-    const e = { root, anim, angle: Math.atan2(x, z), stats, home: new THREE.Vector3(x, 0, z), hp: stats.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 };
+    const e = { root, anim, angle: Math.atan2(x, z), stats: st, home: new THREE.Vector3(x, 0, z), hp: st.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 };
     state.enemies.push(e);
     return e;
   };
@@ -877,18 +897,22 @@ function openDialog() {
   };
   name.textContent = '마을 장로';
   if (!d) {
-    // 모든 의뢰 완료 후: 반복 현상금 의뢰
+    // 모든 의뢰 완료 후: 반복 의뢰 (몬스터 처치 ↔ 바람꽃 수집 번갈아 제공)
     const b = state.bounty;
+    b.kind = b.kind || 'kills';
+    const goal = b.kind === 'flowers' ? 4 : 8;
+    const prog = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : state.kills - b.startKills;
+    const what = b.kind === 'flowers' ? '바람꽃 <b>4송이</b> 수집' : '몬스터 <b>8마리</b> 처치';
     const reward = 35 + Math.min(b.count * 5, 25);
-    if (b.active && state.kills - b.startKills >= 8) {
-      text.innerHTML = `현상금 의뢰를 마쳤군! 몬스터 <b>8마리</b> 처치를 확인했네.<br>사례일세: <b>골드 ${reward}</b>.`;
-      mk('사례를 받는다', '', () => { state.gold += reward; b.count++; b.active = false; sfx('reward', 1); closeDialog(); saveGame(); });
+    if (b.active && prog >= goal) {
+      text.innerHTML = `의뢰를 마쳤군! 목표 달성(${what})을 확인했네.<br>사례일세: <b>골드 ${reward}</b>.`;
+      mk('사례를 받는다', '', () => { state.gold += reward; b.count++; b.active = false; b.kind = b.kind === 'kills' ? 'flowers' : 'kills'; sfx('reward', 1); closeDialog(); saveGame(); });
     } else if (b.active) {
-      text.innerHTML = `현상금 의뢰: 몬스터 <b>${state.kills - b.startKills} / 8</b> 마리 처치했네.<br>조금만 더 힘내주게.`;
+      text.innerHTML = `반복 의뢰: ${what} — 현재 <b>${prog} / ${goal}</b>.<br>조금만 더 힘내주게.`;
       mk('계속', '', closeDialog);
     } else {
-      text.innerHTML = '마을의 모든 부탁을 들어주었네. 자네는 이제 이 언덕의 영웅일세.<br>바람 언덕에서 마음껏 유랑하게나.<br><br>언덕의 몬스터는 계속 불어나니, <b>현상금 의뢰</b>(몬스터 8마리 처치)도 맡아주면 고맙겠네.';
-      mk('현상금을 받는다', '', () => { b.active = true; b.startKills = state.kills; sfx('dialog', 0.7); closeDialog(); saveGame(); toast('현상금 의뢰: 몬스터 8마리 처치'); });
+      text.innerHTML = `마을의 모든 부탁을 들어주었네. 자네는 이제 이 언덕의 영웅일세.<br>바람 언덕에서 마음껏 유랑하게나.<br><br>마을에는 늘 손이 모자라니, <b>반복 의뢰</b>(${what})도 맡아주면 고맙겠네.`;
+      mk('의뢰를 받는다', '', () => { b.active = true; b.startKills = state.kills; b.startFlowers = state.flowerCount; sfx('dialog', 0.7); closeDialog(); saveGame(); toast(`반복 의뢰: ${b.kind === 'flowers' ? '바람꽃 4송이 수집' : '몬스터 8마리 처치'}`); });
       mk('닫기', '', closeDialog);
     }
   } else if (q.state === 'none') {
@@ -1052,7 +1076,7 @@ function saveGame() {
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
-      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, flowerCount: state.flowerCount || 0,
+      gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -1074,6 +1098,7 @@ function loadGame() {
     state.gold = s.gold || 0;
     state.potions = s.potions || 0;
     state.bossKills = s.bossKills || 0;
+    state.eliteKills = s.eliteKills || 0;
     state.flowerCount = s.flowerCount || 0;
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.chestsOpened = s.chestsOpened || [];
@@ -1288,6 +1313,7 @@ const ACH = [
   { id: 'flowers8', name: '바람꽃 수집가 (8송이)', cond: () => state.flowerCount >= 8 },
   { id: 'treasure5', name: '보물 사냥꾼 (상자 5개)', cond: () => (state.chestsOpened || []).length >= 5 },
   { id: 'boss1', name: '묘지 정복자', cond: () => state.bossKills >= 1 },
+  { id: 'elite3', name: '엘리트 사냥꾼 (엘리트 3마리)', cond: () => (state.eliteKills || 0) >= 3 },
   { id: 'geared', name: '무장한 유랑자 (장비 3종)', cond: () => state.gear.sword >= 1 && state.gear.armor >= 1 && state.gear.boots >= 1 },
   { id: 'rich300', name: '부유한 유랑자 (300G)', cond: () => state.gold >= 300 },
 ];
@@ -1413,7 +1439,13 @@ function objectiveTarget() {
   if (!d) {
     const b = state.bounty;
     if (!b || !b.active) return null;
-    if (state.kills - b.startKills >= 8) return { ...npcPos, label: '장로에게 보고' };
+    const goal = b.kind === 'flowers' ? 4 : 8;
+    const prog = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : state.kills - b.startKills;
+    if (prog >= goal) return { ...npcPos, label: '장로에게 보고' };
+    if (b.kind === 'flowers') {
+      const fp = nearestFlowerPos();
+      return fp ? { x: fp.x, z: fp.z, label: '바람꽃 수집' } : null;
+    }
     const bp = nearestEnemyPos(() => true);
     return bp ? { x: bp.x, z: bp.z, label: '현상금 사냥' } : null;
   }
@@ -1521,9 +1553,10 @@ function playerAttackHit() {
       if (e.stats.skel) state.skKills++;
       if (e.stats.warrior) state.wKills++;
       if (e.stats.boss) state.bossKills++;
+      if (e.stats.elite) state.eliteKills = (state.eliteKills || 0) + 1;
       const g = e.stats.gold || 3;
       state.gold += g;
-      toast(`처치! +${g} 골드`);
+      toast(e.stats.elite ? `엘리트 처치! +${g} 골드` : `처치! +${g} 골드`);
       if (e.tele) e.tele.visible = false;
       setTimeout(() => { e.root.visible = false; }, 1600);
     } else {
@@ -1745,9 +1778,11 @@ function tick() {
     } else if (!qd) {
       const b = state.bounty;
       if (b && b.active) {
-        const bp = Math.min(state.kills - b.startKills, 8);
+        const goal = b.kind === 'flowers' ? 4 : 8;
+        const raw = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : state.kills - b.startKills;
+        const bp = Math.min(raw, goal);
         qEl.style.display = 'block';
-        qEl.innerHTML = `현상금 · 몬스터 처치 ${bp} / 8${bp >= 8 ? '<br>장로에게 돌아가기' : ''}`;
+        qEl.innerHTML = `반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? '<br>장로에게 돌아가기' : ''}`;
       } else {
         qEl.style.display = 'block';
         qEl.textContent = '모든 의뢰 완료';
@@ -1824,7 +1859,8 @@ function tick() {
     bossHp: state.boss ? state.boss.hp : null, bossDead: state.boss ? state.boss.dead : null,
     bossPos: state.boss ? state.boss.root.position.toArray().map((v) => +v.toFixed(1)) : null,
     now: +clock.elapsedTime.toFixed(2), atkUntil: +(state.attackUntil || 0).toFixed(2), cdUntil: +(state.attackCdUntil || 0).toFixed(2), didHit: state.didHit,
-    enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1), tele: !!(e.tele && e.tele.visible), pos: e.root.position.toArray().map((v) => +v.toFixed(1)) })),
+    eliteKills: state.eliteKills || 0,
+    enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1), tele: !!(e.tele && e.tele.visible), elite: !!e.stats.elite, label: e.stats.label, pos: e.root.position.toArray().map((v) => +v.toFixed(1)) })),
   } : null;
   window.__camDbg = { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: camera.fov, yaw: +camYaw.toFixed(2), pitch: +camPitch.toFixed(2), w: innerWidth, h: innerHeight };
 }
