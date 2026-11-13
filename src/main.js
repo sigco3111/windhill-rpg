@@ -36,9 +36,10 @@ scene.add(ground);
 // ---------- 로딩 유틸 ----------
 const gltfLoader = new GLTFLoader();
 const load = (url) => new Promise((res, rej) => gltfLoader.load(url, res, undefined, rej));
-const mtlLoader = new MTLLoader();
-const objLoader = new OBJLoader();
 async function loadObj(base) {
+  // 로더는 호출마다 새로 생성 (공유 시 병렬 로드에서 재질이 섞임)
+  const mtlLoader = new MTLLoader();
+  const objLoader = new OBJLoader();
   const mtl = await mtlLoader.loadAsync(`/assets/village/${base}.mtl`);
   mtl.preload();
   const obj = await objLoader.setMaterials(mtl).loadAsync(`/assets/village/${base}.obj`);
@@ -48,7 +49,8 @@ async function loadObj(base) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const m of mats) {
         if (!m) continue;
-        if (m.color) m.color.convertSRGBToLinear();
+        m.side = THREE.DoubleSide; // Quaternius OBJ 일부 면이 안쪽을 향해 컬링되는 문제 방지
+        // Blender가 내보낸 MTL Kd는 이미 리니어 값 — 추가 sRGB 변환을 하면 지나치게 어두워짐
         if ('specular' in m) m.specular.setScalar(0.03);
         if ('shininess' in m) m.shininess = 4;
       }
@@ -290,6 +292,28 @@ async function build() {
       colliders.push({ x, z, r: cR });
     } catch (err) { console.warn('town load fail', name, err); }
   }));
+  // 주택·여관·마구간 (Quaternius Medieval Village, CC0 — 공식 팩 페이지 문구 직접 확인)
+  const houses = [
+    ['House_1', -22, -6, Math.PI / 2, 4.2, 2.6],
+    ['House_2', 22, -6, -Math.PI / 2, 4.2, 2.6],
+    ['Inn', -21, -13, 0.9, 5.0, 3.0],
+    ['Stable', 21, -13, -0.9, 4.4, 2.6],
+    ['House_3', -6, -25, 0, 4.2, 2.6],
+    ['House_4', 8, -25, 0, 4.2, 2.6],
+  ];
+  await Promise.all(houses.map(async ([name, x, z, rot, hMul, cR]) => {
+    try {
+      const o = await loadObj(name);
+      const sz = new THREE.Box3().setFromObject(o).getSize(new THREE.Vector3());
+      const maxDim = Math.max(sz.x, sz.y, sz.z) || 2;
+      o.scale.setScalar((knightH * hMul) / maxDim);
+      o.position.set(x, 0, z);
+      o.rotation.y = rot;
+      scene.add(o);
+      colliders.push({ x, z, r: cR });
+    } catch (err) { console.warn('house load fail', name, err); }
+  }));
+
   // 광장 돌길
   try {
     const road = (await load('/assets/town/road.glb')).scene;
