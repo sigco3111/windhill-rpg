@@ -347,6 +347,7 @@ const state = {
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
+  dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
@@ -643,6 +644,7 @@ async function build() {
   spawn(skel, FSKEL, -8, 32);
   state.spawn = spawn;
   state.spawnTrial = (stats, x, z) => { const e = spawn(skel, stats, x, z); e.trial = true; return e; };
+  state.protos = { skel };
 
 
   // 마을 (Kenney Fantasy Town Kit, CC0)
@@ -724,6 +726,7 @@ async function build() {
       const wrap = new THREE.Group();
       wrap.add(fbx);
       shadowify(wrap);
+      state.protos[name] = { scene: wrap, animations: fbx.animations };
       for (const [x, z] of spots) spawn({ scene: wrap, animations: fbx.animations }, stats, x, z);
     } catch (err) { console.warn('enemy fbx load fail', name, err); }
   }));
@@ -827,6 +830,7 @@ async function build() {
         fbx.scale.setScalar(sc);
         fbx.position.y = -bb.min.y * sc;
         const wrap = new THREE.Group();
+        state.protos[name] = state.protos[name] || { scene: wrap, animations: fbx.animations };
         wrap.add(fbx);
         shadowify(wrap);
         for (const [x, z] of spots) spawn({ scene: wrap, animations: fbx.animations }, stats, x, z);
@@ -840,6 +844,7 @@ async function build() {
   buildChests();
   buildShrines();
   buildTrialStone();
+  buildDens();
 
   // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
   try {
@@ -1217,6 +1222,7 @@ function drawMinimap() {
   }
   if (state.chests) for (const c of state.chests) if (!c.opened) dot(c.x, c.z, '#ffd94d', 3);
   if (state.treasure && !state.treasureDone) dot(state.treasure.x, state.treasure.z, '#7de8ff', 4);
+  if (state.dens) for (const d of state.dens) if (!d.cleared) dot(d.x, d.z, '#ff6a5a', 3);
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
   if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
@@ -1337,7 +1343,7 @@ function saveGame() {
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
-      mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone,
+      mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [],
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1379,6 +1385,8 @@ function loadGame() {
     state.mapFrags = s.mapFrags !== undefined ? s.mapFrags : (s.chestsOpened || []).filter((i) => FRAG_CHESTS.has(i)).length;
     state.treasureDone = !!s.treasureDone;
     if (state.mapFrags >= 3 && !state.treasureDone) spawnTreasure();
+    state.densCleared = s.densCleared || [];
+    if (state.dens) state.dens.forEach((d, i) => { d.cleared = state.densCleared.includes(i); d.beam.visible = !d.cleared; });
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
       if (s.quest.idx === undefined) {
@@ -1576,6 +1584,66 @@ function updateTreasure() {
     state.anim.playOnce('pick_up', 'pick');
     checkAch();
     saveGame();
+  }
+}
+
+// ---------- 몬스터 소굴 3곳: 접근하면 매복, 전멸 시 보상 (전투·탐험 콘텐츠, 1회성) ----------
+const DENS = [
+  { x: 44, z: 52, name: '쥐 소굴', mobs: [['Rat', RAT, 3]], gold: 40 },
+  { x: -50, z: -46, name: '거미 소굴', mobs: [['Spider', SPIDER, 2]], gold: 50 },
+  { x: 20, z: 64, name: '서리 소굴', mobs: [['skel', FSKEL, 2]], gold: 60 },
+];
+function buildDens() {
+  state.dens = [];
+  DENS.forEach((d, i) => {
+    const root = new THREE.Group();
+    const mound = new THREE.Mesh(new THREE.ConeGeometry(1.6, 1.2, 7), new THREE.MeshLambertMaterial({ color: 0x4a4038 }));
+    mound.position.y = 0.6; mound.castShadow = true; root.add(mound);
+    const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.2, 8), new THREE.MeshBasicMaterial({ color: 0x0a0a0a }));
+    hole.position.y = 0.1; root.add(hole);
+    const bone = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.08), new THREE.MeshLambertMaterial({ color: 0xd8d4c8 }));
+    bone.position.set(0.9, 0.12, 0.5); bone.rotation.y = 0.7; root.add(bone);
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.4, 0.65, 7, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xff6a5a, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    beam.position.y = 3.5; root.add(beam);
+    root.position.set(d.x, 0, d.z);
+    scene.add(root);
+    const cleared = (state.densCleared || []).includes(i);
+    beam.visible = !cleared;
+    state.dens.push({ root, beam, x: d.x, z: d.z, name: d.name, gold: d.gold, mobSpec: d.mobs, cleared, spawned: false, mobs: [] });
+  });
+}
+function updateDens() {
+  if (!state.dens || state.dead) return;
+  for (let i = 0; i < state.dens.length; i++) {
+    const d = state.dens[i];
+    if (d.cleared) continue;
+    if (!d.spawned) {
+      if (state.player.position.distanceTo(d.root.position) < 7) {
+        d.spawned = true;
+        d.beam.visible = false;
+        for (const [pn, stats, n] of d.mobSpec) {
+          const proto = state.protos && state.protos[pn];
+          if (!proto) continue;
+          for (let k = 0; k < n; k++) {
+            const a = Math.random() * Math.PI * 2;
+            d.mobs.push(state.spawn(proto, stats, d.x + Math.cos(a) * 2.5, d.z + Math.sin(a) * 2.5));
+          }
+        }
+        toast(`${d.name} 발견! 매복한 몬스터를 물리치세요`);
+        sfx('dialog', 0.7);
+      }
+    } else if (d.mobs.length && d.mobs.every((e) => e.dead)) {
+      d.cleared = true;
+      state.densCleared = state.dens.map((o, j) => (o.cleared ? j : -1)).filter((j) => j >= 0);
+      state.gold += d.gold;
+      sfx('reward', 1);
+      toast(`${d.name} 정리! +${d.gold} 골드 (${state.densCleared.length}/${DENS.length})`);
+      checkAch();
+      saveGame();
+    }
   }
 }
 async function buildChests() {
@@ -1804,6 +1872,7 @@ const ACH = [
   { id: 'shrine3', name: '바람 제단 순례 (제단 3곳)', cond: () => (state.shrinesPrayed || []).length >= 3 },
   { id: 'trial1', name: '시련의 돌 정복 (웨이브 3 클리어)', cond: () => (state.trialDone || 0) >= 1 },
   { id: 'treasureHidden', name: '숨겨진 보물 (지도 완성)', cond: () => !!state.treasureDone },
+  { id: 'den3', name: '소굴 정리 (몬스터 소굴 3곳)', cond: () => (state.densCleared || []).length >= 3 },
 ];
 function checkAch() {
   let changed = false;
@@ -2262,6 +2331,7 @@ function tick() {
     updateFlowers(dt, now);
     updateChests();
     updateTreasure();
+    updateDens();
     updateShrines(now);
     updateTrial(now);
     checkAch();
@@ -2388,6 +2458,7 @@ function tick() {
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
+    dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
