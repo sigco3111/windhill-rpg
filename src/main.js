@@ -209,6 +209,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyQ') tryDodge();
   if (e.code === 'KeyR') usePotion();
   if (e.code === 'KeyT') toggleAuto();
+  if (e.code === 'KeyI') toggleInv();
 });
 addEventListener('keyup', (e) => {
   if (e.code === 'Space' && state.chargeStart >= 0) {
@@ -255,6 +256,8 @@ document.getElementById('pot').addEventListener('touchstart', (e) => { e.stopPro
 document.getElementById('pot').addEventListener('click', (e) => { e.stopPropagation(); usePotion(); });
 document.getElementById('auto').addEventListener('click', (e) => { e.stopPropagation(); toggleAuto(); });
 document.getElementById('auto').addEventListener('touchstart', (e) => { e.stopPropagation(); toggleAuto(); }, { passive: true });
+document.getElementById('inv').addEventListener('click', (e) => { e.stopPropagation(); toggleInv(); });
+document.getElementById('inv').addEventListener('touchstart', (e) => { e.stopPropagation(); toggleInv(); }, { passive: true });
 addEventListener('touchstart', (e) => {
   for (const t of e.changedTouches) {
     if (t.target && t.target.id === 'atk') continue;
@@ -983,11 +986,59 @@ function openShop() {
   back.addEventListener('click', openDialog);
   btns.appendChild(back);
   render();
+  // 상점이 열려 있는 동안 골드 등 외부 변화(상자 자동 개봉 등)가 있으면 표시를 따라가게 갱신
+  clearInterval(window.__shopIv);
+  window.__shopIv = setInterval(() => {
+    if (document.getElementById('dlg-name').textContent !== '마을 장로 · 상점' || dlgEl().style.display === 'none') { clearInterval(window.__shopIv); return; }
+    render();
+  }, 500);
+}
+// ---------- 인벤토리 (I 키 / 가방 버튼) ----------
+function openInv() {
+  if (!state.ready || state.dead) return;
+  state.dialog = true;
+  sfx('dialog', 0.5);
+  document.getElementById('dlg-name').textContent = '인벤토리';
+  const list = document.getElementById('dlg-list');
+  const btns = document.getElementById('dlg-btns');
+  btns.innerHTML = '';
+  const renderInv = () => {
+    document.getElementById('dlg-text').innerHTML =
+      `공격력 <b>${PLAYER.dmg + GEAR_ATK[state.gear.sword]}</b> · 받는 피해 감소 <b>${GEAR_DEF[state.gear.armor]}</b> · 이동속도 <b>×${GEAR_SPD[state.gear.boots]}</b><br>` +
+      `골드 <b>${state.gold}G</b> · 물약 <b>${state.potions}/${SHOP.potionMax}</b> · 바람꽃 <b>${state.flowerCount}송이</b> · 보물 상자 <b>${(state.chestsOpened || []).length}개</b>`;
+    const gearOwned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? `${g.names[state.gear[g.key] - 1]}(${g.key === 'sword' ? '검' : g.key === 'armor' ? '갑옷' : '부츠'})` : null).filter(Boolean);
+    list.innerHTML =
+      `<div class="shoprow"><div class="info">장비 <small>${gearOwned.length ? gearOwned.join(', ') : '없음'}</small></div></div>` +
+      `<div class="shoprow"><div class="info"><b>업적 ${Object.keys(state.ach).length}/${ACH.length}</b></div></div>` +
+      ACH.map((a) => `<div class="shoprow"><div class="info">${state.ach[a.id] ? '<b style="color:#8fd68f">[달성]</b>' : '<small>[미달성]</small>'} ${a.name}</div></div>`).join('');
+  };
+  const close = document.createElement('button');
+  close.textContent = '닫기';
+  close.className = 'sub';
+  close.addEventListener('click', closeDialog);
+  btns.appendChild(close);
+  renderInv();
+  dlgEl().style.display = 'block';
+  document.getElementById('dlgback').style.display = 'block';
+  // 패널이 열려 있는 동안 골드·물약 등 변화를 따라가게 갱신
+  clearInterval(window.__invIv);
+  window.__invIv = setInterval(() => {
+    if (document.getElementById('dlg-name').textContent !== '인벤토리' || dlgEl().style.display === 'none') { clearInterval(window.__invIv); return; }
+    renderInv();
+  }, 500);
+}
+function toggleInv() {
+  const invOpen = dlgEl().style.display !== 'none' && document.getElementById('dlg-name').textContent === '인벤토리';
+  if (invOpen) { closeDialog(); return; }
+  if (state.dialog) return; // 다른 대화·상점이 열려 있으면 열지 않음
+  openInv();
 }
 function closeDialog() {
   state.dialog = false;
   dlgEl().style.display = 'none';
   document.getElementById('dlgback').style.display = 'none';
+  clearInterval(window.__shopIv);
+  clearInterval(window.__invIv);
 }
 document.getElementById('prompt').addEventListener('click', tryInteract);
 document.getElementById('prompt').addEventListener('touchstart', (e) => { e.stopPropagation(); tryInteract(); }, { passive: true });
