@@ -120,13 +120,13 @@ class AnimSet {
 // ---------- 오디오 (Kenney RPG Audio / Impact Sounds, ansimuz Chiptune: Exploration — 모두 CC0) ----------
 const audio = { ctx: null, buffers: {}, muted: false, musicOn: false, stepAt: 0, stepN: 0 };
 const AUDIO_FILES = {
-  swing1: '/assets/audio/knifeSlice.ogg', swing2: '/assets/audio/knifeSlice2.ogg',
-  hit1: '/assets/audio/impactPunch_medium_000.ogg', hit2: '/assets/audio/impactPunch_medium_001.ogg',
-  death: '/assets/audio/impactSoft_heavy_000.ogg', hurt: '/assets/audio/impactPunch_heavy_000.ogg',
-  reward: '/assets/audio/handleCoins.ogg', dialog: '/assets/audio/bookOpen.ogg',
-  step1: '/assets/audio/footstep_grass_000.ogg', step2: '/assets/audio/footstep_grass_001.ogg',
-  step3: '/assets/audio/footstep_grass_002.ogg', step4: '/assets/audio/footstep_grass_003.ogg',
-  music: '/assets/audio/exploration.ogg',
+  swing1: 'assets/audio/knifeSlice.ogg', swing2: 'assets/audio/knifeSlice2.ogg',
+  hit1: 'assets/audio/impactPunch_medium_000.ogg', hit2: 'assets/audio/impactPunch_medium_001.ogg',
+  death: 'assets/audio/impactSoft_heavy_000.ogg', hurt: 'assets/audio/impactPunch_heavy_000.ogg',
+  reward: 'assets/audio/handleCoins.ogg', dialog: 'assets/audio/bookOpen.ogg',
+  step1: 'assets/audio/footstep_grass_000.ogg', step2: 'assets/audio/footstep_grass_001.ogg',
+  step3: 'assets/audio/footstep_grass_002.ogg', step4: 'assets/audio/footstep_grass_003.ogg',
+  music: 'assets/audio/exploration.ogg',
 };
 function initAudio() {
   if (audio.ctx) { if (audio.ctx.state === 'suspended') audio.ctx.resume(); return; }
@@ -324,7 +324,7 @@ function respawnEnemy(e) {
 
 // ---------- 월드 구성 ----------
 async function build() {
-  const knight = await load('/assets/characters/Knight.glb');
+  const knight = await load('assets/characters/Knight.glb');
   const player = shadowify(knight.scene);
   const HIDE = ['1H_Sword_Offhand', '2H_Sword', 'Badge_Shield', 'Rectangle_Shield', 'Round_Shield', 'Spike_Shield'];
   player.traverse((o) => { if (HIDE.includes(o.name)) o.visible = false; });
@@ -333,7 +333,7 @@ async function build() {
   state.anim = new AnimSet(player, knight.animations);
   state.anim.play('Idle');
 
-  const skel = await load('/assets/characters/Skeleton_Minion.glb');
+  const skel = await load('assets/characters/Skeleton_Minion.glb');
   const spawn = (gltf, stats, x, z) => {
     const root = shadowify(SkeletonUtils.clone(gltf.scene));
     root.position.set(x, 0, z);
@@ -433,7 +433,7 @@ async function build() {
 
   // 광장 돌길
   try {
-    const road = (await load('/assets/town/road.glb')).scene;
+    const road = (await load('assets/town/road.glb')).scene;
     const rs = new THREE.Box3().setFromObject(road).getSize(new THREE.Vector3());
     const tile = Math.max(rs.x, rs.z);
     const rscale = (knightH * 1.6) / tile;
@@ -447,7 +447,7 @@ async function build() {
   } catch (e) { console.warn('road fail', e); }
   // 마을 울타리
   try {
-    const fence = (await load('/assets/town/fence.glb')).scene;
+    const fence = (await load('assets/town/fence.glb')).scene;
     const fw = new THREE.Box3().setFromObject(fence).getSize(new THREE.Vector3());
     const fscale = (knightH * 1.2) / Math.max(fw.x, fw.z, 0.1);
     const fwid = fw.x * fscale;
@@ -490,7 +490,7 @@ async function build() {
 
   // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
   try {
-    const mage = await load('/assets/characters/Mage.glb');
+    const mage = await load('assets/characters/Mage.glb');
     const npc = shadowify(mage.scene);
     npc.position.set(3, 0, -8);
     npc.rotation.y = Math.PI;
@@ -658,7 +658,7 @@ setInterval(() => { if (state.ready && !state.dead) saveGame(); }, 4000);
 
 // ---------- 던전 생성 ----------
 async function buildDungeon(cx, cz) {
-  const D = '/assets/dungeon/';
+  const D = 'assets/dungeon/';
   const floorG = await load(`${D}floor_tile_large.gltf.glb`);
   const wallG = await load(`${D}wall.gltf.glb`);
   const ts = Math.max(...(() => { const s = new THREE.Box3().setFromObject(floorG.scene).getSize(new THREE.Vector3()); return [s.x, s.z]; })());
@@ -720,7 +720,7 @@ async function buildDungeon(cx, cz) {
   // 던전 입구 표식 (남쪽 문 밖 계단)
   try { put(await load(`${D}stairs_wide.gltf.glb`), cx, cz + half + ts, Math.PI); } catch (e) {}
   // 던전 수호자 2기 (Skeleton Warrior: HP40/공격8)
-  const war = await load('/assets/characters/Skeleton_Warrior.glb');
+  const war = await load('assets/characters/Skeleton_Warrior.glb');
   state.spawn(war, WARRIOR, cx - ts, cz);
   state.spawn(war, WARRIOR, cx + ts, cz);
 }
