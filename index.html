@@ -9,6 +9,15 @@
   <style>
     html, body { margin: 0; padding: 0; overflow: hidden; background: #87b5d9; touch-action: none; font-family: 'Noto Sans KR', sans-serif; }
     #app { position: fixed; inset: 0; }
+    #loading {
+      position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 10px;
+      background: linear-gradient(#79b5e8, #a8d5a2); color: #1d2b1d;
+      font-family: 'Noto Sans KR', sans-serif;
+    }
+    #loading .ttl { font-size: 24px; font-weight: 700; }
+    #loading #loadmsg { font-size: 14px; }
+    #loading button { margin-top: 14px; padding: 10px 24px; font-size: 16px; border: 0; border-radius: 8px; background: #2f6d2f; color: #fff; }
     #hud {
       position: fixed; top: 8px; left: 8px; color: #fff; font: 12px/1.5 'Noto Sans KR', sans-serif;
       background: rgba(0,0,0,.35); padding: 6px 8px; border-radius: 6px; pointer-events: none;
@@ -82,6 +91,7 @@
 </head>
 <body>
   <div id="app"></div>
+  <div id="loading"><div class="ttl">바람 언덕의 유랑자</div><div id="loadmsg">불러오는 중…</div></div>
   <div id="hud"></div>
   <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격 · 드래그 시점 (모바일: 왼쪽 이동 · 오른쪽 시점 · 빨간 버튼 공격)</div>
   <div id="hpwrap"><div id="hpfill"></div></div>
