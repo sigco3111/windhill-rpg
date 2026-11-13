@@ -283,9 +283,11 @@ function resolveCollisions(p) {
 }
 
 function tryAttack() {
+  window.__dbgAtk = (window.__dbgAtk || 0) + 1;
+  window.__dbgAtkWhy = !state.ready ? 'notready' : state.dead ? 'dead' : state.dialog ? 'dialog' : '';
   if (!state.ready || state.dead || state.dialog) return;
   const now = clock.elapsedTime;
-  if (now < state.attackCdUntil) return;
+  if (now < state.attackCdUntil) { window.__dbgAtkWhy = 'cd'; return; }
   const dur = state.anim.clipDuration('slice_diagonal') || 0.7;
   state.anim.playOnce('slice_diagonal');
   state.attackUntil = now + Math.min(dur * 0.8, 0.7);
@@ -298,9 +300,15 @@ function hitFlash(root) {
   root.traverse((o) => {
     if (o.isMesh && o.material) {
       if (!o.userData.origMat) o.userData.origMat = o.material;
-      o.material = o.userData.origMat.clone();
-      o.material.emissive = new THREE.Color(0xff3322);
-      o.material.emissiveIntensity = 0.8;
+      const orig = o.userData.origMat;
+      const mats = Array.isArray(orig) ? orig : [orig];
+      // FBX 등 다중 머티리얼 메시 대응
+      const clones = mats.map((m) => {
+        const c = m.clone();
+        if (c.emissive) { c.emissive = new THREE.Color(0xff3322); c.emissiveIntensity = 0.8; }
+        return c;
+      });
+      o.material = Array.isArray(orig) ? clones : clones[0];
       setTimeout(() => { o.material = o.userData.origMat; }, 130);
     }
   });
@@ -502,7 +510,12 @@ async function build() {
   window.__animNames = state.anim.names;
   window.__game = {
     teleportNearEnemy() {
-      const e = state.enemies.find((x) => !x.dead);
+      let e = null, bd = 1e9;
+      for (const x of state.enemies) {
+        if (x.dead) continue;
+        const d = x.root.position.distanceTo(state.player.position);
+        if (d < bd) { bd = d; e = x; }
+      }
       if (!e) return;
       state.player.position.copy(e.root.position).add(new THREE.Vector3(1.5, 0, 0));
       const to = e.root.position.clone().sub(state.player.position);
@@ -723,6 +736,7 @@ function mulberry32(a) {
 
 // ---------- 전투 판정 ----------
 function playerAttackHit() {
+  window.__dbgHit = (window.__dbgHit || 0) + 1;
   const p = state.player.position;
   const fwd = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
   for (const e of state.enemies) {
@@ -732,6 +746,7 @@ function playerAttackHit() {
     if (d > PLAYER.range) continue;
     if (fwd.angleTo(to.normalize()) > PLAYER.arc / 2) continue;
     e.hp -= PLAYER.dmg;
+    window.__dbgDmg = (window.__dbgDmg || 0) + 1;
     hitFlash(e.root);
     sfx(Math.random() < 0.5 ? 'hit1' : 'hit2', 0.9);
     if (e.hp <= 0) {
@@ -846,7 +861,8 @@ function tick() {
     if (m > 1) { ix /= m; iz /= m; }
 
     const attacking = now < state.attackUntil;
-    if (attacking && !state.didHit && now > state.attackUntil - 0.35) {
+    // 저FPS에서 프레임이 판정 순간을 건너뛰어 공격이 헛나가지 않도록 1초 유예
+    if (!state.didHit && state.attackUntil > 0 && now > state.attackUntil - 0.35 && now < state.attackUntil + 1.0) {
       state.didHit = true;
       playerAttackHit();
     }
@@ -940,6 +956,7 @@ function tick() {
     anim: state.anim.current,
     hp: state.hp, maxHp: state.maxHp, dead: state.dead, kills: state.kills, dmg: PLAYER.dmg,
     quest: state.quest.state, qidx: state.quest.idx, qprog: questProgress(), dialog: state.dialog,
+    now: +clock.elapsedTime.toFixed(2), atkUntil: +(state.attackUntil || 0).toFixed(2), cdUntil: +(state.attackCdUntil || 0).toFixed(2), didHit: state.didHit,
     enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1) })),
   } : null;
 }
