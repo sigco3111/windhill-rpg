@@ -173,6 +173,7 @@ const state = {
   attackUntil: 0, attackCdUntil: 0, didHit: false, kills: 0,
 };
 const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4 };
+const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2 };
 const PLAYER = { dmg: 10, range: 2.4, arc: Math.PI * 0.6 };
 
 function tryAttack() {
@@ -200,8 +201,8 @@ function hitFlash(root) {
 
 function respawnEnemy(e) {
   const a = Math.random() * Math.PI * 2;
-  e.root.position.set(Math.cos(a) * 24, 0, Math.sin(a) * 24);
-  e.hp = ENEMY.hp; e.mode = 'wander'; e.dead = false;
+  e.root.position.copy(e.home).add(new THREE.Vector3(Math.cos(a) * 4, 0, Math.sin(a) * 4));
+  e.hp = e.stats.hp; e.mode = 'wander'; e.dead = false;
   e.root.visible = true;
   e.anim.play('walking', 'idle');
 }
@@ -218,15 +219,19 @@ async function build() {
   state.anim.play('Idle');
 
   const skel = await load('/assets/characters/Skeleton_Minion.glb');
-  for (let i = 0; i < 3; i++) {
-    const root = shadowify(SkeletonUtils.clone(skel.scene));
-    const a = (i / 3) * Math.PI * 2 + 0.8;
-    root.position.set(Math.cos(a) * 20, 0, Math.sin(a) * 20);
+  const spawn = (gltf, stats, x, z) => {
+    const root = shadowify(SkeletonUtils.clone(gltf.scene));
+    root.position.set(x, 0, z);
     scene.add(root);
-    const anim = new AnimSet(root, skel.animations);
+    const anim = new AnimSet(root, gltf.animations);
     anim.play('walking', 'idle');
-    state.enemies.push({ root, anim, angle: a, hp: ENEMY.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 });
+    state.enemies.push({ root, anim, angle: Math.atan2(x, z), stats, home: new THREE.Vector3(x, 0, z), hp: stats.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 });
+  };
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + 0.8;
+    spawn(skel, ENEMY, Math.cos(a) * 20, Math.sin(a) * 20);
   }
+  state.spawn = spawn;
 
   // 마을 (Kenney Fantasy Town Kit, CC0)
   const knightH = new THREE.Box3().setFromObject(player).getSize(new THREE.Vector3()).y || 1.2;
@@ -300,12 +305,16 @@ async function build() {
       const x = Math.cos(t) * r, z = Math.sin(t) * r;
       if (Math.hypot(x, z) < 6) continue;
       if (z < -4 && Math.abs(x) < 26 && z > -30) continue; // 마을 구역 제외
+      if (Math.hypot(x - 48, z + 48) < 22) continue; // 던전 구역 제외
       inst.position.set(x, 0, z);
       inst.rotation.y = rng() * Math.PI * 2;
       inst.scale.setScalar(0.8 + rng() * 0.5);
       scene.add(inst);
     }
   });
+
+  // 지하묘지 (KayKit Dungeon Remastered, CC0) — 북동쪽 (48, -48)
+  await buildDungeon(48, -48);
 
   state.ready = true;
   window.__gameReady = true;
@@ -321,6 +330,68 @@ async function build() {
     },
     heal() { state.hp = state.maxHp; if (state.dead) respawn(); },
   };
+}
+
+// ---------- 던전 생성 ----------
+async function buildDungeon(cx, cz) {
+  const D = '/assets/dungeon/';
+  const floorG = await load(`${D}floor_tile_large.gltf.glb`);
+  const wallG = await load(`${D}wall.gltf.glb`);
+  const ts = Math.max(...(() => { const s = new THREE.Box3().setFromObject(floorG.scene).getSize(new THREE.Vector3()); return [s.x, s.z]; })());
+  const wallH = new THREE.Box3().setFromObject(wallG.scene).getSize(new THREE.Vector3()).y;
+  const N = 8; // 타일 수 (N x N)
+  const half = (N * ts) / 2;
+  const put = (proto, x, z, ry = 0, y = 0) => {
+    const o = shadowify(proto.scene.clone());
+    o.position.set(x, y, z);
+    o.rotation.y = ry;
+    scene.add(o);
+    return o;
+  };
+  // 바닥
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    put(floorG, cx - half + ts / 2 + i * ts, cz - half + ts / 2 + j * ts);
+  }
+  // 벽 (남쪽 중앙에 문)
+  const doorI = Math.floor(N / 2);
+  for (let i = 0; i < N; i++) {
+    const x = cx - half + ts / 2 + i * ts;
+    if (i !== doorI) put(wallG, x, cz + half, 0);            // 남
+    put(wallG, x, cz - half, Math.PI);                        // 북
+    put(wallG, cx - half, cz - half + ts / 2 + i * ts, Math.PI / 2);   // 서
+    put(wallG, cx + half, cz - half + ts / 2 + i * ts, -Math.PI / 2);  // 동
+  }
+  // 기둥 + 횃불(조명)
+  const pillarG = await load(`${D}pillar.gltf.glb`);
+  const torchG = await load(`${D}torch_lit.gltf.glb`);
+  const inset = ts * 1.5;
+  const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+  for (const [sx, sz] of corners) {
+    const px = cx + sx * (half - inset), pz = cz + sz * (half - inset);
+    put(pillarG, px, pz);
+    put(torchG, px, pz, 0, wallH * 0.9);
+    const l = new THREE.PointLight(0xff9a3c, 6, ts * 5, 1.6);
+    l.position.set(px, wallH * 1.1, pz);
+    scene.add(l);
+  }
+  // 소품
+  const props = [
+    ['chest_gold.glb', 0, -half + inset, 0],
+    ['barrel_small.gltf.glb', -half + inset, half - inset, 0],
+    ['box_stacked.gltf.glb', half - inset, half - inset * 1.5, 0.4],
+    ['table_medium.gltf.glb', -half + inset * 1.2, 0, Math.PI / 2],
+    ['rubble_half.gltf.glb', half - inset, -half + inset, 0],
+    ['coin_stack_medium.gltf.glb', 0.8, -half + inset + 0.6, 0],
+  ];
+  for (const [f, ox, oz, ry] of props) {
+    try { put(await load(D + f), cx + ox, cz + oz, ry); } catch (e) { console.warn('prop', f, e); }
+  }
+  // 던전 입구 표식 (남쪽 문 밖 계단)
+  try { put(await load(`${D}stairs_wide.gltf.glb`), cx, cz + half + ts, Math.PI); } catch (e) {}
+  // 던전 수호자 2기 (Skeleton Warrior: HP40/공격8)
+  const war = await load('/assets/characters/Skeleton_Warrior.glb');
+  state.spawn(war, WARRIOR, cx - ts, cz);
+  state.spawn(war, WARRIOR, cx + ts, cz);
 }
 
 function mulberry32(a) {
@@ -369,27 +440,27 @@ function updateEnemy(e, dt, now) {
   const d = to.length();
 
   if (state.dead) { e.mode = 'wander'; }
-  else if (d < ENEMY.range) {
+  else if (d < e.stats.range) {
     e.mode = 'attack';
     if (now >= e.cdUntil) {
       const dur = e.anim.clipDuration('unarmed_melee_attack_punch', 'attack') || 0.8;
       e.anim.playOnce('unarmed_melee_attack_punch', 'attack');
       e.atkUntil = now + Math.min(dur * 0.75, 0.7);
-      e.cdUntil = now + ENEMY.cd;
+      e.cdUntil = now + e.stats.cd;
       e.pendingHit = now + dur * 0.45;
     }
     e.root.rotation.y = Math.atan2(to.x, to.z);
     if (e.pendingHit && now >= e.pendingHit) {
       e.pendingHit = 0;
-      if (!state.dead && e.root.position.distanceTo(p) < ENEMY.range + 0.4) {
-        state.hp = Math.max(0, state.hp - ENEMY.dmg);
+      if (!state.dead && e.root.position.distanceTo(p) < e.stats.range + 0.4) {
+        state.hp = Math.max(0, state.hp - e.stats.dmg);
         hitFlash(state.player);
         if (state.hp <= 0) playerDie();
       }
     }
     e.anim.update(dt);
     return;
-  } else if (d < ENEMY.aggro) {
+  } else if (d < e.stats.aggro) {
     e.mode = 'chase';
   } else {
     e.mode = 'wander';
@@ -397,12 +468,12 @@ function updateEnemy(e, dt, now) {
 
   if (e.mode === 'chase') {
     to.normalize();
-    e.root.position.addScaledVector(to, ENEMY.speed * dt);
+    e.root.position.addScaledVector(to, e.stats.speed * dt);
     e.root.rotation.y = Math.atan2(to.x, to.z);
     e.anim.play('running', 'walking');
   } else {
     e.angle += dt * 0.25;
-    const wx = Math.cos(e.angle) * 20, wz = Math.sin(e.angle) * 20;
+    const wx = e.home.x + Math.cos(e.angle) * 6, wz = e.home.z + Math.sin(e.angle) * 6;
     const wdir = new THREE.Vector3(wx - e.root.position.x, 0, wz - e.root.position.z);
     if (wdir.length() > 0.3) {
       wdir.normalize();
@@ -519,10 +590,18 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// 스크린샷 검증용: ?demo=walk|running 이면 자동 전진
-const demo = new URLSearchParams(location.search).get('demo');
+// 스크린샷 검증용: ?demo=walk|running 이면 자동 전진, ?tp=x,z 텔레포트
+const params = new URLSearchParams(location.search);
+const demo = params.get('demo');
 if (demo) setTimeout(() => keys.add('KeyW'), 1500);
 if (demo === 'running') setTimeout(() => keys.add('ShiftLeft'), 1500);
+const tp = params.get('tp');
+if (tp) {
+  const [tx, tz] = tp.split(',').map(Number);
+  const iv = setInterval(() => {
+    if (state.ready) { state.player.position.set(tx, 0, tz); clearInterval(iv); }
+  }, 300);
+}
 
 build().catch((e) => { console.error(e); window.__loadError = String(e); });
 tick();
