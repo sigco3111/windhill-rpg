@@ -55,5 +55,33 @@ T="$TMP/fantasy-town/fantasy-town-kit-1.0/Models/GLTF format"
 for f in windmill watermill fountainRound fountainCenter stall stallRed stallGreen cart hedge hedgeCurved lantern road roadBend roadCorner fence fenceGate tree treeHigh planks poles; do
   cp "$T/$f.glb" public/assets/town/
 done
-# 폰트: Noto Sans KR (Google Fonts, OFL) — 별도 스크립트 없이 https://fonts.google.com/noto/specimen/Noto+Sans+KR 에서 받아 public/fonts에 둔다.
-echo "완료. 라이선스 파일은 각 팩 폴더의 LICENSE.txt를 참조하세요."
+# 오디오 선곡 복사 (게임이 사용하는 파일만)
+mkdir -p public/assets/audio
+RA=$(find "$TMP/kenney-rpg-audio" -type d -name Audio | head -1)
+IA=$(find "$TMP/kenney-impact-sounds" -type d -name Audio | head -1)
+cp "$RA/knifeSlice.ogg" "$RA/knifeSlice2.ogg" "$RA/handleCoins.ogg" "$RA/bookOpen.ogg" public/assets/audio/
+cp "$IA/impactPunch_medium_000.ogg" "$IA/impactPunch_medium_001.ogg" \
+   "$IA/impactPunch_heavy_000.ogg" "$IA/impactSoft_heavy_000.ogg" \
+   "$IA/footstep_grass_000.ogg" "$IA/footstep_grass_001.ogg" \
+   "$IA/footstep_grass_002.ogg" "$IA/footstep_grass_003.ogg" public/assets/audio/
+cp "$TMP/chiptune-exploration/exploration files/exploration.ogg" public/assets/audio/
+# 라이선스 사본 (각 팩 원문 그대로 배포 산출물에 포함)
+cp "$TMP/kaykit-adventurers/LICENSE.txt" public/assets/characters/LICENSE-kaykit-adventurers.txt
+cp "$TMP/kaykit-skeletons/LICENSE.txt" public/assets/characters/LICENSE-kaykit-skeletons.txt
+cp "$N/License.txt" public/assets/nature/LICENSE-kaykit-forest-nature.txt
+cp "$TMP/fantasy-town/fantasy-town-kit-1.0/License.txt" public/assets/town/LICENSE-fantasy-town-kit.txt
+cp "$TMP/kaykit-dungeon/LICENSE.txt" public/assets/dungeon/LICENSE-kaykit-dungeon-remastered.txt
+cp "$TMP/quaternius-village/License.txt" public/assets/village/LICENSE-quaternius-medieval-village.txt
+cp "$TMP/easy-enemy/Easy Enemy Pack/LICENSE-SOURCE.txt" public/assets/enemies/LICENSE-easy-enemy-pack.txt
+cp $(find "$TMP/kenney-rpg-audio" -iname 'License.txt' | head -1) public/assets/audio/LICENSE-kenney-rpg-audio.txt
+cp $(find "$TMP/kenney-impact-sounds" -iname 'License.txt' | head -1) public/assets/audio/LICENSE-kenney-impact-sounds.txt
+cp "$TMP/chiptune-exploration/LICENSE-SOURCE.txt" public/assets/audio/LICENSE-chiptune-exploration.txt
+# 폰트: Noto Sans KR (Google Fonts, SIL OFL) — CSS API로 woff2를 받아 로컬 경로로 치환
+mkdir -p public/fonts
+UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+curl -sSL -A "$UA" -o "$TMP/fonts-raw.css" "https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap"
+grep -o 'https://[^)]*\.woff2' "$TMP/fonts-raw.css" | sort -u | while read -r u; do
+  curl -sSL -o "public/fonts/$(basename "$u")" "$u"
+done
+sed -E 's#url\(https://[^)]*/([^/)]+\.woff2)\)#url(\1)#g' "$TMP/fonts-raw.css" > public/fonts/fonts.css
+echo "완료. 라이선스 사본은 각 assets 폴더의 LICENSE-* 파일을 참조하세요."
