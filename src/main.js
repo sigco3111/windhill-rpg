@@ -345,7 +345,7 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
   level: 1, xp: 0,
-  bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [],
+  bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [],
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
@@ -836,6 +836,7 @@ async function build() {
   buildFlowers(-45, 18);
   // 보물상자 (탐험 요소) — 언덕 곳곳 5개
   buildChests();
+  buildShrines();
 
   // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
   try {
@@ -972,6 +973,7 @@ function applyProgression() {
   if (done >= 5) state.maxHp = 190;
   if (done >= 6) PLAYER.dmg = 18;
   state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
+  state.maxHp += (state.shrinesPrayed || []).length * 5; // 바람 제단 축복: 제단당 최대 체력 +5
   state.hp = Math.min(state.hp, state.maxHp);
 }
 // ---------- 레벨·경험치 ----------
@@ -1328,7 +1330,7 @@ function saveGame() {
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
-      bounty: state.bounty, chestsOpened: state.chestsOpened || [], gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      bounty: state.bounty, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1361,6 +1363,8 @@ function loadGame() {
     applyProgression();
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.chestsOpened = s.chestsOpened || [];
+    state.shrinesPrayed = s.shrinesPrayed || [];
+    if (state.shrines) state.shrines.forEach((r, i) => { r.prayed = state.shrinesPrayed.includes(i); r.beam.visible = !r.prayed; });
     if (s.gear) state.gear = { sword: s.gear.sword || 0, armor: s.gear.armor || 0, boots: s.gear.boots || 0 };
     if (s.ach) state.ach = s.ach;
     if (state.chests) state.chests.forEach((c, i) => { c.opened = state.chestsOpened.includes(i); c.beam.visible = !c.opened; });
@@ -1565,6 +1569,61 @@ function updateChests() {
   }
 }
 
+// ---------- 바람 제단 (탐험 요소): 외곽 3곳, 근접 시 기도 → 최대 체력 +5·물약 1·골드 10 ----------
+const SHRINES = [ // 섬(반경 80) 안쪽, 외곽 탐험 유도 지점
+  { x: -56, z: 38, name: '서쪽 바람 제단' },
+  { x: 52, z: -44, name: '남동 바람 제단' },
+  { x: -8, z: 66, name: '북쪽 바람 제단' },
+];
+function buildShrines() {
+  state.shrines = [];
+  SHRINES.forEach((s, i) => {
+    const root = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.35, 0.5, 8), new THREE.MeshLambertMaterial({ color: 0x9aa3ad }));
+    base.position.y = 0.25; base.castShadow = true; root.add(base);
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 1.8, 8), new THREE.MeshLambertMaterial({ color: 0x8b95a1 }));
+    pillar.position.y = 1.3; pillar.castShadow = true; root.add(pillar);
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.42), new THREE.MeshBasicMaterial({ color: 0x7fd4ff }));
+    gem.position.y = 2.6; root.add(gem);
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.3, 0.5, 5.5, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x9fe0ff, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    beam.position.y = 3; root.add(beam);
+    root.position.set(s.x, 0, s.z);
+    scene.add(root);
+    const prayed = (state.shrinesPrayed || []).includes(i);
+    beam.visible = !prayed;
+    gem.material.color.set(prayed ? 0x5a6b7a : 0x7fd4ff);
+    state.shrines.push({ root, beam, gem, x: s.x, z: s.z, name: s.name, prayed });
+  });
+}
+function updateShrines(now) {
+  if (!state.shrines || state.dead) return;
+  for (let i = 0; i < state.shrines.length; i++) {
+    const s = state.shrines[i];
+    if (!s.prayed) {
+      s.gem.rotation.y = now * 1.6;
+      s.gem.position.y = 2.6 + Math.sin(now * 2.2 + i) * 0.12;
+      if (state.player.position.distanceTo(s.root.position) < 1.8) {
+        s.prayed = true;
+        s.beam.visible = false;
+        s.gem.material.color.set(0x5a6b7a);
+        state.shrinesPrayed = state.shrines.map((o, j) => (o.prayed ? j : -1)).filter((j) => j >= 0);
+        applyProgression();
+        state.hp = state.maxHp;
+        state.potions = Math.min(SHOP.potionMax, state.potions + 1);
+        state.gold += 10;
+        sfx('reward', 1);
+        toast(`${s.name}의 축복! 최대 체력 +5 · 물약 +1 · +10G (${state.shrinesPrayed.length}/${SHRINES.length})`);
+        state.anim.playOnce('pick_up', 'pick');
+        checkAch();
+        saveGame();
+      }
+    }
+  }
+}
+
 // ---------- 업적 ----------
 const ACH = [
   { id: 'firstKill', name: '첫 사냥', cond: () => state.kills >= 1 },
@@ -1580,6 +1639,7 @@ const ACH = [
   { id: 'variant3', name: '변종 사냥꾼 (새 몬스터 3종)', cond: () => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].every((l) => (state.dex[l] || 0) >= 1 || (state.dex['엘리트 ' + l] || 0) >= 1) },
   { id: 'order3', name: '단골 납품꾼 (특별 주문 3회)', cond: () => (state.orderDone || 0) >= 3 },
   { id: 'bounty5', name: '언덕의 해결사 (반복 의뢰 5회)', cond: () => (state.bounty && state.bounty.count || 0) >= 5 },
+  { id: 'shrine3', name: '바람 제단 순례 (제단 3곳)', cond: () => (state.shrinesPrayed || []).length >= 3 },
 ];
 function checkAch() {
   let changed = false;
@@ -2036,6 +2096,7 @@ function tick() {
     for (const e of state.enemies) updateEnemy(e, dt, now);
     updateFlowers(dt, now);
     updateChests();
+    updateShrines(now);
     checkAch();
     updateWeather(dt, now);
 
@@ -2148,7 +2209,7 @@ function tick() {
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0, order: state.order, orderDone: state.orderDone || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
-    chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
+    chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, bounty: state.bounty ? { ...state.bounty } : null,
     gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
