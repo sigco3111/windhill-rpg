@@ -399,8 +399,8 @@ const PFROG = { ...FROG, hp: 24, dmg: 5, speed: 2.4, cd: 1.3, gold: 8, label: '�
 const SRAT = { ...RAT, hp: 16, dmg: 4, speed: 3.8, gold: 7, label: '그림자 쥐', tint: 0x3a3a55 };
 const FSKEL = { ...ENEMY, hp: 32, dmg: 7, speed: 2.2, gold: 10, label: '서리 스켈레톤', tint: 0x55bbff, emis: 0x0a2a3a };
 // 독사 계열: 물기에 중독(6초 DoT, 초당 2, 최소 1HP) — 회피로 피하고 물약으로 해독
-const SNAKE = { hp: 30, dmg: 5, speed: 3.0, aggro: 12, range: 1.5, cd: 1.5, label: '독사', windup: 0.45, gold: 9, teleH: 1.0, poison: true, tint: 0x86c93f };
-const VSNAKE = { ...SNAKE, hp: 48, dmg: 8, speed: 3.5, cd: 1.3, gold: 15, label: '왕독사', tint: 0x6a3aa0, emis: 0x180a28 };
+const SNAKE = { hp: 30, dmg: 5, speed: 3.0, aggro: 12, range: 1.5, cd: 1.5, label: '독사', windup: 0.45, gold: 9, teleH: 1.0, poison: true, snake: true, tint: 0x86c93f };
+const VSNAKE = { ...SNAKE, hp: 48, dmg: 8, speed: 3.5, cd: 1.3, gold: 15, label: '왕독사', kingSnake: true, tint: 0x6a3aa0, emis: 0x180a28 };
 // 황금 쥐: 희귀 출현, 플레이어에게서 도망, 60초 한정
 const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, tintMix: 0.85, emis: 0x7a5c00, flee: true, noElite: true };
 // Batch AA — 버려진 망루의 수호대장: 1회성 미니보스 (부활·엘리트 승격 없음)
@@ -1026,10 +1026,13 @@ async function build() {
   } catch (e) { console.warn('npc2 fail', e); }
 
   // 지하묘지 (KayKit Dungeon Remastered, CC0) — 북동쪽 (48, -48)
-  await buildDungeon(48, -48);
+  // ?lite=1: 테스트 전용 경량 모드 — 던전/망루 장식 로딩 생략 (실제 게임에서는 항상 전체 로딩)
+  if (params.get('lite') !== '1') {
+    await buildDungeon(48, -48);
 
-  // 버려진 망루 (남쪽 언덕, KayKit Dungeon Remastered) — 수호대장 1회성 전투·발견 장소
-  await buildWatchtower();
+    // 버려진 망루 (남쪽 언덕, KayKit Dungeon Remastered) — 수호대장 1회성 전투·발견 장소
+    await buildWatchtower();
+  }
 
   state.ready = true;
   window.__gameReady = true;
@@ -1120,6 +1123,18 @@ const QUESTS = [
     offer: '근래 평범하지 않은 몬스터가 목격된단다. 숲의 <b>독 개구리</b>, 들판의 <b>그림자 쥐</b>, 북쪽의 <b>서리 스켈레톤</b>... 변종들일세.<br>변종을 <b>3마리</b> 처치해주게. 어느 종이든 좋네.',
     progress: '변종 토벌을 부탁했었지.',
     done: '변종들까지 정리했군! 이제 언덕 어디든 안전하겠어.<br>사례일세: <b>공격력 14 → 18</b>과 <b>골드 80G</b>.' },
+  { name: '독사 토벌', goal: 4, counter: 'snakeKills', unit: '마리',
+    offer: '들판에 <b>독사</b>가 나타났다네. 물리면 독이 온몸에 퍼져 위험하니 밭일하는 주민들이 겁을 내고 있어.<br>독사 <b>4마리</b>를 처치해주게. 물린다면 물약으로 해독하게나.',
+    progress: '들판의 독사를 부탁했었지.',
+    done: '독사들을 해치웠군! 주민들이 밭에 나갈 수 있겠어.<br>사례일세: <b>공격력 18 → 22</b>.' },
+  { name: '왕독사 토벌', goal: 2, counter: 'kingSnakeKills', unit: '마리',
+    offer: '서쪽 숲 깊은 곳에 독사들의 우두머리, <b>왕독사</b>가 도사리고 있네.<br>왕독사 <b>2마리</b>를 처치해주게. 독이 더 지독하니 물약을 넉넉히 챙기게나.',
+    progress: '서쪽 숲의 왕독사를 부탁했었지.',
+    done: '왕독사까지 쓰러뜨렸군! 숲이 한결 안전해졌어.<br>사례일세: <b>최대 체력 190 → 220</b>과 <b>골드 120G</b>.' },
+  { name: '독니 수집', goal: 3, counter: 'vials', unit: '개',
+    offer: '약재상이 독사의 <b>독니</b>로 해독제를 만든다는군. 독사를 처치하면 얻을 수 있네.<br>독니 <b>3개</b>를 모아다 주게. 수집가에게 팔면 다시 모아야 하니 유의하게.',
+    progress: '독니 수집을 부탁했었지.',
+    done: '이 독니들이면 해독제를 한가득 만들 수 있겠어.<br>사례일세: <b>골드 100G</b>와 <b>체력 물약 2개</b>.' },
 ];
 function variantKillCount() {
   return Object.entries(state.dex || {}).filter(([k]) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => k === l || k === '엘리트 ' + l)).reduce((s, [, n]) => s + n, 0);
@@ -1133,6 +1148,9 @@ function questCounter(q) {
   if (d.counter === 'flowers') return state.flowerCount || 0;
   if (d.counter === 'bossKills') return state.bossKills || 0;
   if (d.counter === 'variantKills') return variantKillCount();
+  if (d.counter === 'snakeKills') return state.snakeKills || 0;
+  if (d.counter === 'kingSnakeKills') return state.kingSnakeKills || 0;
+  if (d.counter === 'vials') return state.mats['독니'] || 0; // 실제 보유 수량 기준: 판매·소비 시 진행도도 줄어듦
   return 0;
 }
 function applyProgression() {
@@ -1143,6 +1161,8 @@ function applyProgression() {
   if (done >= 3) state.maxHp = 160;
   if (done >= 5) state.maxHp = 190;
   if (done >= 6) PLAYER.dmg = 18;
+  if (done >= 7) PLAYER.dmg = 22;
+  if (done >= 8) state.maxHp = 220;
   state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
   state.maxHp += (state.shrinesPrayed || []).length * 5; // 바람 제단 축복: 제단당 최대 체력 +5
   state.hp = Math.min(state.hp, state.maxHp);
@@ -1222,6 +1242,8 @@ function openDialog() {
       if (claimed === 3) { state.gold += 40; state.potions = Math.min(SHOP.potionMax, state.potions + 2); }
       if (claimed === 4) { state.gold += 60; }
       if (claimed === 5) { state.gold += 80; }
+      if (claimed === 7) { state.gold += 120; }
+      if (claimed === 8) { state.gold += 100; state.potions = Math.min(SHOP.potionMax, state.potions + 2); state.mats['독니'] = Math.max(0, (state.mats['독니'] || 0) - 3); } // 독니 3개 납품
       sfx('reward', 1);
       closeDialog(); saveGame();
     });
@@ -1556,7 +1578,7 @@ function saveGame() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
-      heading: state.heading, quest: state.quest, tutDone: state.tutDone,
+      heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
@@ -1578,6 +1600,9 @@ function loadGame() {
     state.skKills = s.skKills || 0;
     state.wKills = s.wKills || 0;
     state.tutDone = !!s.tutDone;
+    state.snakeKills = s.snakeKills || 0;
+    state.kingSnakeKills = s.kingSnakeKills || 0;
+    state.vials = s.vials || 0;
     state.gold = s.gold || 0;
     state.potions = s.potions || 0;
     state.bossKills = s.bossKills || 0;
@@ -2420,6 +2445,8 @@ function questTargetInner() {
   else if (d.counter === 'flowers') pos = nearestFlowerPos();
   else if (d.counter === 'bossKills') pos = state.boss && !state.boss.dead ? state.boss.root.position : null;
   else if (d.counter === 'variantKills') pos = nearestEnemyPos((e) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => e.stats.label === l || e.stats.label === '엘리트 ' + l));
+  else if (d.counter === 'snakeKills' || d.counter === 'vials') pos = nearestEnemyPos((e) => e.stats.snake && !e.stats.kingSnake);
+  else if (d.counter === 'kingSnakeKills') pos = nearestEnemyPos((e) => e.stats.kingSnake);
   if (!pos) return null;
   return { x: pos.x, z: pos.z, label: d.name };
 }
@@ -2519,6 +2546,8 @@ function killEnemy(e) {
   gainXp(e.stats.gold || 3);
   if (e.stats.skel) state.skKills++;
   if (e.stats.warrior) state.wKills++;
+  if (e.stats.snake) state.snakeKills = (state.snakeKills || 0) + 1;
+  if (e.stats.kingSnake) state.kingSnakeKills = (state.kingSnakeKills || 0) + 1;
   if (e.stats.boss) state.bossKills++;
   if (e.stats.elite) state.eliteKills = (state.eliteKills || 0) + 1;
   const g = e.stats.gold || 3;
@@ -2526,7 +2555,7 @@ function killEnemy(e) {
   const mat = MATS[(e.stats.label || '').replace(/^엘리트 /, '')];
   if (mat) {
     const dn = e.stats.boss ? 3 : e.stats.elite ? 2 : (Math.random() < 0.45 ? 1 : 0);
-    if (dn > 0) { state.mats[mat.name] = (state.mats[mat.name] || 0) + dn; toast(`재료 획득: ${mat.name}${dn > 1 ? ' ×' + dn : ''}`); }
+    if (dn > 0) { state.mats[mat.name] = (state.mats[mat.name] || 0) + dn; toast(`재료 획득: ${mat.name}${dn > 1 ? ' ×' + dn : ''}`); if (mat.name === '독니') state.vials = (state.vials || 0) + dn; }
   }
   if (e.stats.watch && !state.watchCleared) {
     state.watchCleared = true;
@@ -3000,6 +3029,7 @@ function tick() {
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0, order: state.order, orderDone: state.orderDone || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
+    snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
