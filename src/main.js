@@ -3330,6 +3330,7 @@ function tryWhirl() {
   const now = clock.elapsedTime;
   if (now < state.whirlCdUntil || now < state.dodgeUntil || now < state.attackCdUntil) return;
   state.whirlCdUntil = now + (hasSkill('storm') ? 6 : 8);
+  state.didHit = true; // 회전베기는 아래에서 즉시 판정. 일반 공격 지연 판정이 덧붙지 않게 함
   state.attackUntil = now + 0.5;
   state.attackCdUntil = now + 0.6;
   state.attackStrong = false;
