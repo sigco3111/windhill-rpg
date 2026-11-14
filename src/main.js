@@ -415,7 +415,7 @@ const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, 
 const CAPTAIN = { ...WARRIOR, hp: 90, dmg: 11, speed: 2.7, aggro: 12, range: 2.0, cd: 1.3, windup: 0.6, gold: 45, label: '망루 수호대장', teleH: 2.6, tint: 0x8fa3c8, tintMix: 0.5, emis: 0x0d1420, noElite: true, noRespawn: true, watch: true, guard: true };
 // 지명 수배 몬스터 3종 (의뢰 14~16 대상, 1회성 네임드): 가드 미니보스 패턴 + 큰 덩치(big 배율)·고유 색감
 const BLOODRAT = { ...RAT, hp: 240, dmg: 16, speed: 4.0, aggro: 13, range: 1.6, cd: 1.0, windup: 0.35, gold: 130, label: '피빛 왕쥐', guard: true, bloodRat: true, noElite: true, noRespawn: true, big: 1.7, tint: 0xc03040, tintMix: 0.6, emis: 0x2a080c };
-const SWASP = { ...WASP, wasp: false, hp: 280, dmg: 17, speed: 3.6, aggro: 14, range: 1.9, cd: 1.2, gold: 140, label: '칼날 말벌', guard: true, stormWasp: true, noElite: true, noRespawn: true, big: 1.35, tint: 0x9adfff, tintMix: 0.55, emis: 0x10202c };
+const SWASP = { ...WASP, wasp: false, hp: 280, dmg: 17, speed: 3.6, aggro: 14, range: 1.9, cd: 1.2, gold: 140, label: '칼날 말벌', guard: false, stormWasp: true, noElite: true, noRespawn: true, big: 1.35, tint: 0x9adfff, tintMix: 0.55, emis: 0x10202c };
 const ROCKSP = { ...SPIDER, hp: 380, dmg: 19, speed: 2.2, aggro: 14, range: 2.0, cd: 1.6, windup: 0.65, gold: 160, label: '바위등 거미', guard: true, rockSpider: true, noElite: true, noRespawn: true, big: 1.5, teleH: 1.7, tint: 0x8f9096, tintMix: 0.6, emis: 0x141416 };
 // 잊힌 유적 지역 (북서 (-36,-48)): 유적 해골·유적 수호자 — 스켈레톤 프로토 재사용, 카운터 분리(skel/warrior 플래그 끔)
 const RUINSKEL = { ...ENEMY, skel: false, hp: 60, dmg: 11, speed: 2.5, aggro: 12, gold: 16, label: '유적 해골', ruinSkel: true, tint: 0xcfc4a8, tintMix: 0.55, emis: 0x2a2410 };
@@ -459,9 +459,9 @@ function updateBossPlate() {
   bossPlate.style.maxWidth = narrow ? '200px' : '72vw';
   bossPlate.style.minWidth = narrow ? '160px' : '220px';
   bossPlate.style.display = 'block';
-  const pulse = t.stats.ruinWarden && (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '');
+  const pulse = t.stats.ruinWarden ? (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '') : '';
   const stag = t.staggerUntil && clock.elapsedTime < t.staggerUntil;
-  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse;
+  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse + (t.stats.stormWasp ? (t.stormAt ? ' - 돌진! 옆으로 회피' : t.stormRun ? ' - 돌진 중' : t.stormRecover > clock.elapsedTime ? ' - 반격 기회' : '') : '');
   document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
 }
 
@@ -798,7 +798,7 @@ async function build() {
     const anim = new AnimSet(root, gltf.animations);
     anim.play('walking', 'walk', 'jump', 'idle');
     const e = { root, anim, angle: Math.atan2(x, z), stats: st, home: new THREE.Vector3(x, 0, z), hp: st.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 };
-    if ((st.guard || st.ruinWarden) && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
+    if ((st.guard || st.ruinWarden || st.stormWasp) && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
     state.enemies.push(e);
     return e;
   };
@@ -950,6 +950,7 @@ async function build() {
       inst.position.set(x, 0, z);
       inst.rotation.y = rng() * Math.PI * 2;
       inst.scale.setScalar(0.8 + rng() * 0.5);
+      if (Math.hypot(x - 48, z - 40) < 9) continue; // 칼날 말벌 전투 빈터, 난수 소비 후 제외해 다른 배치 유지
       scene.add(inst);
       if (isTree) { colliders.push({ x, z, r: 0.6 }); registerTreeFade(inst, x, z); }
     }
@@ -1020,6 +1021,7 @@ async function build() {
       inst.position.set(x, 0, z);
       inst.rotation.y = hrng() * Math.PI * 2;
       inst.scale.setScalar(0.9 + hrng() * 0.5);
+      if (Math.hypot(x - 48, z - 40) < 9) continue; // 돌진 경로/이름표를 덮는 수관 제외
       scene.add(inst);
       colliders.push({ x, z, r: 0.6 });
       registerTreeFade(inst, x, z);
@@ -1030,6 +1032,7 @@ async function build() {
       const a = hrng() * Math.PI * 2, r = 5 + hrng() * 12;
       inst.position.set(56 + Math.cos(a) * r, 0, 30 + Math.sin(a) * r);
       inst.rotation.y = hrng() * Math.PI * 2;
+      if (Math.hypot(inst.position.x - 48, inst.position.z - 40) < 9) continue;
       scene.add(inst);
     }
     // 벌집: 땅에 선 둥근 둥지 (줄무늬 구 3단) — 여왕벌이 옆을 지킴
@@ -1242,6 +1245,7 @@ async function build() {
       state.heading = Math.atan2(to.x, to.z);
       state.player.rotation.y = state.heading;
     },
+    stormCharge() { const e=state.enemies.find(e=>e.stats.stormWasp); return e ? {dead:e.dead,hp:e.hp,guard:e.stats.guard,mode:e.mode,at:e.stormAt||0,run:e.stormRun||0,recover:e.stormRecover||0,from:e.stormFrom?.toArray(),to:e.stormTo?.toArray(),pos:e.root.position.toArray(),line:!!e.stormLine?.visible,result:e.stormResult||null,now:clock.elapsedTime} : null; },
     wardenPulse() { const e = state.enemies.find(e => e.stats.ruinWarden); return e ? { dead:e.dead, hp:e.hp, guard:e.stats.guard, mode:e.mode, at:e.pulseAt || 0, recover:e.pulseRecover || 0, center:e.pulseCenter ? [e.pulseCenter.x,e.pulseCenter.z] : null, ring:!!(e.pulseRing && e.pulseRing.visible), result:e.pulseResult || null, now:clock.elapsedTime } : null; },
     heal() { state.hp = state.maxHp; if (state.dead) respawn(); },
     talk() { tryInteract(); },
@@ -1352,7 +1356,7 @@ const QUESTS = [
     progress: '서쪽 숲 외곽의 피빛 왕쥐를 부탁했었지.',
     done: '피빛 왕쥐를 잡았군! 이제 창고 곡식이 안전하겠어.<br>수배 사례금일세: <b>공격력 30 → 34</b>와 <b>골드 220G</b>.' },
   { name: '수배: 칼날 말벌', goal: 1, counter: 'stormWaspKills', unit: '마리', abs: true,
-    offer: '벌집 숲에서 쫓겨난 <b>칼날 말벌</b>이 숲 북쪽 원형 빈터에 웅거하고 있네. 날갯짓이 칼날 같아 지나던 상인이 크게 다쳤다는군.<br>처치해주게. 가드를 두르면 <b>강공격</b>으로 부수게나.',
+    offer: '벌집 숲에서 쫓겨난 <b>칼날 말벌</b>이 숲 북쪽 원형 빈터에 웅거하고 있네. 날갯짓이 칼날 같아 지나던 상인이 크게 다쳤다는군.<br>처치해주게. <b>붉은 직선 띠</b>가 보이면 옆으로 이동하거나 회피하게. 돌진 뒤 <b>푸른 반격창</b>을 노리게나.',
     progress: '숲 북쪽 빈터의 칼날 말벌을 부탁했었지.',
     done: '칼날 말벌까지 잡다니! 상인들이 안심하고 길을 다니겠어.<br>수배 사례금일세: <b>최대 체력 290 → 330</b>과 <b>골드 260G</b>.' },
   { name: '수배: 바위등 거미', goal: 1, counter: 'rockSpiderKills', unit: '마리', abs: true,
@@ -3000,6 +3004,7 @@ document.getElementById('tutskip').addEventListener('click', (e) => {
 function killEnemy(e) {
   e.dead = true; e.mode = 'dead';
   cancelWardenPulse(e);
+  cancelStormCharge(e);
   e.anim.playOnce('death_a', 'death');
   sfx('death', 0.9);
   e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
@@ -3187,6 +3192,68 @@ function updateWardenPulse(e, dt, now) {
   }
   return false;
 }
+// 칼날 말벌: 조준 고정 직선 돌진. 원형 지면파와 달리 옆으로 피한 뒤 추격 반격.
+function cancelStormCharge(e) {
+  e.stormAt = 0; e.stormRun = 0; e.stormRecover = 0;
+  if (e.stormLine) e.stormLine.visible = false;
+}
+function segmentDistance(p, a, b) {
+  const dx=b.x-a.x, dz=b.z-a.z, ll=dx*dx+dz*dz;
+  const t=ll ? THREE.MathUtils.clamp(((p.x-a.x)*dx+(p.z-a.z)*dz)/ll,0,1) : 0;
+  return Math.hypot(p.x-a.x-t*dx,p.z-a.z-t*dz);
+}
+function updateStormCharge(e, dt, now) {
+  if (!e.stats.stormWasp) return false;
+  if (state.dead || state.dialog) { cancelStormCharge(e); e.stormNext=now+2; return false; }
+  if (e.stormRecover && now < e.stormRecover) { e.mode='recover'; e.anim.play('idle'); e.anim.update(dt); return true; }
+  if (e.stormRecover) cancelStormCharge(e);
+  if (e.stormAt) {
+    e.mode='aim'; e.anim.update(dt); e.stormLine.material.opacity=0.32+0.18*Math.sin(now*13)**2;
+    if(now < e.stormAt) return true;
+    e.stormAt=0; e.stormRun=now; e.stormHit=false; e.stormLine.material.opacity=0.65;
+  }
+  if (e.stormRun) {
+    const prev=e.root.position.clone();
+    const k=THREE.MathUtils.clamp((now-e.stormRun)/0.55,0,1);
+    e.root.position.lerpVectors(e.stormFrom,e.stormTo,k); e.mode='charge';
+    e.anim.play('running','run','walking','walk'); e.anim.update(dt);
+    if (!e.stormHit && segmentDistance(state.player.position,prev,e.root.position)<=1.05) {
+      e.stormHit=true; const blocked=now<state.invUntil, before=state.hp;
+      if(blocked) state.dodgeBlocks=(state.dodgeBlocks||0)+1;
+      else { state.hp=Math.max(0,state.hp-Math.max(1,25-GEAR_DEF[state.gear.armor])); hitFlash(state.player); sfx('hurt',0.9); if(state.hp<=0) playerDie('칼날 말벌의 돌진'); }
+      e.stormResult={hit:true,blocked,damage:before-state.hp,at:now};
+    }
+    if(k>=1) {
+      if(!e.stormHit) e.stormResult={hit:false,blocked:false,damage:0,at:now};
+      e.stormRun=0; e.stormRecover=now+1.6; e.stormNext=now+6.5; e.mode='recover';
+      e.stormLine.material.color.setHex(0x5ee7ff); e.stormLine.material.opacity=0.4;
+      toast('칼날 돌진 끝! 푸른 띠가 보일 때 반격');
+    }
+    return true;
+  }
+  const p=state.player.position, dist=e.root.position.distanceTo(p);
+  if(dist<10 && now>=(e.stormNext||0)) {
+    const dir=p.clone().sub(e.root.position); dir.y=0;
+    if(dir.lengthSq()<0.001) dir.set(0,0,1); dir.normalize();
+    e.stormFrom=e.root.position.clone(); let length=Math.min(8,dist+2);
+    // 예고 경로와 실제 경로 일치: 기존 충돌물 앞에서 끝나도록 사전 절단.
+    for(let step=0.25;step<=length;step+=0.25) {
+      const x=e.stormFrom.x+dir.x*step,z=e.stormFrom.z+dir.z*step;
+      if(Math.abs(x)>78 || Math.abs(z)>78 || colliders.some(c=>Math.hypot(x-c.x,z-c.z)<c.r+0.8)) { length=Math.max(0,step-0.25); break; }
+    }
+    if(length<1) { e.stormNext=now+2; return false; }
+    e.stormTo=e.stormFrom.clone().addScaledVector(dir,length);
+    if(!e.stormLine) { e.stormLine=new THREE.Mesh(new THREE.PlaneGeometry(2.1,1),new THREE.MeshBasicMaterial({color:0xff4c4c,transparent:true,opacity:0.45,depthWrite:false,side:THREE.DoubleSide}));e.stormLine.rotation.x=-Math.PI/2;scene.add(e.stormLine); }
+    e.stormLine.scale.set(1,length,1); e.stormLine.rotation.z=Math.atan2(dir.x,dir.z);
+    e.stormLine.position.copy(e.stormFrom).addScaledVector(dir,length/2); e.stormLine.position.y=0.09;
+    e.stormLine.material.color.setHex(0xff4c4c);e.stormLine.visible=true;
+    e.root.rotation.y=Math.atan2(dir.x,dir.z);e.stormAt=now+1.2;e.pendingHit=0;e.combo2=0;e.leapFrom=null;
+    if(e.tele) e.tele.visible=false;
+    e.mode='aim';e.anim.play('idle');toast('칼날 말벌 돌진! 붉은 띠에서 옆으로 회피');return true;
+  }
+  return false;
+}
+
 function updateEnemy(e, dt, now) {
   if (e.dead) {
     if (!e.trial && !e.stats.noRespawn && now > e.respawnAt) respawnEnemy(e);
@@ -3194,6 +3261,7 @@ function updateEnemy(e, dt, now) {
     return;
   }
   if (updateWardenPulse(e, dt, now)) return;
+  if (updateStormCharge(e, dt, now)) return;
   if (e.hitUntil && now < e.hitUntil) { e.anim.update(dt); return; }
   if (e.staggerUntil && now < e.staggerUntil) { e.anim.update(dt); return; } // 가드 파괴 경직
   const p = state.player.position;
