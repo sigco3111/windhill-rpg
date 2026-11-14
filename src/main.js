@@ -1348,6 +1348,14 @@ const QUESTS = [
     offer: '북서 바위 벼랑에 등껍질이 바위 같은 <b>바위등 거미</b>가 자리를 잡았다네. 무엇이든 통째로 삼켜버리는 무서운 놈일세.<br>처치해주게. 단단한 가드를 두르니 <b>길게 눌러 강공격</b>으로 가드를 부수는 게 핵심일세.',
     progress: '북서 바위 벼랑의 바위등 거미를 부탁했었지.',
     done: '바위등 거미를 쓰러뜨렸군! 자네는 이제 언덕 최고의 현상금 사냥꾼일세!<br>수배 사례금일세: <b>공격력 34 → 38</b>과 <b>골드 300G</b>, <b>체력 물약 2개</b>.' },
+  { name: '유적 해골 토벌', goal: 3, counter: 'ruinSkelKills', unit: '기',
+    offer: '북서쪽에 오래된 <b>잊힌 유적</b>이 발견됐다네. 그곳을 배회하는 <b>유적 해골</b>들이 영역을 넓히기 전에 정리해야 하네.<br>유적 해골 <b>3기</b>를 처치해주게. 모래빛 뼈대가 특징일세.',
+    progress: '잊힌 유적의 유적 해골을 부탁했었지.',
+    done: '유적 해골들을 정리했군! 유적이 한결 얌전해졌어.<br>사례일세: <b>공격력 38 → 42</b>와 <b>골드 320G</b>.' },
+  { name: '유적 수호자 토벌', goal: 2, counter: 'ruinWarKills', unit: '기',
+    offer: '잊힌 유적 깊은 곳에는 옛 왕국의 무사였던 <b>유적 수호자</b>들이 아직도 망령으로 남아 자리를 지키고 있네.<br>유적 수호자 <b>2기</b>를 처치해주게. 단단하니 물약을 챙기게나.',
+    progress: '잊힌 유적의 유적 수호자를 부탁했었지.',
+    done: '수호자들의 망령까지 편히 보내줬군! 이제 유적은 고요히 잠들 수 있겠어.<br>사례일세: <b>최대 체력 330 → 370</b>과 <b>골드 360G</b>.' },
 ];
 function variantKillCount() {
   return Object.entries(state.dex || {}).filter(([k]) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => k === l || k === '엘리트 ' + l)).reduce((s, [, n]) => s + n, 0);
@@ -1372,6 +1380,8 @@ function questCounter(q) {
   if (d.counter === 'bloodRatKills') return state.bloodRatKills || 0;
   if (d.counter === 'stormWaspKills') return state.stormWaspKills || 0;
   if (d.counter === 'rockSpiderKills') return state.rockSpiderKills || 0;
+  if (d.counter === 'ruinSkelKills') return state.ruinSkelKills || 0;
+  if (d.counter === 'ruinWarKills') return state.ruinWarKills || 0;
   return 0;
 }
 function applyProgression() {
@@ -1391,6 +1401,8 @@ function applyProgression() {
   if (done >= 15) PLAYER.dmg = 34;
   if (done >= 16) state.maxHp = 330;
   if (done >= 17) PLAYER.dmg = 38;
+  if (done >= 18) PLAYER.dmg = 42;
+  if (done >= 19) state.maxHp = 370;
   state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
   state.maxHp += (state.shrinesPrayed || []).length * 5; // 바람 제단 축복: 제단당 최대 체력 +5
   state.hp = Math.min(state.hp, state.maxHp);
@@ -1480,6 +1492,8 @@ function openDialog() {
       if (claimed === 14) { state.gold += 220; }
       if (claimed === 15) { state.gold += 260; }
       if (claimed === 16) { state.gold += 300; state.potions = Math.min(SHOP.potionMax, state.potions + 2); }
+      if (claimed === 17) { state.gold += 320; }
+      if (claimed === 18) { state.gold += 360; }
       sfx('reward', 1);
       closeDialog(); saveGame();
     });
@@ -2752,6 +2766,8 @@ function questTargetInner() {
   else if (d.counter === 'bloodRatKills') pos = nearestEnemyPos((e) => e.stats.bloodRat);
   else if (d.counter === 'stormWaspKills') pos = nearestEnemyPos((e) => e.stats.stormWasp);
   else if (d.counter === 'rockSpiderKills') pos = nearestEnemyPos((e) => e.stats.rockSpider);
+  else if (d.counter === 'ruinSkelKills') pos = nearestEnemyPos((e) => e.stats.ruinSkel);
+  else if (d.counter === 'ruinWarKills') pos = nearestEnemyPos((e) => e.stats.ruinWar);
   if (!pos) return null;
   return { x: pos.x, z: pos.z, label: d.name };
 }
