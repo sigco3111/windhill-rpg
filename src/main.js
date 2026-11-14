@@ -348,6 +348,7 @@ const state = {
   bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
+  watch: null, watchFound: false, watchCleared: false, // 버려진 망루: 발견(30m 접근) + 수호대장 격파(1회성)
   golden: null, // 황금 쥐: { nextAt, active, until }
   rings: null, ringsPassed: [], // 바람의 고리: 5곳 통과 탐험 요소
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
@@ -376,6 +377,8 @@ const SRAT = { ...RAT, hp: 16, dmg: 4, speed: 3.8, gold: 7, label: '그림자 �
 const FSKEL = { ...ENEMY, hp: 32, dmg: 7, speed: 2.2, gold: 10, label: '서리 스켈레톤', tint: 0x55bbff, emis: 0x0a2a3a };
 // 황금 쥐: 희귀 출현, 플레이어에게서 도망, 60초 한정
 const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, tintMix: 0.85, emis: 0x7a5c00, flee: true, noElite: true };
+// Batch AA — 버려진 망루의 수호대장: 1회성 미니보스 (부활·엘리트 승격 없음)
+const CAPTAIN = { ...WARRIOR, hp: 90, dmg: 11, speed: 2.7, aggro: 12, range: 2.0, cd: 1.3, windup: 0.6, gold: 45, label: '망루 수호대장', teleH: 2.6, tint: 0x8fa3c8, tintMix: 0.5, emis: 0x0d1420, noElite: true, noRespawn: true, watch: true };
 
 // ---------- 토스트 (짧은 알림) ----------
 let toastTimer = 0;
@@ -886,6 +889,9 @@ async function build() {
   // 지하묘지 (KayKit Dungeon Remastered, CC0) — 북동쪽 (48, -48)
   await buildDungeon(48, -48);
 
+  // 버려진 망루 (남쪽 언덕, KayKit Dungeon Remastered) — 수호대장 1회성 전투·발견 장소
+  await buildWatchtower();
+
   state.ready = true;
   window.__gameReady = true;
   const lo = document.getElementById('loading');
@@ -1231,6 +1237,7 @@ function drawMinimap() {
   if (state.dens) for (const d of state.dens) if (!d.cleared) dot(d.x, d.z, '#ff6a5a', 3);
   if (state.golden && state.golden.active && !state.golden.active.dead) dot(state.golden.active.root.position.x, state.golden.active.root.position.z, '#fff04a', 4.5);
   if (state.rings) for (const r of state.rings) if (!r.passed) dot(r.x, r.z, '#9fdcff', 3.5);
+  if (!state.watchCleared) dot(WATCH_POS.x, WATCH_POS.z, state.watchFound ? '#e8a04c' : '#b8b2a6', 3.5); // 버려진 망루: 미발견 회색 → 발견 후 호박색
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
   if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
@@ -1252,6 +1259,7 @@ const MATS = {
   '쥐': { name: '부드러운 가죽', price: 3 },
   '거미': { name: '거미줄', price: 5 },
   '묘지의 왕': { name: '왕의 유품', price: 40 },
+  '망루 수호대장': { name: '수호대장 투구', price: 22 },
   '독 개구리': { name: '독 주머니', price: 6 },
   '그림자 쥐': { name: '그림자 가죽', price: 5 },
   '서리 스켈레톤': { name: '서리 뼈', price: 7 },
@@ -1351,7 +1359,7 @@ function saveGame() {
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
-      mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [],
+      mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1397,6 +1405,12 @@ function loadGame() {
     state.ringsPassed = s.ringsPassed || [];
     if (state.rings) state.rings.forEach((r, i) => { r.passed = state.ringsPassed.includes(i); r.mesh.visible = !r.passed; r.halo.visible = !r.passed; });
     if (state.dens) state.dens.forEach((d, i) => { d.cleared = state.densCleared.includes(i); d.beam.visible = !d.cleared; });
+    state.watchFound = !!s.watchFound;
+    state.watchCleared = !!s.watchCleared;
+    if (state.watch && state.watch.guardian && state.watchCleared) {
+      const g = state.watch.guardian;
+      g.dead = true; g.mode = 'dead'; g.hp = 0; g.root.visible = false; g.respawnAt = 1e12;
+    }
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
       if (s.quest.idx === undefined) {
@@ -1475,6 +1489,7 @@ async function buildDungeon(cx, cz) {
   try { put(await load(`${D}stairs_wide.gltf.glb`), cx, cz + half + ts, Math.PI); } catch (e) {}
   // 던전 수호자 2기 (Skeleton Warrior: HP40/공격8)
   const war = await load('assets/characters/Skeleton_Warrior.glb');
+  state.protos.war = war;
   state.spawn(war, WARRIOR, cx - ts, cz);
   state.spawn(war, WARRIOR, cx + ts, cz);
   // 보스: 묘지의 왕 (Skeleton Warrior 1.7배, HP150/공격12/연속타)
@@ -1555,6 +1570,7 @@ const CHESTS = [
   { x: 22, z: -42, gold: 15 },
   { x: -48, z: 30, gold: 25 },
   { x: 58, z: 18, gold: 30 },
+  { x: 10, z: -60.5, gold: 40 }, // 버려진 망루 내부 (수호대장이 지킴)
 ];
 // 숨겨진 보물: 이 상자들에서 낡은 지도 조각 획득, 3개 모으면 보물 위치 공개
 const FRAG_CHESTS = new Set([1, 3, 4]);
@@ -1702,6 +1718,76 @@ function updateChests() {
       state.anim.playOnce('pick_up', 'pick');
       saveGame();
     }
+  }
+}
+
+// ---------- 버려진 망루: 남쪽 언덕의 폐허 + 수호대장 (장소·전투·발견 콘텐츠, 1회성) ----------
+const WATCH_POS = { x: 10, z: -58 };
+async function buildWatchtower() {
+  const D = 'assets/dungeon/';
+  const cx = WATCH_POS.x, cz = WATCH_POS.z;
+  const root = new THREE.Group();
+  root.position.set(cx, 0, cz);
+  scene.add(root);
+  const wallG = await load(`${D}wall.gltf.glb`);
+  const brokenG = await load(`${D}wall_broken.gltf.glb`);
+  const halfG = await load(`${D}wall_half.gltf.glb`);
+  const rubbleG = await load(`${D}rubble_half.gltf.glb`);
+  const pillarG = await load(`${D}pillar.gltf.glb`);
+  const torchG = await load(`${D}torch_lit.gltf.glb`);
+  const R = 4.2, SEG = 12;
+  const skip = new Set([3, 9]); // 3=남쪽 입구(마을 방향), 9=북쪽 무너진 구간
+  for (let i = 0; i < SEG; i++) {
+    const a = (i / SEG) * Math.PI * 2;
+    const wx = cx + Math.cos(a) * R, wz = cz + Math.sin(a) * R;
+    if (skip.has(i)) {
+      if (i === 9) { // 북쪽 무너진 구간만 잔해+충돌
+        const r = shadowify(rubbleG.scene.clone());
+        r.position.set(wx, 0, wz); r.rotation.y = a; scene.add(r);
+        colliders.push({ x: wx, z: wz, r: 0.9 });
+      } // i===3 남쪽은 입구: 잔해·충돌 없이 개방 (실플레이 진입 경로)
+      continue;
+    }
+    const proto = i % 4 === 2 ? brokenG : i % 4 === 1 ? halfG : wallG; // 높이·형태를 섞어 폐허 느낌
+    const o = shadowify(proto.scene.clone());
+    // 폐허다운 낮은 벽: 3인칭 카메라가 벽 너머 내부를 볼 수 있게 Y만 낮춤(바닥 면적·충돌 불변)
+    o.scale.y = proto === wallG ? 0.45 : proto === halfG ? 0.7 : 0.8;
+    o.position.set(wx, 0, wz);
+    o.rotation.y = a + Math.PI / 2;
+    scene.add(o);
+    colliders.push({ x: wx, z: wz, r: 1.25 });
+  }
+  // 입구 양옆 기둥 + 횃불, 중앙 조명
+  for (const sx of [-1, 1]) {
+    const px = cx + sx * 2.4, pz = cz + R - 1.4;
+    const p = shadowify(pillarG.scene.clone()); p.position.set(px, 0, pz); scene.add(p);
+    colliders.push({ x: px, z: pz, r: 0.7 });
+    const t = shadowify(torchG.scene.clone()); t.position.set(px, 2.6, pz); scene.add(t);
+  }
+  const l = new THREE.PointLight(0xff9a3c, 5, 16, 1.6);
+  l.position.set(cx, 3.4, cz);
+  scene.add(l);
+  // 수호대장 (Skeleton_Warrior 프로토타입은 buildDungeon이 state.protos.war에 보관)
+  let guardian = null;
+  if (state.protos && state.protos.war) {
+    guardian = state.spawn(state.protos.war, CAPTAIN, cx, cz - 1.0);
+    guardian.root.scale.multiplyScalar(1.45);
+    guardian.home.set(cx, 0, cz);
+    guardian.nameSprite = makeNameSprite('망루 수호대장');
+    guardian.nameSprite.position.y = 2.9;
+    guardian.root.add(guardian.nameSprite);
+  }
+  state.watch = { root, guardian };
+}
+function updateWatch() {
+  const w = state.watch;
+  if (!w || state.dead) return;
+  if (!state.watchFound && state.player.position.distanceTo(w.root.position) < 30) {
+    state.watchFound = true;
+    toast('버려진 망루 발견! 강한 기척이 지키고 있다…');
+    sfx('dialog', 0.7);
+    gainXp(15);
+    saveGame();
   }
 }
 
@@ -1963,6 +2049,7 @@ const ACH = [
   { id: 'golden1', name: '황금 쥐를 잡아라', cond: () => (state.dex['황금 쥐'] || 0) >= 1 },
   { id: 'wind5', name: '바람의 고리 (5곳 통과)', cond: () => (state.ringsPassed || []).length >= 5 },
   { id: 'elite5', name: '엘리트 사냥꾼 (엘리트 5마리)', cond: () => (state.eliteKills || 0) >= 5 },
+  { id: 'watch1', name: '망루 해방 (수호대장 격파)', cond: () => !!state.watchCleared },
 ];
 function checkAch() {
   let changed = false;
@@ -2220,6 +2307,15 @@ function playerAttackHit() {
         const dn = e.stats.boss ? 3 : e.stats.elite ? 2 : (Math.random() < 0.45 ? 1 : 0);
         if (dn > 0) { state.mats[mat.name] = (state.mats[mat.name] || 0) + dn; toast(`재료 획득: ${mat.name}${dn > 1 ? ' ×' + dn : ''}`); }
       }
+      if (e.stats.watch && !state.watchCleared) {
+        state.watchCleared = true;
+        state.mats['수호대장 투구'] = (state.mats['수호대장 투구'] || 0) + 2;
+        state.potions = Math.min(SHOP.potionMax, state.potions + 1);
+        sfx('reward', 1);
+        toast('망루 수호대장 격파! 수호대장 투구 ×2 · 물약 +1');
+        checkAch();
+        saveGame();
+      }
       toast(e.stats.elite ? `엘리트 처치! +${g} 골드` : `처치! +${g} 골드`);
       if (e.tele) e.tele.visible = false;
       setTimeout(() => { e.root.visible = false; }, 1600);
@@ -2232,7 +2328,7 @@ function playerAttackHit() {
 
 function updateEnemy(e, dt, now) {
   if (e.dead) {
-    if (!e.trial && now > e.respawnAt) respawnEnemy(e);
+    if (!e.trial && !e.stats.noRespawn && now > e.respawnAt) respawnEnemy(e);
     e.anim.update(dt);
     return;
   }
@@ -2444,6 +2540,7 @@ function tick() {
     updateGolden(now);
     updateRings(dt);
     updateShrines(now);
+    updateWatch();
     updateTrial(now);
     checkAch();
     updateWeather(dt, now);
@@ -2579,6 +2676,7 @@ function tick() {
     now: +clock.elapsedTime.toFixed(2), atkUntil: +(state.attackUntil || 0).toFixed(2), cdUntil: +(state.attackCdUntil || 0).toFixed(2), didHit: state.didHit,
     eliteKills: state.eliteKills || 0, dex: { ...state.dex },
     rings: state.rings ? state.rings.map((r) => ({ x: r.x, z: r.z, name: r.name, passed: r.passed })) : null, ringsDone: state.ringsPassed.length,
+    watch: { found: !!state.watchFound, cleared: !!state.watchCleared, guardian: state.watch && state.watch.guardian ? { hp: state.watch.guardian.hp, dead: state.watch.guardian.dead, pos: state.watch.guardian.root.position.toArray().map((v) => +v.toFixed(1)) } : null },
     enemies: state.enemies.map((e) => ({ hp: e.hp, mode: e.mode, anim: e.anim.current, d: +e.root.position.distanceTo(state.player.position).toFixed(1), tele: !!(e.tele && e.tele.visible), elite: !!e.stats.elite, label: e.stats.label, pos: e.root.position.toArray().map((v) => +v.toFixed(1)) })),
   } : null;
   window.__camDbg = { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: camera.fov, yaw: +camYaw.toFixed(2), pitch: +camPitch.toFixed(2), w: innerWidth, h: innerHeight };
