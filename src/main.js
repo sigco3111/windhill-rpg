@@ -3892,10 +3892,10 @@ function tick() {
 
   fpsAcc += frameElapsed; fpsN++; fpsTimer += frameElapsed;
   if (fpsTimer > 0.5) {
-    fps = Math.round(fpsN / fpsAcc);
+    fps = fpsN / fpsAcc;
     window.__frameTiming = { frames: fpsN, elapsedSeconds: fpsAcc, fps, lastFrameMs: frameElapsed * 1000, simulationStepMs: dt * 1000 };
     fpsAcc = 0; fpsN = 0; fpsTimer = 0;
-    hud.textContent = `실제 FPS ${fps} · 드로콜 ${renderer.info.render.calls} · 삼각형 ${(renderer.info.render.triangles / 1000).toFixed(0)}k · 처치 ${state.kills}`;
+    hud.textContent = `실제 FPS ${fps < 1 ? '<1' : Math.round(fps)} · 드로콜 ${renderer.info.render.calls} · 삼각형 ${(renderer.info.render.triangles / 1000).toFixed(0)}k · 처치 ${state.kills}`;
     window.__fps = fps;
     window.__drawCalls = renderer.info.render.calls;
   }
