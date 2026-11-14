@@ -244,6 +244,8 @@ addEventListener('keydown', () => { initAudio(); if (!audio.muted) syncSndBtn();
 // ---------- 입력 ----------
 const keys = new Set();
 addEventListener('keydown', (e) => {
+  if (state.menuOpen) { if (e.code === 'Escape') closeMenu(); return; } // 메뉴 표시 중 게임 키 차단
+  if (e.code === 'Escape') { openMenu(); return; }
   keys.add(e.code);
   if (e.code === 'Space') {
     e.preventDefault();
@@ -364,6 +366,7 @@ const state = {
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
+  playTime: 0, menuOpen: false, // playTime: 누적 플레이 초 / menuOpen: 메뉴 대시보드 표시 중
 };
 // 장비 효과표 (등급 0=없음)
 const GEAR_ATK = [0, 4, 9, 15];        // 검: 공격력 추가
@@ -628,6 +631,68 @@ function toggleAuto() {
   b.classList.toggle('on', state.autoOn);
   toast(state.autoOn ? '자동 전투를 켰습니다 (조작하면 수동 우선)' : '자동 전투를 껐습니다');
 }
+// ---------- 메뉴 대시보드 (Esc / ☰ 메뉴): 설정 · 기록 · 초기화 ----------
+const menuDlg = document.getElementById('menudlg');
+const menuBack = document.getElementById('menuback');
+const menuBody = document.getElementById('menubody');
+let menuTab = 'set';
+function openMenu() {
+  if (!state.ready || state.dialog || state.menuOpen) return;
+  state.menuOpen = true; keys.clear();
+  menuDlg.style.display = 'block'; menuBack.style.display = 'block';
+  renderMenu();
+}
+function closeMenu() { state.menuOpen = false; menuDlg.style.display = 'none'; menuBack.style.display = 'none'; }
+document.getElementById('menuBtn').addEventListener('click', (e) => { e.stopPropagation(); openMenu(); });
+document.getElementById('menuBtn').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); openMenu(); }, { passive: false });
+menuBack.addEventListener('click', closeMenu);
+document.getElementById('menuclose').addEventListener('click', closeMenu);
+document.getElementById('menutabs').addEventListener('click', (e) => { const t = e.target.dataset && e.target.dataset.tab; if (t) { menuTab = t; renderMenu(); } });
+function renderMenu() {
+  document.querySelectorAll('#menutabs button[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === menuTab));
+  if (menuTab === 'set') {
+    menuBody.innerHTML = `
+      <div class="mrow"><div>소리 <small>${audio.muted ? '꺼짐' : '켜짐'}</small></div><button class="act" id="m-snd">${audio.muted ? '소리 켜기' : '소리 끄기'}</button></div>
+      <div class="mrow"><div>자동 전투 <small>${state.autoOn ? 'ON' : 'OFF'}</small></div><button class="act" id="m-auto">${state.autoOn ? '끄기' : '켜기'}</button></div>
+      <div class="mrow"><div>튜토리얼 <small>${state.tutDone ? '완료' : '진행 중'}</small></div><button class="act" id="m-tut">다시 보기</button></div>`;
+    menuBody.querySelector('#m-snd').onclick = () => { initAudio(); audio.muted = !audio.muted; if (audio.master) audio.master.gain.value = audio.muted ? 0 : 0.8; syncSndBtn(); renderMenu(); };
+    menuBody.querySelector('#m-auto').onclick = () => { toggleAuto(); renderMenu(); };
+    menuBody.querySelector('#m-tut').onclick = () => { state.tutDone = false; toast('도움말이 다시 표시됩니다'); renderMenu(); };
+  } else if (menuTab === 'rec') {
+    const pt = Math.floor(state.playTime || 0);
+    const hh = Math.floor(pt / 3600), mm = Math.floor((pt % 3600) / 60);
+    const rows = [
+      ['플레이 시간', (hh > 0 ? hh + '시간 ' : '') + mm + '분'],
+      ['레벨 / XP', 'Lv.' + state.level + ' (' + (state.xp || 0) + ' XP)'],
+      ['총 처치', state.kills + ' (전사 ' + state.wKills + ' · 엘리트 ' + state.eliteKills + ' · 보스 ' + state.bossKills + ')'],
+      ['도감 발견', Object.keys(state.dex || {}).length + '종'],
+      ['습득 스킬', SKILLS.filter((k) => state.skills[k.id]).length + ' / ' + SKILLS.length + ' (포인트 ' + state.skillPts + ')'],
+      ['보유 골드', state.gold + 'G'],
+      ['장비 등급', '검 ' + state.gear.sword + ' · 갑옷 ' + state.gear.armor + ' · 부츠 ' + state.gear.boots],
+      ['업적', Object.keys(state.ach || {}).length + '개'],
+      ['보물상자', (state.chestsOpened || []).length + '개'],
+      ['신전 기도', (state.shrinesPrayed || []).length + '곳'],
+      ['몬스터 소굴', (state.densCleared || []).length + '곳'],
+      ['바람의 고리', (state.ringsPassed || []).length + ' / 5'],
+      ['지도 조각', (state.mapFrags || 0) + ' / 3'],
+      ['시련', state.trialDone ? '완료' : '미완료'],
+      ['숨겨진 보물', state.treasureDone ? '발굴 완료' : '미발굴'],
+      ['버려진 망루', state.watchCleared ? '수호대장 격파' : (state.watchFound ? '발견' : '미발견')],
+      ['꽃 판매', (state.flowersSold || 0) + '송이'],
+    ];
+    menuBody.innerHTML = '<div class="recgrid">' + rows.map(([k, v]) => `<div class="mrow"><div>${k}</div><div>${v}</div></div>`).join('') + '</div>';
+  } else {
+    menuBody.innerHTML = `
+      <div style="color:#ffb0a0; word-break:keep-all; padding-bottom:6px">모든 진행 상황(레벨, 장비, 퀘스트, 기록)이 삭제되고 처음부터 다시 시작합니다. 되돌릴 수 없습니다.</div>
+      <div class="mrow"><div>확인을 위해 <b>초기화</b>를 입력하세요</div><input id="m-reset-in" placeholder="초기화" autocomplete="off"></div>
+      <div class="mrow"><div></div><button class="act danger" id="m-reset" disabled>영구 삭제하고 재시작</button></div>`;
+    const inp = menuBody.querySelector('#m-reset-in');
+    const btn = menuBody.querySelector('#m-reset');
+    inp.oninput = () => { btn.disabled = inp.value.trim() !== '초기화'; };
+    btn.onclick = () => { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} location.reload(); };
+  }
+}
+
 function autoTarget() {
   let best = null, bd = 22;
   for (const e of state.enemies) {
@@ -1485,6 +1550,7 @@ function saveGame() {
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
+      playTime: Math.floor(state.playTime || 0),
     }));
   } catch (e) { console.warn('save fail', e); }
 }
@@ -1541,6 +1607,7 @@ function loadGame() {
     if (state.dens) state.dens.forEach((d, i) => { d.cleared = state.densCleared.includes(i); d.beam.visible = !d.cleared; });
     state.watchFound = !!s.watchFound;
     state.watchCleared = !!s.watchCleared;
+    state.playTime = s.playTime || 0;
     if (state.watch && state.watch.guardian && state.watchCleared) {
       const g = state.watch.guardian;
       g.dead = true; g.mode = 'dead'; g.hp = 0; g.root.visible = false; g.respawnAt = 1e12;
@@ -2683,6 +2750,7 @@ function tick() {
   const now = clock.elapsedTime;
 
   if (state.ready) {
+    state.playTime = (state.playTime || 0) + dt;
     let ix = 0, iz = 0;
     if (keys.has('KeyW') || keys.has('ArrowUp')) iz -= 1;
     if (keys.has('KeyS') || keys.has('ArrowDown')) iz += 1;
@@ -2690,7 +2758,7 @@ function tick() {
     if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
     ix += stick.x; iz += stick.y;
     const manualMove = Math.hypot(ix, iz) > 0.05;
-    if (state.dialog) { ix = 0; iz = 0; }
+    if (state.dialog || state.menuOpen) { ix = 0; iz = 0; }
     // 공격 판정은 신규 공격 입력 처리보다 먼저: 초저FPS(프레임>재입력 간격)에서
     // 다음 tryAttack이 didHit을 리셋하기 전에 직전 공격의 판정을 반드시 해소한다
     if (!state.didHit && state.attackUntil > 0 && now > state.attackUntil - 0.35) {
