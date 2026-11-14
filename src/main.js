@@ -702,6 +702,7 @@ function renderMenu() {
       ['버려진 망루', state.watchCleared ? '수호대장 격파' : (state.watchFound ? '발견' : '미발견')],
       ['지명 수배', (((state.bloodRatKills || 0) >= 1 ? 1 : 0) + ((state.stormWaspKills || 0) >= 1 ? 1 : 0) + ((state.rockSpiderKills || 0) >= 1 ? 1 : 0)) + ' / 3'],
       ['잊힌 유적', state.ruinsFound ? '발견' : '미발견'],
+      ['유적 바람길', state.sealSolved ? '개통' : '봉인'],
       ['꽃 판매', (state.flowersSold || 0) + '송이'],
     ];
     menuBody.innerHTML = '<div class="recgrid">' + rows.map(([k, v]) => `<div class="mrow"><div>${k}</div><div>${v}</div></div>`).join('') + '</div>';
@@ -1175,6 +1176,7 @@ async function build() {
   buildShrines();
   buildTrialStone();
   buildDens();
+  buildSeals();
 
   // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
   try {
@@ -1445,7 +1447,9 @@ function tryInteract() {
   if (!state.ready || state.dead || state.dialog) return;
   if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { state.dlgFocus = state.npc.pos; openDialog(); return; }
   if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); return; }
-  if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); }
+  if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); return; }
+  const seal = nearbySeal();
+  if (seal) openSealDialog(seal);
 }
 function offerRunes() { // 유적 해방 후 룬 3택1 선택 (선택은 되돌릴 수 없음)
   state.dialog = true;
@@ -1754,6 +1758,7 @@ function drawMinimap() {
   if (!state.watchCleared) dot(WATCH_POS.x, WATCH_POS.z, state.watchFound ? '#e8a04c' : '#b8b2a6', 3.5); // 버려진 망루: 미발견 회색 → 발견 후 호박색
   if (state.swampPos) dot(state.swampPos.x, state.swampPos.z, '#8aa24f', 4); // 독 늪지대
   if (state.ruinsPos) dot(state.ruinsPos.x, state.ruinsPos.z, state.ruinsFound ? '#d8cba8' : '#b8b2a6', 4); // 잊힌 유적: 미발견 회색 → 발견 후 모래색
+  for (const d of state.sealObjects || []) if (d.id.endsWith('Gate')) dot(d.x, d.z, state.sealSolved ? '#83dcff' : '#737b87', 4);
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
   if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
@@ -1892,6 +1897,7 @@ function saveGame() {
       heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      sealSolved: !!state.sealSolved,
       runes: state.runes || [],
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
       playTime: Math.floor(state.playTime || 0),
@@ -1923,6 +1929,9 @@ function loadGame() {
     state.ruinWarKills = s.ruinWarKills || 0;
     state.ruinWardenKills = s.ruinWardenKills || 0;
     state.ruinsFound = !!s.ruinsFound;
+    state.sealSolved = s.sealSolved === true;
+    state.sealInput = [];
+    updateSealVisuals();
     state.runes = Array.isArray(s.runes) ? [...new Set(s.runes.filter(id => RUNES.some(r => r.id === id)))].slice(0, 1) : [];
     state.kingSnakeKills = s.kingSnakeKills || 0;
     state.vials = s.vials || 0;
@@ -2365,6 +2374,81 @@ async function buildWatchtower() {
   }
   state.watch = { root, guardian };
 }
+// ---------- 유적의 세 문양: 단서 해독으로 여는 왕복 탐험 지름길 ----------
+const SEALS = [
+  { id: 'sun', name: '해 문양', x: -30, z: -36, color: 0xffc85b },
+  { id: 'hill', name: '언덕 문양', x: -34, z: -35, color: 0x9acb70 },
+  { id: 'wind', name: '바람 문양', x: -30, z: -31, color: 0x83dcff },
+  { id: 'clue', name: '바람길 비문', x: -34, z: -30, color: 0xe6d6b0 },
+  { id: 'ruinsGate', name: '유적 바람길', x: -30, z: -27, color: 0x83dcff },
+  { id: 'villageGate', name: '마을 바람길', x: -8, z: -4, color: 0x83dcff },
+];
+function buildSeals() {
+  state.sealInput = [];
+  state.sealObjects = SEALS.map(d => {
+    const root = new THREE.Group(); root.position.set(d.x, 0, d.z);
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1, 0.35, 8), new THREE.MeshLambertMaterial({ color: 0x586576 }));
+    base.position.y = 0.18; root.add(base);
+    const mat = new THREE.MeshBasicMaterial({ color: d.color });
+    const line = (points) => { const g = new THREE.BufferGeometry().setFromPoints(points.map(([x,z]) => new THREE.Vector3(x,0.39,z))); root.add(new THREE.Line(g, new THREE.LineBasicMaterial({color:d.color}))); };
+    let glyph;
+    if (d.id === 'sun') { glyph = new THREE.Mesh(new THREE.TorusGeometry(0.42,0.09,8,24), mat); glyph.rotation.x = -Math.PI/2; }
+    else if (d.id === 'hill') { line([[-0.55,0.35],[0,-0.45],[0.55,0.35],[-0.55,0.35]]); }
+    else if (d.id === 'wind') { for (const z of [-0.25,0,0.25]) line([[-0.55,z],[0.15,z],[0.5,z-0.2]]); }
+    else { glyph = new THREE.Mesh(d.id === 'clue' ? new THREE.BoxGeometry(0.65,0.9,0.24) : new THREE.TorusGeometry(1.25,0.1,8,36), mat); if (d.id !== 'clue') glyph.rotation.x = -Math.PI/2; }
+    if (glyph) { glyph.position.y = d.id === 'clue' ? 0.75 : 0.4; root.add(glyph); }
+    const label = makeNameSprite(d.name); label.position.y = d.id === 'clue' ? 1.65 : 1.3; root.add(label);
+    scene.add(root); return { ...d, root, mat, glyph };
+  });
+  updateSealVisuals();
+}
+function updateSealVisuals() {
+  for (const d of state.sealObjects || []) {
+    if (d.id.endsWith('Gate')) d.mat.color.setHex(state.sealSolved ? 0x83dcff : 0x737b87);
+    d.root.scale.setScalar((state.sealInput || []).includes(d.id) ? 1.12 : 1);
+  }
+}
+function nearbySeal() {
+  if (!state.ready || state.dead || !state.player) return null;
+  return (state.sealObjects || []).filter(d => Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z) <= 2.1).sort((a,b) => state.player.position.distanceTo(a.root.position)-state.player.position.distanceTo(b.root.position))[0] || null;
+}
+function openSealDialog(d, notice = '') {
+  state.dialog = true; state.dlgFocus = d.root.position;
+  document.getElementById('dlg-name').textContent = d.name;
+  document.getElementById('dlg-list').innerHTML = '';
+  const text = document.getElementById('dlg-text'), btns = document.getElementById('dlg-btns'); btns.innerHTML = '';
+  const button = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = () => { if (!state.dialog || state.dead || nearbySeal()?.id !== d.id) return; b.disabled = true; fn(); }; btns.appendChild(b); };
+  if (d.id.endsWith('Gate')) {
+    text.innerHTML = state.sealSolved ? '세 문양이 이어져 바람길이 열렸다.<br>비용 없이 마을과 유적 남쪽을 오갈 수 있다. 이동해도 체력과 적의 상태는 그대로다.' : '희미한 문양이 길을 막고 있다.<br>유적 남쪽의 <b>바람길 비문</b>을 읽고 세 문양을 순서대로 깨워야 한다.';
+    if (state.sealSolved) {
+      const dest = SEALS.find(x => x.id === (d.id === 'villageGate' ? 'ruinsGate' : 'villageGate'));
+      button(dest.id === 'villageGate' ? '마을로 이동 (무료)' : '유적 남쪽으로 이동 (무료)', () => {
+        if (!state.sealSolved || state.trial?.active) { toast('시련을 마친 뒤 바람길을 이용하세요.'); closeDialog(); return; }
+        state.player.position.set(dest.x,0,dest.z+1.6); if (state.autoOn) toggleAuto();
+        closeDialog(); saveGame(); toast(dest.id === 'villageGate' ? '바람길을 따라 마을에 도착했다.' : '바람길을 따라 유적 남쪽에 도착했다.');
+      });
+    }
+  } else if (d.id === 'clue') {
+    text.innerHTML = '옛 순례자의 비문:<br><b>"아침의 둥근 빛이 눈을 뜨고,<br>땅은 뾰족한 등을 일으킨다.<br>마지막엔 세 줄기 숨결이 길을 잇는다."</b><br>주변의 세 받침에 문양이 새겨져 있다. 서로 다른 문양을 차례로 깨우자.<br>틀려도 비용 없이 현재 입력만 지워진다. 입력 중에는 저장되지 않는다.';
+  } else {
+    const names = (state.sealInput || []).map(id => SEALS.find(x=>x.id===id).name).join(' → ') || '없음';
+    text.innerHTML = notice || (state.sealSolved ? '이미 바람길에 힘을 보태고 있다. 마을과 유적 남쪽의 바람길을 이용할 수 있다.' : `현재 울림: <b>${names}</b> (${(state.sealInput || []).length}/3)<br>이 문양을 깨울까? 비문의 순서를 떠올리자.`);
+    if (!state.sealSolved) button('문양 깨우기', () => {
+      if (state.sealSolved) { closeDialog(); return; }
+      const order = ['sun','hill','wind'];
+      if (d.id !== order[(state.sealInput || []).length]) {
+        state.sealInput = []; updateSealVisuals(); openSealDialog(d, '울림이 흩어졌다. 입력만 초기화되었다.<br>비문을 다시 읽고 첫 문양부터 시작하자. 비용과 진행 손실은 없다.');
+      } else {
+        state.sealInput.push(d.id);
+        if (state.sealInput.length === 3) { state.sealSolved = true; state.sealInput = []; saveGame(); sfx('reward',1); toast('세 문양 공명! 마을 ↔ 유적 바람길 개통'); }
+        updateSealVisuals(); closeDialog();
+      }
+    });
+  }
+  button('닫기', closeDialog);
+  dlgEl().style.display = 'block'; document.getElementById('dlgback').style.display = 'block';
+}
+
 // 잊힌 유적: 발견(16m 접근) 1회성
 function updateRuins() {
   if (!state.ruinsPos || state.dead || state.ruinsFound) return;
@@ -3362,8 +3446,9 @@ function tick() {
     }
     const trialNear = state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8 && !state.dead;
     const promptEl = document.getElementById('prompt');
-    promptEl.textContent = npcNear ? 'E · 대화하기' : 'E · 시련의 돌';
-    promptEl.style.display = (npcNear || trialNear) && !state.dialog ? 'block' : 'none';
+    const sealNear = nearbySeal();
+    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : sealNear ? `E · ${sealNear.name}` : '';
+    promptEl.style.display = (npcNear || trialNear || sealNear) && !state.dialog ? 'block' : 'none';
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
@@ -3484,6 +3569,7 @@ function tick() {
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
+    seal: { solved: !!state.sealSolved, input: [...(state.sealInput || [])] },
     runes: [...(state.runes || [])],
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
