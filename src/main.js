@@ -1457,6 +1457,7 @@ function offerRunes() { // 유적 해방 후 룬 3택1 선택 (선택은 되돌�
     const b = document.createElement('button');
     b.textContent = `${r.name} — ${r.desc}`;
     b.addEventListener('click', () => {
+      if ((state.runes || []).length || state.quest.idx < 20) return; // 중복 클릭/이전 버튼 재실행 방지
       state.runes = [...(state.runes || []), r.id];
       applyProgression(); state.hp = Math.min(state.hp, state.maxHp);
       sfx('reward', 1); toast(`룬 획득: ${r.name} (${r.desc})`);
@@ -1920,7 +1921,7 @@ function loadGame() {
     state.ruinWarKills = s.ruinWarKills || 0;
     state.ruinWardenKills = s.ruinWardenKills || 0;
     state.ruinsFound = !!s.ruinsFound;
-    state.runes = s.runes || [];
+    state.runes = Array.isArray(s.runes) ? [...new Set(s.runes.filter(id => RUNES.some(r => r.id === id)))].slice(0, 1) : [];
     state.kingSnakeKills = s.kingSnakeKills || 0;
     state.vials = s.vials || 0;
     state.gold = s.gold || 0;
