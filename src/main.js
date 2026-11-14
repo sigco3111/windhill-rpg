@@ -397,7 +397,7 @@ const FROG = { hp: 15, dmg: 3, speed: 2.0, aggro: 9, range: 1.4, cd: 1.6, label:
 const RAT = { hp: 10, dmg: 2, speed: 3.2, aggro: 8, range: 1.2, cd: 1.1, label: '쥐', windup: 0.28, gold: 3, teleH: 0.7 };
 const SPIDER = { hp: 25, dmg: 6, speed: 2.6, aggro: 10, range: 1.5, cd: 1.5, label: '거미', windup: 0.6, gold: 6, teleH: 1.3 };
 // Batch P — 틴트 변형 신규 종 (도감은 label 기준으로 자동 집계)
-const PFROG = { ...FROG, hp: 24, dmg: 5, speed: 2.4, cd: 1.3, gold: 8, label: '독 개구리', tint: 0x6fd94f };
+const PFROG = { ...FROG, hp: 24, dmg: 5, speed: 2.4, cd: 1.3, gold: 8, label: '독 개구리', rangedSpit: true, tint: 0x6fd94f };
 const SRAT = { ...RAT, hp: 16, dmg: 4, speed: 3.8, gold: 7, label: '그림자 쥐', tint: 0x3a3a55 };
 const FSKEL = { ...ENEMY, hp: 32, dmg: 7, speed: 2.2, gold: 10, label: '서리 스켈레톤', tint: 0x55bbff, emis: 0x0a2a3a };
 // 독사 계열: 물기에 중독(6초 DoT, 초당 2, 최소 1HP) — 회피로 피하고 물약으로 해독
@@ -471,7 +471,7 @@ function updateBossPlate() {
   bossPlate.style.display = 'block';
   const pulse = t.stats.ruinWarden ? (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '') : '';
   const stag = t.staggerUntil && clock.elapsedTime < t.staggerUntil;
-  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse + (t.stats.stormWasp ? (t.stormAt ? ' - 돌진! 옆으로 회피' : t.stormRun ? ' - 돌진 중' : t.stormRecover > clock.elapsedTime ? ' - 반격 기회' : '') : '');
+  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse + (t.stats.stormWasp ? (t.stormAt ? ' - 돌진! 옆으로 회피' : t.stormRun ? ' - 돌진 중' : t.stormRecover > clock.elapsedTime ? ' - 반격 기회' : '') : '') + (t.stats.rangedSpit ? (t.spitAt ? ' - 독침! 옆으로 회피' : t.spitLeft>0 ? ' - 독침 비행' : t.spitRecover>clock.elapsedTime ? ' - 반격 기회' : ' - 거리 유지') : '');
   document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
 }
 
@@ -778,6 +778,7 @@ function hitFlash(root) {
 function respawnEnemy(e) {
   const a = Math.random() * Math.PI * 2;
   e.root.position.copy(e.home).add(new THREE.Vector3(Math.cos(a) * 4, 0, Math.sin(a) * 4));
+  cancelFrogSpit(e); e.spitNext = 0;
   e.hp = e.stats.hp; e.mode = 'wander'; e.dead = false;
   e.root.visible = true;
   e.anim.play('walking', 'walk', 'jump', 'idle');
@@ -827,7 +828,7 @@ async function build() {
     const anim = new AnimSet(root, gltf.animations);
     anim.play('walking', 'walk', 'jump', 'idle');
     const e = { root, anim, angle: Math.atan2(x, z), stats: st, home: new THREE.Vector3(x, 0, z), hp: st.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 };
-    if ((st.guard || st.ruinWarden || st.stormWasp) && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
+    if ((st.guard || st.ruinWarden || st.stormWasp || st.rangedSpit) && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
     state.enemies.push(e);
     return e;
   };
@@ -1281,6 +1282,7 @@ async function build() {
       state.heading = Math.atan2(to.x, to.z);
       state.player.rotation.y = state.heading;
     },
+    frogSpit() { return state.enemies.filter(e=>e.stats.rangedSpit).map(e=>({i:state.enemies.indexOf(e),dead:e.dead,hp:e.hp,pos:e.root.position.toArray(),mode:e.mode,at:e.spitAt||0,left:e.spitLeft||0,recover:e.spitRecover||0,next:e.spitNext||0,dir:e.spitDir?.toArray(),orb:e.spitOrb?.position.toArray(),visible:!!e.spitOrb?.visible,line:!!e.spitLine?.visible,result:e.spitResult||null,now:clock.elapsedTime})); },
     stormCharge() { const e=state.enemies.find(e=>e.stats.stormWasp); return e ? {dead:e.dead,hp:e.hp,guard:e.stats.guard,mode:e.mode,at:e.stormAt||0,run:e.stormRun||0,recover:e.stormRecover||0,from:e.stormFrom?.toArray(),to:e.stormTo?.toArray(),pos:e.root.position.toArray(),line:!!e.stormLine?.visible,result:e.stormResult||null,now:clock.elapsedTime} : null; },
     wardenPulse() { const e = state.enemies.find(e => e.stats.ruinWarden); return e ? { dead:e.dead, hp:e.hp, guard:e.stats.guard, mode:e.mode, at:e.pulseAt || 0, recover:e.pulseRecover || 0, center:e.pulseCenter ? [e.pulseCenter.x,e.pulseCenter.z] : null, ring:!!(e.pulseRing && e.pulseRing.visible), result:e.pulseResult || null, now:clock.elapsedTime } : null; },
     heal() { state.hp = state.maxHp; if (state.dead) respawn(); },
@@ -3119,6 +3121,7 @@ function killEnemy(e) {
   e.dead = true; e.mode = 'dead';
   cancelWardenPulse(e);
   cancelStormCharge(e);
+  cancelFrogSpit(e);
   e.anim.playOnce('death_a', 'death');
   sfx('death', 0.9);
   e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
@@ -3371,12 +3374,60 @@ function updateStormCharge(e, dt, now) {
   return false;
 }
 
+// 독 개구리: 거리 유지 → 고정 조준 → 비유도 독침. 실제 이동 선분으로 피격/장애물 검사.
+function cancelFrogSpit(e) {
+  e.spitAt=0;e.spitLeft=0;e.spitRecover=0;
+  if(e.spitLine)e.spitLine.visible=false;
+  if(e.spitOrb)e.spitOrb.visible=false;
+}
+function updateFrogSpit(e,dt,now) {
+  if(!e.stats.rangedSpit)return false;
+  if(state.dead||state.dialog||state.menuOpen||e.dead){cancelFrogSpit(e);e.spitNext=now+1.5;e.mode='spitWait';e.anim.update(dt);return true;}
+  if((e.hitUntil&&now<e.hitUntil)||(e.staggerUntil&&now<e.staggerUntil)){cancelFrogSpit(e);e.spitNext=now+1.5;return false;}
+  const p=state.player.position;
+  if(e.spitLeft>0){
+    const from=e.spitOrb.position.clone(),step=Math.min(e.spitLeft,8*dt),to=from.clone().addScaledVector(e.spitDir,step);
+    const wall=colliders.some(c=>segmentDistance(c,from,to)<c.r+.2);
+    if(wall){e.spitLeft=0;e.spitOrb.visible=false;e.spitResult='wall';}
+    else if(segmentDistance(p,from,to)<.65){
+      e.spitLeft=0;e.spitOrb.visible=false;
+      if(now<state.invUntil){registerDodgeBlock(now);e.spitResult='dodge';}
+      else {const dmg=Math.max(1,e.stats.dmg-GEAR_DEF[state.gear.armor]);state.hp=Math.max(0,state.hp-dmg);hitFlash(state.player);sfx('hurt',.7);e.spitResult='hit';
+        if(state.hp>0){state.poisonUntil=Math.max(state.poisonUntil,now+4);state.poisonTickAt=now+1;toast('독침에 맞았습니다! 물약(R)으로 해독');}else playerDie(e.stats.label);}
+    }else {e.spitOrb.position.copy(to);e.spitLeft-=step;if(e.spitLeft<=0){e.spitOrb.visible=false;e.spitResult='miss';}}
+  }
+  if(e.spitAt){
+    e.mode='spitAim';e.anim.play('idle');
+    if(now>=e.spitAt){e.spitAt=0;e.spitLine.visible=false;
+      if(!e.spitOrb){e.spitOrb=new THREE.Mesh(new THREE.SphereGeometry(.22,10,8),new THREE.MeshBasicMaterial({color:0xc3ff47}));scene.add(e.spitOrb);}
+      e.spitOrb.position.copy(e.spitFrom);e.spitOrb.position.y=.65;e.spitOrb.visible=true;e.spitLeft=10;e.spitResult='flying';e.spitRecover=now+1.3;e.spitNext=now+4;e.anim.playOnce('attack');e.mode='spitRecover';
+    }
+    e.anim.update(dt);return true;
+  }
+  if(e.spitLeft>0){e.mode='spitRecover';e.anim.update(dt);return true;}
+  if(now<(e.spitRecover||0)){e.mode='spitRecover';e.anim.update(dt);return true;}
+  const dir=p.clone().sub(e.root.position);dir.y=0;const d=dir.length();if(d>=e.stats.aggro)return false;
+  dir.normalize();e.root.rotation.y=Math.atan2(dir.x,dir.z);
+  if(now>=(e.spitNext||0)&&d>1){
+    e.spitDir=dir.clone();e.spitFrom=e.root.position.clone();e.spitAt=now+.9;e.pendingHit=0;e.combo2=0;e.mode='spitAim';
+    if(e.tele)e.tele.visible=false;
+    if(!e.spitLine){e.spitLine=new THREE.Mesh(new THREE.PlaneGeometry(1.3,10),new THREE.MeshBasicMaterial({color:0xc2ed54,transparent:true,opacity:.3,depthWrite:false,side:THREE.DoubleSide}));e.spitLine.rotation.x=-Math.PI/2;scene.add(e.spitLine);}
+    e.spitLine.position.copy(e.spitFrom).addScaledVector(dir,5);e.spitLine.position.y=.08;e.spitLine.rotation.z=Math.atan2(dir.x,dir.z);e.spitLine.visible=true;e.anim.play('idle');e.anim.update(dt);return true;
+  }
+  if(d<3||d>6){const step=(d<3?-1:1)*e.stats.speed*dt;const pos=e.root.position.clone().addScaledVector(dir,step);
+    if(Math.abs(pos.x)<77&&Math.abs(pos.z)<77&&!colliders.some(c=>Math.hypot(pos.x-c.x,pos.z-c.z)<c.r+.55))e.root.position.copy(pos);
+    e.mode=d<3?'spitRetreat':'chase';e.anim.play('jump','walking','walk');
+  }else{e.mode='spitWait';e.anim.play('idle');}
+  e.anim.update(dt);return true;
+}
+
 function updateEnemy(e, dt, now) {
   if (e.dead) {
     if (!e.trial && !e.stats.noRespawn && now > e.respawnAt) respawnEnemy(e);
     e.anim.update(dt);
     return;
   }
+  if (updateFrogSpit(e, dt, now)) return;
   if (updateWardenPulse(e, dt, now)) return;
   if (updateStormCharge(e, dt, now)) return;
   if (e.hitUntil && now < e.hitUntil) { e.anim.update(dt); return; }
