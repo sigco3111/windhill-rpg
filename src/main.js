@@ -3433,11 +3433,11 @@ function skillFx(pos,color,size,kind='cast',heading=0){
     }
   }
   Object.assign(f,{kind,start:clock.elapsedTime,size,duration:kind==='whirl'?.8:kind==='hit'?.5:.6});
-  f.mat.color.setHex(color);f.mat.opacity=.95;f.root.position.copy(pos);f.root.position.y=.7;f.root.rotation.y=heading;f.root.scale.setScalar(.2);f.root.visible=true;
+  f.mat.color.setHex(color);f.mat.opacity=.95;f.root.position.copy(pos);f.root.position.y=.7;f.root.rotation.y=heading;f.root.scale.setScalar(kind==='hit'?size*.65:.2);f.root.visible=true;
   f.ring.visible=true;for(const r of f.rays)r.visible=kind!=='dodge';
   if(kind==='dodge'){f.root.scale.set(.65,.65,1.4);f.root.position.addScaledVector(new THREE.Vector3(Math.sin(heading),0,Math.cos(heading)),-.4)}
 }
-function updateSkillFx(now){for(const f of skillFxPool){if(!f.root.visible)continue;const k=(now-f.start)/f.duration;if(k>=1){f.root.visible=false;continue}const v=f.size*(.25+k*.75);f.root.scale.set(v,kindVertical(f.kind)?v*.7:v,v);f.root.rotation.y+=.05;f.mat.opacity=.95*(1-k*.8);if(kindVertical(f.kind))f.root.position.y+=.015;}}
+function updateSkillFx(now){for(const f of skillFxPool){if(!f.root.visible)continue;const k=(now-f.start)/f.duration;if(k>=1){f.root.visible=false;continue}const v=f.size*(f.kind==='hit'?.65+k*.55:.25+k*.75);f.root.scale.set(v,kindVertical(f.kind)?v*.7:v,v);f.root.rotation.y+=.05;f.mat.opacity=.95*(1-k*.8);if(kindVertical(f.kind))f.root.position.y+=.015;}}
 function kindVertical(k){return k==='heal'||k==='ready'}
 let windVisual=null;
 function makeWindVisual(){if(windVisual)return;const root=new THREE.Group();const mat=new THREE.MeshBasicMaterial({color:0x7de7ff,transparent:true,opacity:.95,depthWrite:false});
