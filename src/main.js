@@ -261,6 +261,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyL' && !state.menuOpen && !state.dialog) openCampaignJournal();
   if (e.code === 'KeyJ' && !state.menuOpen && !state.dialog) openJourneyJournal();
   if (e.code === 'KeyF') tryWhirl();
+  if (e.code === 'KeyG' && !e.repeat) tryWindshot();
   if (e.code === 'KeyK') toggleSkillTree();
 });
 addEventListener('keyup', (e) => {
@@ -356,7 +357,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
-  mastery: null, masteryChain: null, skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0, poisonUntil: 0, poisonTickAt: 0,
+  windCdUntil: 0, windshot: null, mastery: null, masteryChain: null, skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0, poisonUntil: 0, poisonTickAt: 0,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
@@ -381,6 +382,7 @@ const GEAR_SHOP = [
 ];
 // ---------- 스킬 트리 (레벨업으로 포인트 획득, 3계열 7노드, 각 1P) ----------
 const SKILLS = [
+  { id:'windshot',branch:'원풍',name:'바람칼날',desc:'바라보는 방향으로 직선 바람탄 · 첫 적 1명에 1.2배 피해 · 사거리10m · G키/쿨5초 · 벽에 막힘/가드 파괴 불가',req:null },
   { id: 'crush', branch: '강풍', name: '파쇄', desc: '강공격이 가드를 부수고 2.5초 경직 · 가드 적에게 피해 +30%', req: null },
   { id: 'smash', branch: '강풍', name: '분쇄', desc: '강공격 피해 3.0배 · 범위 +40%', req: 'crush' },
   { id: 'haste', branch: '질풍', name: '잔상', desc: '회피 쿨다운 2.5 → 1.6초', req: null },
@@ -408,7 +410,7 @@ function chainStrike(e, now) {
   if (!activeMastery('chain')) return false;
   const old = state.masteryChain;
   const count = old && old.target === e && now <= old.until ? old.count + 1 : 1;
-  if (count >= 3) { state.masteryChain = null; toast('연격 3타! 가드 파괴 타격'); return true; }
+  if (count >= 3) { state.masteryChain = null; skillFx(e.root.position,0xffc35c,1.2,'hit'); toast('연격 3타! 가드 파괴 타격'); return true; }
   state.masteryChain = {target:e,count,until:now+3};
   return false;
 }
@@ -478,6 +480,16 @@ riposteHud.id = 'riposte-ready';
 riposteHud.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:210px;padding:5px 12px;background:rgba(20,55,43,.88);border:1px solid #70e5a0;border-radius:9px;color:#c6ffda;font:700 13px sans-serif;display:none;z-index:29;pointer-events:none;white-space:nowrap';
 riposteHud.style.fontFamily = "'Noto Sans KR', sans-serif";
 document.body.appendChild(riposteHud);
+const windBtn = document.createElement('div');
+windBtn.id='windshot'; windBtn.className='cbtn'; windBtn.textContent='바람칼날'; windBtn.style.display='none';
+windBtn.setAttribute('role','button'); windBtn.setAttribute('aria-label','바람칼날 G');
+document.body.appendChild(windBtn);
+windBtn.addEventListener('click',e=>{e.stopPropagation();tryWindshot()});
+windBtn.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();tryWindshot()},{passive:false});
+const windStyle=document.createElement('style');
+windStyle.textContent='#windshot{right:106px;bottom:138px;background:rgba(30,110,175,.85);font-size:10px;} @media(max-width:800px),(max-height:500px){#windshot{right:84px;bottom:154px;width:46px;height:46px;font-size:9px;}}';
+document.head.appendChild(windStyle);
+
 const skillTreeStyle = document.createElement('style');
 skillTreeStyle.textContent = '#dlg.journey-dialog #dlg-text { max-height:min(38vh,260px);overflow-y:auto;scrollbar-width:thin; } #dlg.journey-dialog .btns { flex-wrap:wrap; } #dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
 document.head.appendChild(skillTreeStyle);
@@ -625,6 +637,7 @@ function tryAttack(strong = false) {
   state.attackStrong = strong;
   const dur = state.anim.clipDuration(strong ? '1h_melee_attack_chop' : 'slice_diagonal') || (strong ? 1.0 : 0.7);
   state.anim.playOnce(strong ? '1h_melee_attack_chop' : 'slice_diagonal');
+  if(strong) skillFx(state.player.position,0xffb35c,1.5,'cast',state.heading);
   state.attackUntil = now + Math.min(dur * 0.8, strong ? 1.1 : 0.7);
   state.attackCdUntil = now + (strong ? Math.max(dur * 0.95, 1.1) : Math.max(dur * 0.9, 0.5));
   state.didHit = false;
@@ -660,6 +673,7 @@ function tryDodge() {
   state.dodgeStart = now;
   state.dodgeCount++;
   state.anim.playOnce('dodge_forward', 'dodge');
+  skillFx(state.player.position,hasSkill('blade')?0xc0a0ff:0x91cbff,1.1,'dodge',state.heading);
   sfx('step1', 0.6);
 }
 
@@ -669,6 +683,7 @@ function registerDodgeBlock(now) {
   if (!hasSkill('riposte') || !state.dodgeCount || now < state.dodgeStart || now >= state.dodgeStart + 0.55 || state.riposteDodge === state.dodgeCount) return;
   state.riposteDodge = state.dodgeCount;
   state.riposteUntil = now + 4;
+  skillFx(state.player.position,0x85ffc0,1.3,'ready');
   toast('역풍 준비! 4초 안에 근접 반격하면 체력12 회복');
 }
 function consumeRiposte(e, now, guardHeld, beforeHp) {
@@ -676,6 +691,7 @@ function consumeRiposte(e, now, guardHeld, beforeHp) {
   state.riposteUntil = 0;
   const healed = Math.min(12, state.maxHp - state.hp);
   state.hp += healed;
+  skillFx(state.player.position,0x6dffae,1.5,'heal');
   sfx('reward', 0.6); toast(`역풍 반격! 체력 +${healed}`); saveGame();
 }
 
@@ -1347,7 +1363,7 @@ async function build() {
     probeAt(i) { const x = state.enemies[i]; return x ? { label: x.stats.label, hp: x.hp, guard: !!x.stats.guard, staggered: !!(x.staggerUntil && clock.elapsedTime < x.staggerUntil), dead: x.dead } : null; },
     listEnemies() { return state.enemies.map((e, i) => ({ i, label: e.stats.label, hp: e.hp, guard: !!e.stats.guard, dead: e.dead, x: +e.root.position.x.toFixed(1), z: +e.root.position.z.toFixed(1) })); },
     learnAll() { for (const s of SKILLS) state.skills[s.id] = true; updateWhirlBtn(); },
-    skillInfo() { return { pts: state.skillPts || 0, mastery: state.mastery, chain: state.masteryChain && clock.elapsedTime <= state.masteryChain.until && !state.masteryChain.target.dead ? {count:state.masteryChain.count,left:+(state.masteryChain.until-clock.elapsedTime).toFixed(2),label:state.masteryChain.target.stats.label} : null, slowed:state.enemies.filter(e=>!e.dead&&enemyMoveScale(e,clock.elapsedTime)<1).length, skills: { ...state.skills }, whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2), riposteLeft: +Math.max(0, (state.riposteUntil || 0) - clock.elapsedTime).toFixed(2), riposteDodge: state.riposteDodge || 0 }; },
+    skillInfo() { return { pts: state.skillPts || 0, mastery: state.mastery, chain: state.masteryChain && clock.elapsedTime <= state.masteryChain.until && !state.masteryChain.target.dead ? {count:state.masteryChain.count,left:+(state.masteryChain.until-clock.elapsedTime).toFixed(2),label:state.masteryChain.target.stats.label} : null, slowed:state.enemies.filter(e=>!e.dead&&enemyMoveScale(e,clock.elapsedTime)<1).length, skills: { ...state.skills }, windCd:+Math.max(0,state.windCdUntil-clock.elapsedTime).toFixed(2), windshot:state.windshot?{left:state.windshot.left,pos:state.windshot.pos.toArray(),dir:state.windshot.dir.toArray()}:null, windResult:state.windResult||null, fx:skillFxPool.filter(f=>f.root.visible).map(f=>({kind:f.kind,position:f.root.position.toArray(),age:+(clock.elapsedTime-f.start).toFixed(2)})), whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2), riposteLeft: +Math.max(0, (state.riposteUntil || 0) - clock.elapsedTime).toFixed(2), riposteDodge: state.riposteDodge || 0 }; },
     enemyProbe() { let e = null, bd = 1e9; for (const x of state.enemies) { if (x.dead) continue; const d = x.root.position.distanceTo(state.player.position); if (d < bd) { bd = d; e = x; } } return e ? { label: e.stats.label, hp: e.hp, maxHp: e.stats.hp, guard: !!e.stats.guard, staggered: !!(e.staggerUntil && clock.elapsedTime < e.staggerUntil), dist: +bd.toFixed(2) } : null; },
     fadeDebug(cx, cz, r) { let f = 0, n = 0; for (const t of treeFades) { if (cx !== undefined && Math.hypot(t.x - cx, t.z - cz) > r) continue; n++; if (t.op < 0.5) f++; } return { faded: f, total: n }; },
     playerOpacity() { return +playerFade.op.toFixed(2); },
@@ -1832,7 +1848,7 @@ function openSkillTree() {
       if (!s || hasSkill(s.id) || (state.skillPts || 0) < 1 || (s.req && !hasSkill(s.req))) return;
       state.skillPts--; state.skills[s.id] = true;
       sfx('reward', 1);
-      toast(s.id === 'whirl' ? '회전베기 해금! F키 또는 회전베기 버튼' : `스킬 습득: ${s.name}`);
+      toast(s.id === 'windshot' ? '바람칼날 해금! G키 또는 바람칼날 버튼' : s.id === 'whirl' ? '회전베기 해금! F키 또는 회전베기 버튼' : `스킬 습득: ${s.name}`);
       saveGame(); updateWhirlBtn(); renderTree();
     }));
   };
@@ -1855,6 +1871,7 @@ function toggleSkillTree() {
 function updateWhirlBtn() {
   const b = document.getElementById('whirl');
   if (b) b.style.display = hasSkill('whirl') ? 'flex' : 'none';
+  windBtn.style.display = hasSkill('windshot') ? 'flex' : 'none';
 }
 
 // ---------- 미니맵 (M 키로 켜기/끄기, 탭하면 크기 전환) ----------
@@ -3361,16 +3378,18 @@ function playerAttackHit() {
     if (d > range) continue;
     if (fwd.angleTo(to.normalize()) > PLAYER.arc / 2) continue;
     let dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * mult);
-    if (!bladeUsed && state.bladeUntil && now < state.bladeUntil) { dmg = Math.round(dmg * 1.6); bladeUsed = true; state.bladeUntil = 0; } // 칼바람
+    let bladeHit=false;
+    if (!bladeUsed && state.bladeUntil && now < state.bladeUntil) { bladeHit=true; dmg = Math.round(dmg * 1.6); bladeUsed = true; state.bladeUntil = 0; } // 칼바람
     const guardHeld = e.stats.guard && !(e.staggerUntil && now < e.staggerUntil) && !strong;
     const beforeHp = e.hp;
     damageEnemy(e, dmg, strong || (chainBreak && e === chainTarget));
+    if(strong) skillFx(e.root.position,0xffd68b,1.15,'hit');
+    else if(bladeHit) skillFx(e.root.position,0xc5a1ff,.85,'hit');
     consumeRiposte(e, now, guardHeld && !(chainBreak && e === chainTarget), beforeHp);
   }
 }
 
 // ---------- 회전베기 (선풍 스킬, F키 / 회전베기 버튼): 주위 360° 범위 공격, 가드 파괴 가능 ----------
-let whirlRing = null;
 function tryWhirl() {
   if (!state.ready || state.dead || state.dialog) return;
   if (!hasSkill('whirl')) { toggleSkillTree(); return; }
@@ -3391,14 +3410,71 @@ function tryWhirl() {
     if (e.dead) continue;
     if (e.root.position.distanceTo(p) > 2.8) continue;
     damageEnemy(e, dmg, true);
+    skillFx(e.root.position,0xd5f4ff,1,'hit');
     if (activeMastery('gale') && galeEligible(e)) e.galeUntil = now + 3;
   }
-  if (!whirlRing) whirlRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.07, 8, 40), new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent: true, opacity: 0.9 }));
-  whirlRing.position.copy(p); whirlRing.position.y = 0.9;
-  whirlRing.rotation.x = Math.PI / 2;
-  whirlRing.visible = true;
-  state.whirlFxUntil = now + 0.35;
+  skillFx(p,activeMastery('gale')?0x91ffd5:0x91dbff,2.8,'whirl');
   updateWhirlBtn();
+}
+
+
+// ---------- 스킬 시전/명중 이펙트: 풀 재사용, 화면 전체 섬광 없음 ----------
+const skillFxPool=[];
+let skillRingGeo=null, skillRayGeo=null;
+function skillFx(pos,color,size,kind='cast',heading=0){
+  if(!skillRingGeo){skillRingGeo=new THREE.TorusGeometry(1,.085,6,40);skillRayGeo=new THREE.BoxGeometry(.045,.045,.6);}
+  let f=skillFxPool.find(f=>!f.root.visible);
+  if(!f){
+    if(skillFxPool.length>=24)f=skillFxPool.reduce((a,b)=>a.start<b.start?a:b);
+    else{const root=new THREE.Group(),mat=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.9,depthWrite:false});
+      const ring=new THREE.Mesh(skillRingGeo,mat);ring.rotation.x=Math.PI/2;root.add(ring);
+      const rays=[];for(let i=0;i<8;i++){const r=new THREE.Mesh(skillRayGeo,mat);const a=i*Math.PI/4;r.position.set(Math.sin(a),0,Math.cos(a));r.rotation.y=a;rays.push(r);root.add(r)}
+      scene.add(root);f={root,mat,ring,rays};skillFxPool.push(f);
+    }
+  }
+  Object.assign(f,{kind,start:clock.elapsedTime,size,duration:kind==='whirl'?.8:kind==='hit'?.5:.6});
+  f.mat.color.setHex(color);f.mat.opacity=.95;f.root.position.copy(pos);f.root.position.y=.7;f.root.rotation.y=heading;f.root.scale.setScalar(.2);f.root.visible=true;
+  f.ring.visible=true;for(const r of f.rays)r.visible=kind!=='dodge';
+  if(kind==='dodge'){f.root.scale.set(.65,.65,1.4);f.root.position.addScaledVector(new THREE.Vector3(Math.sin(heading),0,Math.cos(heading)),-.4)}
+}
+function updateSkillFx(now){for(const f of skillFxPool){if(!f.root.visible)continue;const k=(now-f.start)/f.duration;if(k>=1){f.root.visible=false;continue}const v=f.size*(.25+k*.75);f.root.scale.set(v,kindVertical(f.kind)?v*.7:v,v);f.root.rotation.y+=.05;f.mat.opacity=.95*(1-k*.8);if(kindVertical(f.kind))f.root.position.y+=.015;}}
+function kindVertical(k){return k==='heal'||k==='ready'}
+let windVisual=null;
+function makeWindVisual(){if(windVisual)return;const root=new THREE.Group();const mat=new THREE.MeshBasicMaterial({color:0x7de7ff,transparent:true,opacity:.95,depthWrite:false});
+  const arc=new THREE.Mesh(new THREE.TorusGeometry(.48,.095,6,20,Math.PI*1.5),mat);arc.rotation.x=Math.PI/2;root.add(arc);
+  const core=new THREE.Mesh(new THREE.OctahedronGeometry(.24),new THREE.MeshBasicMaterial({color:0xecffff}));root.add(core);
+  const tail=new THREE.Mesh(new THREE.ConeGeometry(.2,1.7,5),new THREE.MeshBasicMaterial({color:0x45c5ff,transparent:true,opacity:.45,depthWrite:false}));tail.rotation.x=-Math.PI/2;tail.position.z=-.85;root.add(tail);scene.add(root);root.visible=false;windVisual=root;
+}
+function cancelWindshot(result){if(state.windshot){state.windshot=null;state.windResult=result;}if(windVisual)windVisual.visible=false;}
+function windWall(p){
+  if(Math.abs(p.x)>78||Math.abs(p.z)>78)return true;
+  if(colliders.some(c=>Math.hypot(p.x-c.x,p.z-c.z)<c.r+.22))return true;
+  const {cx,cz,half,doorHalf}=DUNGEON;if(!half)return false;
+  const dx=Math.abs(p.x-cx),dz=Math.abs(p.z-cz),band=.85;
+  if(dx>half+band||dz>half+band)return false;
+  const door=Math.abs(p.x-(DUNGEON.doorX??cx))<doorHalf&&p.z>cz+half-band;
+  return !door&&(Math.abs(dx-half)<band||Math.abs(dz-half)<band);
+}
+function tryWindshot(){
+  if(!state.ready||state.dead||state.dialog||state.menuOpen)return;
+  if(!hasSkill('windshot')){toggleSkillTree();return;}
+  const now=clock.elapsedTime;if(now<state.windCdUntil||now<state.attackCdUntil||now<state.dodgeUntil)return;
+  state.windCdUntil=now+5;state.attackCdUntil=now+.6;state.attackUntil=now+.45;state.didHit=true;state.attackStrong=false;state.masteryChain=null;
+  const dir=new THREE.Vector3(Math.sin(state.heading),0,Math.cos(state.heading));const pos=state.player.position.clone();pos.y=.8;
+  state.windshot={pos,origin:pos.clone(),dir,left:10,dmg:Math.round((PLAYER.dmg+GEAR_ATK[state.gear.sword])*1.2)};state.windResult='flying';
+  state.anim.playOnce('slice_diagonal');skillFx(pos,0x66dfff,1.15,'cast',state.heading);makeWindVisual();windVisual.position.copy(pos);windVisual.rotation.y=state.heading;windVisual.visible=true;sfx('swing2',.8);window.__dbgWind=(window.__dbgWind||0)+1;
+}
+function updateWindshot(dt,now){
+  const w=state.windshot;if(!w)return;if(state.dead||state.dialog||state.menuOpen){cancelWindshot('cancelled');return}
+  let remaining=Math.min(w.left,14*dt);
+  while(remaining>.0001&&state.windshot){const step=Math.min(.15,remaining),next=w.pos.clone().addScaledVector(w.dir,step);
+    if(windWall(next)){skillFx(next,0xa4b5c0,.7,'hit');cancelWindshot('wall');break;}
+    let target=null,best=Infinity;for(const e of state.enemies){if(e.dead||e.root.position.clone().sub(w.origin).dot(w.dir)<0)continue;const d=segmentDistance(e.root.position,w.pos,next);if(d<.7){const t=e.root.position.clone().sub(w.pos).dot(w.dir);if(t<best){best=t;target=e}}}
+    w.pos.copy(next);w.left-=step;remaining-=step;
+    if(target){const guard=target.stats.guard&&!(target.staggerUntil&&now<target.staggerUntil);damageEnemy(target,w.dmg,false);skillFx(target.root.position,guard?0xa4b5c0:0xffe29b,1.2,'hit');cancelWindshot(guard?'guard':'hit');break;}
+    if(w.left<=.0001){cancelWindshot('range');break;}
+  }
+  if(state.windshot&&windVisual){windVisual.position.copy(w.pos);windVisual.rotation.y=Math.atan2(w.dir.x,w.dir.z);}
 }
 
 // 감시자 고유 패턴: 고정된 붉은 원 예고 -> 지면파 -> 푸른 반격 시간.
@@ -3691,6 +3767,7 @@ function updateEnemy(e, dt, now) {
 
 function playerDie(killerLabel) {
   state.dead = true;
+  cancelWindshot('death');
   resetMasteryCombat();
   state.riposteUntil = 0;
   state.anim.playOnce('death_a');
@@ -3808,17 +3885,14 @@ function tick() {
     updateTreasure();
     updateDens();
     updateSwamp(now);
+    updateWindshot(dt,now);
+    updateSkillFx(now);
     updateGolden(now);
     updateRings(dt);
     updateShrines(now);
     updateWatch();
     updateRuins();
     updateBossPlate();
-    if (whirlRing && whirlRing.visible) {
-      const k = 1 - Math.max(0, state.whirlFxUntil - now) / 0.35;
-      if (now < state.whirlFxUntil) { whirlRing.scale.setScalar(0.3 + k * 2.6); whirlRing.material.opacity = 0.9 * (1 - k); }
-      else whirlRing.visible = false;
-    }
     updateTrial(now);
     updateBeaconTrail();
     checkAch();
@@ -3944,6 +4018,7 @@ function tick() {
     const potBtn = document.getElementById('pot');
     const potLabel = `물약 ${state.potions}`;
     if (potBtn.textContent !== potLabel) potBtn.textContent = potLabel;
+    if(hasSkill('windshot')){windBtn.style.display='flex';const left=state.windCdUntil-now;windBtn.textContent=left>0?`${Math.ceil(left)}`:'바람칼날';}
     const wh = document.getElementById('whirl');
     if (wh && hasSkill('whirl')) {
       wh.style.display = 'flex';
