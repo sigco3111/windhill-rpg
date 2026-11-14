@@ -42,7 +42,7 @@ mkdir -p public/assets/village
 cp "$TMP/quaternius-village/"*.obj "$TMP/quaternius-village/"*.mtl public/assets/village/
 mkdir -p public/assets/enemies
 E="$TMP/easy-enemy/Easy Enemy Pack/Easy Animated Enemy Pack - Jan 2019/FBX"
-cp "$E/Frog.fbx" "$E/Rat.fbx" "$E/Spider.fbx" public/assets/enemies/
+cp "$E/Frog.fbx" "$E/Rat.fbx" "$E/Spider.fbx" "$E/Snake.fbx" "$E/Snake_angry.fbx" "$E/Wasp.fbx" public/assets/enemies/
 mkdir -p public/assets/dungeon
 cp "$TMP/kaykit-dungeon/addons/kaykit_dungeon_remastered/Assets/gltf/"*.glb public/assets/dungeon/
 N="$TMP/kaykit-forest-nature/KayKit_Forest_Nature_Pack_1.0_FREE"
