@@ -685,7 +685,7 @@ function renderMenu() {
       ['업적', Object.keys(state.ach || {}).length + '개'],
       ['보물상자', (state.chestsOpened || []).length + '개'],
       ['신전 기도', (state.shrinesPrayed || []).length + '곳'],
-      ['몬스터 소굴', (state.densCleared || []).length + '곳'],
+      ['몬스터 소굴', (state.densCleared || []).length + '/' + DENS.length + '곳'],
       ['바람의 고리', (state.ringsPassed || []).length + ' / 5'],
       ['지도 조각', (state.mapFrags || 0) + ' / 3'],
       ['시련', state.trialDone ? '완료' : '미완료'],
@@ -2029,6 +2029,7 @@ const DENS = [
   { x: 44, z: 52, name: '쥐 소굴', mobs: [['Rat', RAT, 3]], gold: 40 },
   { x: -50, z: -46, name: '거미 소굴', mobs: [['Spider', SPIDER, 2]], gold: 50 },
   { x: 20, z: 64, name: '서리 소굴', mobs: [['skel', FSKEL, 2]], gold: 60 },
+  { x: 60, z: -12, name: '독사 소굴', mobs: [['Snake_angry', SNAKE, 2], ['Snake_angry', VSNAKE, 1]], gold: 70 }, // 동쪽 공터: 독사 2 + 왕독사 1 혼합 매복
 ];
 function buildDens() {
   state.dens = [];
@@ -2476,6 +2477,7 @@ const ACH = [
   { id: 'trial1', name: '시련의 돌 정복 (웨이브 3 클리어)', cond: () => (state.trialDone || 0) >= 1 },
   { id: 'treasureHidden', name: '숨겨진 보물 (지도 완성)', cond: () => !!state.treasureDone },
   { id: 'den3', name: '소굴 정리 (몬스터 소굴 3곳)', cond: () => (state.densCleared || []).length >= 3 },
+  { id: 'denAll', name: '소굴 정복자 (모든 소굴 정리)', cond: () => (state.densCleared || []).length >= DENS.length },
   { id: 'golden1', name: '황금 쥐를 잡아라', cond: () => (state.dex['황금 쥐'] || 0) >= 1 },
   { id: 'wind5', name: '바람의 고리 (5곳 통과)', cond: () => (state.ringsPassed || []).length >= 5 },
   { id: 'elite5', name: '엘리트 사냥꾼 (엘리트 5마리)', cond: () => (state.eliteKills || 0) >= 5 },
