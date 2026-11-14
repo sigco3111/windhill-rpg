@@ -453,7 +453,7 @@ riposteHud.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);b
 riposteHud.style.fontFamily = "'Noto Sans KR', sans-serif";
 document.body.appendChild(riposteHud);
 const skillTreeStyle = document.createElement('style');
-skillTreeStyle.textContent = '#dlg.journey-dialog .btns { flex-wrap:wrap; } #dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
+skillTreeStyle.textContent = '#dlg.journey-dialog #dlg-text { max-height:min(38vh,260px);overflow-y:auto;scrollbar-width:thin; } #dlg.journey-dialog .btns { flex-wrap:wrap; } #dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
 document.head.appendChild(skillTreeStyle);
 function updateBossPlate() {
   let t = null, bd = 18;
