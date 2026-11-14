@@ -404,6 +404,9 @@ const VSNAKE = { ...SNAKE, hp: 48, dmg: 8, speed: 3.5, cd: 1.3, gold: 15, label:
 // 벌집 숲 계열: 말벌 무리 + 여왕벌(1회성 가드 미니보스) — 남동 벌집 숲 (56, 30) 서식
 const WASP = { hp: 40, dmg: 7, speed: 3.2, aggro: 13, range: 1.6, cd: 1.4, label: '말벌', windup: 0.4, gold: 11, teleH: 1.2, wasp: true, tint: 0xe8c83a, tintMix: 0.4 };
 const QWASP = { ...WASP, hp: 120, dmg: 12, speed: 2.8, aggro: 14, range: 2.0, cd: 1.2, windup: 0.55, gold: 80, label: '여왕벌', queenWasp: true, guard: true, noElite: true, noRespawn: true, tint: 0xc8752a, tintMix: 0.5, emis: 0x241203 };
+// 독 늪지대 계열: 늪독사·늪 거미 — 남서 독 늪지대 (-28, 48) 서식. 독사 퀘스트 카운터와 분리(snake 플래그 없음), 물기에 중독
+const BGSNAKE = { ...SNAKE, hp: 55, dmg: 9, speed: 3.2, cd: 1.3, gold: 14, label: '늪독사', snake: false, kingSnake: false, tint: 0x3f6a2a, emis: 0x0a180a };
+const BGSPIDER = { ...SPIDER, hp: 40, dmg: 8, speed: 2.8, cd: 1.3, gold: 12, label: '늪 거미', poison: true, tint: 0x4a5d6a, emis: 0x0a1218 };
 // 황금 쥐: 희귀 출현, 플레이어에게서 도망, 60초 한정
 const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, tintMix: 0.85, emis: 0x7a5c00, flee: true, noElite: true };
 // Batch AA — 버려진 망루의 수호대장: 1회성 미니보스 (부활·엘리트 승격 없음)
@@ -1050,6 +1053,55 @@ async function build() {
     }));
   } catch (e) { console.warn('wasp grove fail', e); }
 
+  // 독 늪지대 지역 (남서 (-28, 48)): 독 웅덩이(밟으면 중독) + 늪독사/늪 거미 서식지
+  try {
+    state.swampPos = { x: -28, z: 48 };
+    const mire = new THREE.Mesh(new THREE.CircleGeometry(15, 28), new THREE.MeshLambertMaterial({ color: 0x55663c }));
+    mire.rotation.x = -Math.PI / 2; mire.position.set(-28, 0.02, 48); mire.receiveShadow = true;
+    scene.add(mire);
+    state.swampPools = [{ x: -32, z: 44, r: 4 }, { x: -23, z: 52, r: 3.5 }];
+    for (const pool of state.swampPools) {
+      const w = new THREE.Mesh(new THREE.CircleGeometry(pool.r, 20), new THREE.MeshStandardMaterial({ color: 0x86a843, emissive: 0x1e2a0e, roughness: 0.6, transparent: true, opacity: 0.9 }));
+      w.rotation.x = -Math.PI / 2; w.position.set(pool.x, 0.05, pool.z);
+      scene.add(w);
+    }
+    const deadProtos = natureGs.slice(0, 4).filter(Boolean).map((g) => {
+      const t = shadowify(g.scene.clone());
+      t.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        const dk = (m) => { const c = m.clone(); if (c.color) c.color.lerp(new THREE.Color(0x4a3f30), 0.6); return c; };
+        o.material = Array.isArray(o.material) ? o.material.map(dk) : dk(o.material);
+      });
+      return t;
+    });
+    const srng = mulberry32(777);
+    for (let i = 0; i < 10 && deadProtos.length; i++) {
+      const inst = deadProtos[Math.floor(srng() * deadProtos.length)].clone();
+      const a = srng() * Math.PI * 2, r = 6 + srng() * 11;
+      const x = -28 + Math.cos(a) * r, z = 48 + Math.sin(a) * r;
+      if (Math.hypot(x, z) > 74) continue;
+      if (state.swampPools.some((pl) => Math.hypot(x - pl.x, z - pl.z) < pl.r + 1)) continue;
+      inst.position.set(x, 0, z);
+      inst.rotation.y = srng() * Math.PI * 2;
+      inst.scale.setScalar(0.85 + srng() * 0.4);
+      scene.add(inst);
+      colliders.push({ x, z, r: 0.6 });
+      registerTreeFade(inst, x, z);
+    }
+    const reedProtos = natureGs.slice(7).filter(Boolean).map((g) => shadowify(g.scene));
+    for (let i = 0; i < 12 && reedProtos.length; i++) {
+      const inst = reedProtos[Math.floor(srng() * reedProtos.length)].clone();
+      const a = srng() * Math.PI * 2, r = 3 + srng() * 12;
+      inst.position.set(-28 + Math.cos(a) * r, 0, 48 + Math.sin(a) * r);
+      inst.rotation.y = srng() * Math.PI * 2;
+      scene.add(inst);
+    }
+    // 서식 몬스터 (기존 프로토 재사용 — 추가 로드 없음)
+    const bogSnakeProto = state.protos['Snake_angry'], bogSpiderProto = state.protos['Spider'];
+    if (bogSnakeProto) for (const [x, z] of [[-33, 49], [-25, 43], [-22, 55]]) spawn(bogSnakeProto, BGSNAKE, x, z);
+    if (bogSpiderProto) for (const [x, z] of [[-31, 53], [-20, 47]]) spawn(bogSpiderProto, BGSPIDER, x, z);
+  } catch (e) { console.warn('swamp fail', e); }
+
   // 바람꽃 (수집 의뢰) — 서쪽 숲에 8송이
   buildFlowers(-45, 18);
   // 보물상자 (탐험 요소) — 언덕 곳곳 5개
@@ -1537,6 +1589,7 @@ function drawMinimap() {
   if (state.golden && state.golden.active && !state.golden.active.dead) dot(state.golden.active.root.position.x, state.golden.active.root.position.z, '#fff04a', 4.5);
   if (state.rings) for (const r of state.rings) if (!r.passed) dot(r.x, r.z, '#9fdcff', 3.5);
   if (!state.watchCleared) dot(WATCH_POS.x, WATCH_POS.z, state.watchFound ? '#e8a04c' : '#b8b2a6', 3.5); // 버려진 망루: 미발견 회색 → 발견 후 호박색
+  if (state.swampPos) dot(state.swampPos.x, state.swampPos.z, '#8aa24f', 4); // 독 늪지대
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
   if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
@@ -1566,6 +1619,8 @@ const MATS = {
   '왕독사': { name: '맹독 주머니', price: 12 },
   '말벌': { name: '벌집 조각', price: 9 },
   '여왕벌': { name: '여왕벌 침', price: 30 },
+  '늪독사': { name: '늪지 독니', price: 10 },
+  '늪 거미': { name: '늪 거미줄', price: 8 },
 };
 const MAT_PRICE = Object.fromEntries(Object.values(MATS).map((m) => [m.name, m.price]));
 // 수집가 특별 주문: 무작위 재료를 고급(기본가의 2.5배)에 매입. 납품하면 다음 주문 생성
@@ -1958,6 +2013,21 @@ function buildDens() {
     beam.visible = !cleared;
     state.dens.push({ root, beam, x: d.x, z: d.z, name: d.name, gold: d.gold, mobSpec: d.mobs, cleared, spawned: false, mobs: [] });
   });
+}
+// 독 늪지대 독 웅덩이: 안에 서 있으면 중독 갱신(기존 중독 DoT 재사용, 최소 1HP)
+function updateSwamp(now) {
+  if (!state.swampPools || state.dead) return;
+  const p = state.player.position;
+  for (const pool of state.swampPools) {
+    const dx = p.x - pool.x, dz = p.z - pool.z;
+    if (dx * dx + dz * dz < pool.r * pool.r) {
+      const fresh = now >= state.poisonUntil;
+      state.poisonUntil = now + 1.6;
+      if (state.poisonTickAt < now) state.poisonTickAt = now + 1;
+      if (fresh) toast('독 늪의 독기에 중독되었습니다! 물약(R)으로 해독');
+      return;
+    }
+  }
 }
 function updateDens() {
   if (!state.dens || state.dead) return;
@@ -2966,6 +3036,7 @@ function tick() {
     updateChests();
     updateTreasure();
     updateDens();
+    updateSwamp(now);
     updateGolden(now);
     updateRings(dt);
     updateShrines(now);
