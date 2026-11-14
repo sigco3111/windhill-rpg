@@ -2029,7 +2029,7 @@ const DENS = [
   { x: 44, z: 52, name: '쥐 소굴', mobs: [['Rat', RAT, 3]], gold: 40 },
   { x: -50, z: -46, name: '거미 소굴', mobs: [['Spider', SPIDER, 2]], gold: 50 },
   { x: 20, z: 64, name: '서리 소굴', mobs: [['skel', FSKEL, 2]], gold: 60 },
-  { x: 60, z: -12, name: '독사 소굴', mobs: [['Snake_angry', SNAKE, 2], ['Snake_angry', VSNAKE, 1]], gold: 70 }, // 동쪽 공터: 독사 2 + 왕독사 1 혼합 매복
+  { x: -5, z: 35, name: '독사 소굴', mobs: [['Snake_angry', SNAKE, 2], ['Snake_angry', VSNAKE, 1]], gold: 70 }, // 중앙 북쪽 공터: 독사 2 + 왕독사 1 혼합 매복
 ];
 function buildDens() {
   state.dens = [];
