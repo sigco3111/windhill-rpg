@@ -255,6 +255,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyT') toggleAuto();
   if (e.code === 'KeyI') toggleInv();
   if (e.code === 'KeyM') toggleMinimap();
+  if (e.code === 'KeyN') cycleTrack();
 });
 addEventListener('keyup', (e) => {
   if (e.code === 'Space' && state.chargeStart >= 0) {
@@ -295,14 +296,16 @@ atkBtn.addEventListener('touchend', (e) => {
     tryAttack(held >= 450);
   }
 });
-document.getElementById('dodge').addEventListener('touchstart', (e) => { e.stopPropagation(); tryDodge(); }, { passive: true });
+document.getElementById('dodge').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); tryDodge(); }, { passive: false });
 document.getElementById('dodge').addEventListener('click', (e) => { e.stopPropagation(); tryDodge(); });
-document.getElementById('pot').addEventListener('touchstart', (e) => { e.stopPropagation(); usePotion(); }, { passive: true });
+document.getElementById('pot').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); usePotion(); }, { passive: false });
 document.getElementById('pot').addEventListener('click', (e) => { e.stopPropagation(); usePotion(); });
 document.getElementById('auto').addEventListener('click', (e) => { e.stopPropagation(); toggleAuto(); });
-document.getElementById('auto').addEventListener('touchstart', (e) => { e.stopPropagation(); toggleAuto(); }, { passive: true });
+document.getElementById('auto').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); toggleAuto(); }, { passive: false });
 document.getElementById('inv').addEventListener('click', (e) => { e.stopPropagation(); toggleInv(); });
-document.getElementById('inv').addEventListener('touchstart', (e) => { e.stopPropagation(); toggleInv(); }, { passive: true });
+document.getElementById('quest').addEventListener('click', (e) => { e.stopPropagation(); cycleTrack(); });
+document.getElementById('quest').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); cycleTrack(); }, { passive: false });
+document.getElementById('inv').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); toggleInv(); }, { passive: false });
 addEventListener('touchstart', (e) => {
   for (const t of e.changedTouches) {
     if (t.target && t.target.id === 'atk') continue;
@@ -345,7 +348,7 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
   level: 1, xp: 0,
-  bounty: { active: false, startKills: 0, count: 0 }, chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
+  bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
   watch: null, watchFound: false, watchCleared: false, // 버려진 망루: 발견(30m 접근) + 수호대장 격파(1회성)
@@ -482,6 +485,27 @@ function updateTreeFades(dt) {
       if (Math.abs(t.op - target) < 0.015) t.op = target;
       for (const m of t.mats) m.opacity = t.op;
     }
+  }
+}
+// 카메라가 강하게 클램프되어 플레이어에 가까이 붙으면 플레이어를 반투명하게 (적·공격 예고 가독)
+const playerFade = { mats: null, op: 1 };
+function updatePlayerFade(dt) {
+  if (!state.player) return;
+  if (!playerFade.mats) {
+    playerFade.mats = [];
+    state.player.traverse((o) => {
+      if (o.isMesh && o.material) {
+        o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) { m.transparent = true; playerFade.mats.push(m); }
+      }
+    });
+  }
+  const cd = camera.position.distanceTo(state.player.position);
+  const target = cd < 2.6 ? 0.32 : 1;
+  if (Math.abs(playerFade.op - target) > 0.01) {
+    playerFade.op += (target - playerFade.op) * Math.min(1, dt * 8);
+    if (Math.abs(playerFade.op - target) < 0.015) playerFade.op = target;
+    for (const m of playerFade.mats) m.opacity = playerFade.op;
   }
 }
 const DUNGEON = { cx: 48, cz: -48, half: 0, doorHalf: 0 }; // half는 던전 생성 시 채움
@@ -960,6 +984,9 @@ async function build() {
     setMapFrags(n) { state.mapFrags = n; if (n >= 3 && !state.treasureDone) spawnTreasure(); },
     spawnGolden(x, z) { if (!state.protos || !state.protos.Rat) return false; if (!state.golden) state.golden = { nextAt: 0, active: null, until: 0 }; const e = state.spawn(state.protos.Rat, GOLDEN, x, z); e.home.set(x, 0, z); state.golden.active = e; state.golden.until = clock.elapsedTime + 60; return true; },
     setDialog(v) { state.dialog = !!v; },
+    fadeDebug(cx, cz, r) { let f = 0, n = 0; for (const t of treeFades) { if (cx !== undefined && Math.hypot(t.x - cx, t.z - cz) > r) continue; n++; if (t.op < 0.5) f++; } return { faded: f, total: n }; },
+    playerOpacity() { return +playerFade.op.toFixed(2); },
+    camDist() { return +camera.position.distanceTo(state.player.position).toFixed(2); },
     setRain(sec) { weather.mode = 'rain'; weather.until = clock.elapsedTime + sec; },
     flowerPos(i) { return state.flowers ? state.flowers[i].root.position.toArray() : null; },
     debug() { return { dungeon: { ...DUNGEON }, colliders, hp: state.hp, dead: state.dead, dialog: state.dialog }; },
@@ -1240,7 +1267,7 @@ const MMAP_RANGE = 85; // 플레이어 중심 ±85m 표시
 let mmapLast = -1;
 function toggleMinimap() { mmap.classList.toggle('off'); }
 mmap.addEventListener('click', (e) => { e.stopPropagation(); mmap.classList.toggle('big'); });
-mmap.addEventListener('touchstart', (e) => { e.stopPropagation(); mmap.classList.toggle('big'); }, { passive: true });
+mmap.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); mmap.classList.toggle('big'); }, { passive: false });
 function drawMinimap() {
   if (mmap.classList.contains('off')) return;
   const now = clock.elapsedTime;
@@ -1370,7 +1397,7 @@ function closeDialog() {
   clearInterval(window.__invIv);
 }
 document.getElementById('prompt').addEventListener('click', tryInteract);
-document.getElementById('prompt').addEventListener('touchstart', (e) => { e.stopPropagation(); tryInteract(); }, { passive: true });
+document.getElementById('prompt').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); tryInteract(); }, { passive: false });
 
 // ---------- 세이브 (localStorage) ----------
 const SAVE_KEY = 'windhill-save';
@@ -1382,7 +1409,7 @@ function saveGame() {
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
-      bounty: state.bounty, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      bounty: state.bounty, tracked: state.tracked || 'auto', chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -1414,6 +1441,7 @@ function loadGame() {
     state.level = s.level || 1;
     state.xp = s.xp || 0;
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
+    state.tracked = s.tracked || 'auto';
     state.chestsOpened = s.chestsOpened || [];
     state.shrinesPrayed = s.shrinesPrayed || [];
     state.trialDone = s.trialDone || 0;
@@ -1768,6 +1796,7 @@ async function buildWatchtower() {
       if (i === 9) { // 북쪽 무너진 구간만 잔해+충돌
         const r = shadowify(rubbleG.scene.clone());
         r.position.set(wx, 0, wz); r.rotation.y = a; scene.add(r);
+        registerTreeFade(r, wx, wz);
         colliders.push({ x: wx, z: wz, r: 0.9 });
       } // i===3 남쪽은 입구: 잔해·충돌 없이 개방 (실플레이 진입 경로)
       continue;
@@ -1779,12 +1808,14 @@ async function buildWatchtower() {
     o.position.set(wx, 0, wz);
     o.rotation.y = a + Math.PI / 2;
     scene.add(o);
+    registerTreeFade(o, wx, wz); // 카메라-플레이어 사이 벽이 시야를 가리면 페이드
     colliders.push({ x: wx, z: wz, r: 1.25 });
   }
   // 입구 양옆 기둥 + 횃불, 중앙 조명
   for (const sx of [-1, 1]) {
     const px = cx + sx * 2.4, pz = cz + R - 1.4;
     const p = shadowify(pillarG.scene.clone()); p.position.set(px, 0, pz); scene.add(p);
+    registerTreeFade(p, px, pz);
     colliders.push({ x: px, z: pz, r: 0.7 });
     const t = shadowify(torchG.scene.clone()); t.position.set(px, 2.6, pz); scene.add(t);
   }
@@ -2192,29 +2223,34 @@ function nearestEnemyPos(filter) {
 // 현재 목표 지점: 수락/완료 보고는 장로, 진행 중이면 대상 적/수집물/보스 위치
 function objectiveTarget() {
   if (!state.npc) return null;
+  const mode = state.tracked || 'auto';
+  if (mode === 'none') return null;
+  if (mode === 'quest') return questTargetInner() || autoObjective();
+  if (mode === 'bounty') return bountyTarget() || autoObjective();
+  return autoObjective();
+}
+// 기존 동작: 진행 중인 메인 의뢰 우선, 체인이 끝났으면 반복 의뢰
+function autoObjective() {
+  const qd = QUESTS[state.quest.idx];
+  if (qd) return questTargetInner();
+  return bountyTarget();
+}
+function cycleTrack() {
+  const opts = ['auto'];
+  if (QUESTS[state.quest.idx]) opts.push('quest');
+  if (state.bounty && state.bounty.active) opts.push('bounty');
+  opts.push('none');
+  const cur = opts.indexOf(state.tracked || 'auto');
+  state.tracked = opts[(cur + 1) % opts.length];
+  const t = objectiveTarget();
+  toast(state.tracked === 'none' ? '의뢰 추적을 껐습니다' : `추적: ${t ? t.label : '의뢰'}`);
+  saveGame();
+}
+function questTargetInner() {
+  if (!state.npc) return null;
   const q = state.quest, d = QUESTS[q.idx];
   const npcPos = { x: state.npc.pos.x, z: state.npc.pos.z, label: '마을 장로' };
-  if (!d) {
-    const b = state.bounty;
-    if (!b || !b.active) return null;
-    const goal = b.kind === 'flowers' ? 4 : b.kind === 'variants' ? 2 : b.kind === 'elite' ? 1 : 8;
-    const prog = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : b.kind === 'variants' ? variantKillCount() - (b.startVariants || 0) : b.kind === 'elite' ? state.eliteKills - (b.startElites || 0) : state.kills - b.startKills;
-    if (prog >= goal) return { ...npcPos, label: '장로에게 보고' };
-    if (b.kind === 'elite') {
-      const ep = nearestEnemyPos((e) => e.stats.elite);
-      return ep ? { x: ep.x, z: ep.z, label: '엘리트 토벌' } : null;
-    }
-    if (b.kind === 'flowers') {
-      const fp = nearestFlowerPos();
-      return fp ? { x: fp.x, z: fp.z, label: '바람꽃 수집' } : null;
-    }
-    if (b.kind === 'variants') {
-      const vp = nearestEnemyPos((e) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => e.stats.label === l || e.stats.label === '엘리트 ' + l));
-      return vp ? { x: vp.x, z: vp.z, label: '변종 사냥' } : null;
-    }
-    const bp = nearestEnemyPos(() => true);
-    return bp ? { x: bp.x, z: bp.z, label: '현상금 사냥' } : null;
-  }
+  if (!d) return null;
   if (q.state !== 'active') return npcPos;
   if (questProgress() >= d.goal) return { ...npcPos, label: '장로에게 보고' };
   let pos = null;
@@ -2226,6 +2262,29 @@ function objectiveTarget() {
   else if (d.counter === 'variantKills') pos = nearestEnemyPos((e) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => e.stats.label === l || e.stats.label === '엘리트 ' + l));
   if (!pos) return null;
   return { x: pos.x, z: pos.z, label: d.name };
+}
+function bountyTarget() {
+  if (!state.npc) return null;
+  const npcPos = { x: state.npc.pos.x, z: state.npc.pos.z, label: '마을 장로' };
+  const b = state.bounty;
+  if (!b || !b.active) return null;
+  const goal = b.kind === 'flowers' ? 4 : b.kind === 'variants' ? 2 : b.kind === 'elite' ? 1 : 8;
+  const prog = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : b.kind === 'variants' ? variantKillCount() - (b.startVariants || 0) : b.kind === 'elite' ? state.eliteKills - (b.startElites || 0) : state.kills - b.startKills;
+  if (prog >= goal) return { ...npcPos, label: '장로에게 보고' };
+  if (b.kind === 'elite') {
+    const ep = nearestEnemyPos((e) => e.stats.elite);
+    return ep ? { x: ep.x, z: ep.z, label: '엘리트 토벌' } : null;
+  }
+  if (b.kind === 'flowers') {
+    const fp = nearestFlowerPos();
+    return fp ? { x: fp.x, z: fp.z, label: '바람꽃 수집' } : null;
+  }
+  if (b.kind === 'variants') {
+    const vp = nearestEnemyPos((e) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => e.stats.label === l || e.stats.label === '엘리트 ' + l));
+    return vp ? { x: vp.x, z: vp.z, label: '변종 사냥' } : null;
+  }
+  const bp = nearestEnemyPos(() => true);
+  return bp ? { x: bp.x, z: bp.z, label: '현상금 사냥' } : null;
 }
 function nearestFlowerPos() {
   if (!state.flowers) return null;
@@ -2595,22 +2654,30 @@ function tick() {
       qEl.innerHTML = `시련 · 웨이브 ${tr.wave} / ${TRIAL_WAVES.length} · 남은 적 ${tr.enemies.filter((e) => !e.dead).length}`;
     }
     else {
+    // 추적 패널: 활성 의뢰를 모두 나열하고 추적 대상(내비 화살표)을 ▸로 표시. 패널 탭/N 키로 전환.
     const qd = QUESTS[state.quest.idx];
+    const b = state.bounty;
+    const pp2 = state.player.position;
+    const lines = [];
+    const distTo = (t) => t ? Math.round(Math.hypot(t.x - pp2.x, t.z - pp2.z)) + 'm' : '';
+    const resolved = state.tracked === 'none' ? null : (state.tracked === 'quest' || state.tracked === 'bounty') ? state.tracked : (qd ? 'quest' : (b && b.active ? 'bounty' : null));
     if (qd && state.quest.state === 'active') {
+      const t = questTargetInner();
+      lines.push(`${resolved === 'quest' ? '▸ ' : ''}의뢰 · ${qd.name} ${questProgress()} / ${qd.goal}${questProgress() >= qd.goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
+    }
+    if (b && b.active) {
+      const goal = b.kind === 'flowers' ? 4 : b.kind === 'variants' ? 2 : b.kind === 'elite' ? 1 : 8;
+      const raw = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : b.kind === 'variants' ? variantKillCount() - (b.startVariants || 0) : b.kind === 'elite' ? state.eliteKills - (b.startElites || 0) : state.kills - b.startKills;
+      const bp = Math.min(raw, goal);
+      const t = bountyTarget();
+      lines.push(`${resolved === 'bounty' ? '▸ ' : ''}반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
+    }
+    if (lines.length) {
       qEl.style.display = 'block';
-      qEl.innerHTML = `의뢰 · ${qd.name} ${questProgress()} / ${qd.goal}${questProgress() >= qd.goal ? '<br>장로에게 돌아가기' : ''}`;
+      qEl.innerHTML = lines.join('<br>') + '<br><span style="opacity:.65;font-size:.85em">탭·N: 추적 전환</span>';
     } else if (!qd) {
-      const b = state.bounty;
-      if (b && b.active) {
-        const goal = b.kind === 'flowers' ? 4 : b.kind === 'variants' ? 2 : b.kind === 'elite' ? 1 : 8;
-        const raw = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : b.kind === 'variants' ? variantKillCount() - (b.startVariants || 0) : b.kind === 'elite' ? state.eliteKills - (b.startElites || 0) : state.kills - b.startKills;
-        const bp = Math.min(raw, goal);
-        qEl.style.display = 'block';
-        qEl.innerHTML = `반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? '<br>장로에게 돌아가기' : ''}`;
-      } else {
-        qEl.style.display = 'block';
-        qEl.textContent = '모든 의뢰 완료';
-      }
+      qEl.style.display = 'block';
+      qEl.textContent = '모든 의뢰 완료';
     } else {
       qEl.style.display = 'none';
     }
@@ -2651,6 +2718,7 @@ function tick() {
       if (t2 < 1) camera.position.copy(head.clone().addScaledVector(camera.position.clone().sub(head), Math.max(t2, Math.min(1, 1.2 / Math.max(0.1, camera.position.distanceTo(head))))));
       camera.lookAt(p.x, p.y + (portrait ? 1.0 : 1.4), p.z);
       updateTreeFades(dt);
+      updatePlayerFade(dt);
     }
     updateGuidance(now);
     updateTutorial();
