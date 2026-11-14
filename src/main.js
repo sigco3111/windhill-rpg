@@ -411,6 +411,11 @@ function updateBossPlate() {
     if (d < bd) { bd = d; t = e; }
   }
   if (!t || state.dead) { bossPlate.style.display = 'none'; return; }
+  // 좁은 화면(모바일)에서는 오른쪽 공격/회피 버튼 열과 겹치지 않도록 위로 올리고 폭을 줄임
+  const narrow = window.innerWidth < 560;
+  bossPlate.style.bottom = narrow ? '160px' : '96px';
+  bossPlate.style.maxWidth = narrow ? '200px' : '72vw';
+  bossPlate.style.minWidth = narrow ? '160px' : '220px';
   bossPlate.style.display = 'block';
   document.getElementById('bp-name').textContent = t.stats.label;
   document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
