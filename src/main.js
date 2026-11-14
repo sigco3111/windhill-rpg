@@ -417,6 +417,9 @@ const CAPTAIN = { ...WARRIOR, hp: 90, dmg: 11, speed: 2.7, aggro: 12, range: 2.0
 const BLOODRAT = { ...RAT, hp: 240, dmg: 16, speed: 4.0, aggro: 13, range: 1.6, cd: 1.0, windup: 0.35, gold: 130, label: '피빛 왕쥐', guard: true, bloodRat: true, noElite: true, noRespawn: true, big: 1.7, tint: 0xc03040, tintMix: 0.6, emis: 0x2a080c };
 const SWASP = { ...WASP, wasp: false, hp: 280, dmg: 17, speed: 3.6, aggro: 14, range: 1.9, cd: 1.2, gold: 140, label: '칼날 말벌', guard: true, stormWasp: true, noElite: true, noRespawn: true, big: 1.35, tint: 0x9adfff, tintMix: 0.55, emis: 0x10202c };
 const ROCKSP = { ...SPIDER, hp: 380, dmg: 19, speed: 2.2, aggro: 14, range: 2.0, cd: 1.6, windup: 0.65, gold: 160, label: '바위등 거미', guard: true, rockSpider: true, noElite: true, noRespawn: true, big: 1.5, teleH: 1.7, tint: 0x8f9096, tintMix: 0.6, emis: 0x141416 };
+// 잊힌 유적 지역 (북서 (-36,-48)): 유적 해골·유적 수호자 — 스켈레톤 프로토 재사용, 카운터 분리(skel/warrior 플래그 끔)
+const RUINSKEL = { ...ENEMY, skel: false, hp: 60, dmg: 11, speed: 2.5, aggro: 12, gold: 16, label: '유적 해골', ruinSkel: true, tint: 0xcfc4a8, tintMix: 0.55, emis: 0x2a2410 };
+const RUINWAR = { ...WARRIOR, skel: false, warrior: false, hp: 110, dmg: 15, speed: 2.7, aggro: 13, gold: 24, label: '유적 수호자', ruinWar: true, tint: 0x9aa8b8, tintMix: 0.55, emis: 0x101820 };
 
 // ---------- 토스트 (짧은 알림) ----------
 let toastTimer = 0;
@@ -696,6 +699,7 @@ function renderMenu() {
       ['숨겨진 보물', state.treasureDone ? '발굴 완료' : '미발굴'],
       ['버려진 망루', state.watchCleared ? '수호대장 격파' : (state.watchFound ? '발견' : '미발견')],
       ['지명 수배', (((state.bloodRatKills || 0) >= 1 ? 1 : 0) + ((state.stormWaspKills || 0) >= 1 ? 1 : 0) + ((state.rockSpiderKills || 0) >= 1 ? 1 : 0)) + ' / 3'],
+      ['잊힌 유적', state.ruinsFound ? '발견' : '미발견'],
       ['꽃 판매', (state.flowersSold || 0) + '송이'],
     ];
     menuBody.innerHTML = '<div class="recgrid">' + rows.map(([k, v]) => `<div class="mrow"><div>${k}</div><div>${v}</div></div>`).join('') + '</div>';
@@ -1125,6 +1129,41 @@ async function build() {
     if (waspP2) spawn(waspP2, SWASP, 48, 40);       // 벌집 숲 북쪽 원형 빈터
     if (spiderP2) spawn(spiderP2, ROCKSP, -30, -60); // 북서 바위 벼랑
   } catch (e) { console.warn('named bounty fail', e); }
+
+  // 잊힌 유적 지역 (북서 (-36,-48)): 무너진 원형 벽·기둥·잔해 + 유적 해골/수호자 서식. 던전 GLB 재사용
+  try {
+    state.ruinsPos = { x: -36, z: -48 };
+    const rfloor = new THREE.Mesh(new THREE.CircleGeometry(11, 26), new THREE.MeshLambertMaterial({ color: 0x8d8a7a }));
+    rfloor.rotation.x = -Math.PI / 2; rfloor.position.set(-36, 0.02, -48); rfloor.receiveShadow = true;
+    scene.add(rfloor);
+    const RD = 'assets/dungeon/';
+    const wallBG = await load(`${RD}wall_broken.gltf.glb`);
+    const colG = await load(`${RD}column.gltf.glb`);
+    const pilG = await load(`${RD}pillar.gltf.glb`);
+    const rubG = await load(`${RD}rubble_half.gltf.glb`);
+    const rub2G = await load(`${RD}rubble_large.gltf.glb`);
+    const rtorG = await load(`${RD}torch_lit.gltf.glb`);
+    const rrng = mulberry32(2024);
+    for (let i = 0; i < 12; i++) { // 무너진 원형 벽: 절반가량만 남음
+      if (rrng() < 0.45) continue;
+      const a = (i / 12) * Math.PI * 2;
+      const wx = -36 + Math.cos(a) * 9, wz = -48 + Math.sin(a) * 9;
+      const w = shadowify(wallBG.scene.clone());
+      w.position.set(wx, 0, wz); w.rotation.y = a + Math.PI / 2 + (rrng() - 0.5) * 0.3;
+      scene.add(w); colliders.push({ x: wx, z: wz, r: 1.2 }); registerTreeFade(w, wx, wz);
+    }
+    for (const [px, pz, g] of [[-32, -44, pilG], [-40, -52, pilG], [-36, -44.5, colG], [-33, -51, rubG], [-39, -44, rub2G], [-36, -52.5, rubG]]) {
+      const o = shadowify(g.scene.clone());
+      o.position.set(px, 0, pz); o.rotation.y = rrng() * Math.PI * 2;
+      scene.add(o); colliders.push({ x: px, z: pz, r: 0.7 }); registerTreeFade(o, px, pz);
+    }
+    for (const [tx, tz] of [[-31.5, -47], [-40.5, -49]]) { const t = shadowify(rtorG.scene.clone()); t.position.set(tx, 0, tz); scene.add(t); }
+    const rl = new THREE.PointLight(0xffb060, 4, 14, 1.6);
+    rl.position.set(-36, 3, -48); scene.add(rl);
+    const rsk = state.protos['skel'];
+    if (rsk) for (const [x, z] of [[-40, -45], [-33, -45], [-38, -52]]) spawn(rsk, RUINSKEL, x, z);
+    if (rsk) for (const [x, z] of [[-35, -50], [-41, -49]]) { const e = spawn(rsk, RUINWAR, x, z); e.root.scale.multiplyScalar(1.18); }
+  } catch (e) { console.warn('ruins fail', e); }
 
   // 바람꽃 (수집 의뢰) — 서쪽 숲에 8송이
   buildFlowers(-45, 18);
@@ -1656,6 +1695,7 @@ function drawMinimap() {
   if (state.rings) for (const r of state.rings) if (!r.passed) dot(r.x, r.z, '#9fdcff', 3.5);
   if (!state.watchCleared) dot(WATCH_POS.x, WATCH_POS.z, state.watchFound ? '#e8a04c' : '#b8b2a6', 3.5); // 버려진 망루: 미발견 회색 → 발견 후 호박색
   if (state.swampPos) dot(state.swampPos.x, state.swampPos.z, '#8aa24f', 4); // 독 늪지대
+  if (state.ruinsPos) dot(state.ruinsPos.x, state.ruinsPos.z, state.ruinsFound ? '#d8cba8' : '#b8b2a6', 4); // 잊힌 유적: 미발견 회색 → 발견 후 모래색
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
   if (state.npc2) dot(state.npc2.pos.x, state.npc2.pos.z, '#6db3ff', 3.5);
@@ -1688,6 +1728,8 @@ const MATS = {
   '늪지 군주': { name: '군주의 독주머니', price: 60 },
   '늪독사': { name: '늪지 독니', price: 10 },
   '늪 거미': { name: '늪 거미줄', price: 8 },
+  '유적 해골': { name: '고대 뼈 조각', price: 11 },
+  '유적 수호자': { name: '수호자 판금', price: 14 },
   '피빛 왕쥐': { name: '피빛 갈기', price: 25 },
   '칼날 말벌': { name: '칼날 날개', price: 28 },
   '바위등 거미': { name: '바위 등껍질', price: 32 },
@@ -1788,7 +1830,7 @@ function saveGame() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
-      heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0,
+      heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinsFound: !!state.ruinsFound,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
@@ -1817,6 +1859,9 @@ function loadGame() {
     state.bloodRatKills = s.bloodRatKills || 0;
     state.stormWaspKills = s.stormWaspKills || 0;
     state.rockSpiderKills = s.rockSpiderKills || 0;
+    state.ruinSkelKills = s.ruinSkelKills || 0;
+    state.ruinWarKills = s.ruinWarKills || 0;
+    state.ruinsFound = !!s.ruinsFound;
     state.kingSnakeKills = s.kingSnakeKills || 0;
     state.vials = s.vials || 0;
     state.gold = s.gold || 0;
@@ -2256,6 +2301,17 @@ async function buildWatchtower() {
     guardian.root.add(guardian.nameSprite);
   }
   state.watch = { root, guardian };
+}
+// 잊힌 유적: 발견(16m 접근) 1회성
+function updateRuins() {
+  if (!state.ruinsPos || state.dead || state.ruinsFound) return;
+  if (Math.hypot(state.player.position.x - state.ruinsPos.x, state.player.position.z - state.ruinsPos.z) < 16) {
+    state.ruinsFound = true;
+    toast('잊힌 유적 발견! 오래된 수호자들이 잠들어 있다…');
+    sfx('dialog', 0.7);
+    gainXp(15);
+    saveGame();
+  }
 }
 function updateWatch() {
   const w = state.watch;
@@ -2809,6 +2865,8 @@ function killEnemy(e) {
   if (e.stats.bloodRat) state.bloodRatKills = (state.bloodRatKills || 0) + 1;
   if (e.stats.stormWasp) state.stormWaspKills = (state.stormWaspKills || 0) + 1;
   if (e.stats.rockSpider) state.rockSpiderKills = (state.rockSpiderKills || 0) + 1;
+  if (e.stats.ruinSkel) state.ruinSkelKills = (state.ruinSkelKills || 0) + 1;
+  if (e.stats.ruinWar) state.ruinWarKills = (state.ruinWarKills || 0) + 1;
   if (e.stats.boss) state.bossKills++;
   if (e.stats.elite) state.eliteKills = (state.eliteKills || 0) + 1;
   const g = e.stats.gold || 3;
@@ -3146,6 +3204,7 @@ function tick() {
     updateRings(dt);
     updateShrines(now);
     updateWatch();
+    updateRuins();
     updateBossPlate();
     if (whirlRing && whirlRing.visible) {
       const k = 1 - Math.max(0, state.whirlFxUntil - now) / 0.35;
@@ -3290,7 +3349,7 @@ function tick() {
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0, order: state.order, orderDone: state.orderDone || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
-    snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0,
+    snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinsFound: !!state.ruinsFound,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
