@@ -256,6 +256,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyI') toggleInv();
   if (e.code === 'KeyM') toggleMinimap();
   if (e.code === 'KeyN') cycleTrack();
+  if (e.code === 'KeyF') tryWhirl();
+  if (e.code === 'KeyK') toggleSkillTree();
 });
 addEventListener('keyup', (e) => {
   if (e.code === 'Space' && state.chargeStart >= 0) {
@@ -305,6 +307,10 @@ document.getElementById('auto').addEventListener('touchstart', (e) => { e.preven
 document.getElementById('inv').addEventListener('click', (e) => { e.stopPropagation(); toggleInv(); });
 document.getElementById('quest').addEventListener('click', (e) => { e.stopPropagation(); cycleTrack(); });
 document.getElementById('quest').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); cycleTrack(); }, { passive: false });
+document.getElementById('skill').addEventListener('click', (e) => { e.stopPropagation(); toggleSkillTree(); });
+document.getElementById('skill').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); toggleSkillTree(); }, { passive: false });
+document.getElementById('whirl').addEventListener('click', (e) => { e.stopPropagation(); tryWhirl(); });
+document.getElementById('whirl').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); tryWhirl(); }, { passive: false });
 document.getElementById('inv').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); toggleInv(); }, { passive: false });
 addEventListener('touchstart', (e) => {
   for (const t of e.changedTouches) {
@@ -346,6 +352,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
+  skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
@@ -367,9 +374,19 @@ const GEAR_SHOP = [
   { key: 'armor', names: ['가죽 갑옷', '철 갑옷', '뼈 갑옷'], prices: [60, 150, 250], desc: ['받는 피해 -2', '받는 피해 -4', '받는 피해 -6'], mats: [null, null, [['뼈 조각', 5]]] },
   { key: 'boots', names: ['바람 부츠', '폭풍 부츠', '천둥 부츠'], prices: [100, 220, 280], desc: ['이동속도 +12%', '이동속도 +25%', '이동속도 +40%'], mats: [null, null, [['거미줄', 4]]] },
 ];
+// ---------- 스킬 트리 (레벨업으로 포인트 획득, 3계열 6노드, 각 1P) ----------
+const SKILLS = [
+  { id: 'crush', branch: '강풍', name: '파쇄', desc: '강공격이 가드를 부수고 2.5초 경직 · 가드 적에게 피해 +30%', req: null },
+  { id: 'smash', branch: '강풍', name: '분쇄', desc: '강공격 피해 3.0배 · 범위 +40%', req: 'crush' },
+  { id: 'haste', branch: '질풍', name: '잔상', desc: '회피 쿨다운 2.5 → 1.6초', req: null },
+  { id: 'blade', branch: '질풍', name: '칼바람', desc: '회피 후 3초 안에 다음 공격 피해 +60%', req: 'haste' },
+  { id: 'whirl', branch: '선풍', name: '회전베기', desc: '주위 모든 적에게 1.4배 피해 (F키 / 쿨 8초)', req: null },
+  { id: 'storm', branch: '선풍', name: '폭풍', desc: '회전베기 피해 2.0배 · 쿨 6초', req: 'whirl' },
+];
+const hasSkill = (id) => !!state.skills[id];
 const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4, skel: true, label: '스켈레톤', windup: 0.45, gold: 5, teleH: 1.9 };
 const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2, skel: true, warrior: true, label: '스켈레톤 전사', windup: 0.55, combo: true, gold: 12, teleH: 2.1 };
-const BOSS = { hp: 150, dmg: 12, speed: 2.6, aggro: 15, range: 2.2, cd: 1.5, skel: true, warrior: true, boss: true, label: '묘지의 왕', windup: 0.65, combo: true, gold: 60, teleH: 3.4 };
+const BOSS = { hp: 150, dmg: 12, speed: 2.6, aggro: 15, range: 2.2, cd: 1.5, skel: true, warrior: true, boss: true, label: '묘지의 왕', windup: 0.65, combo: true, gold: 60, teleH: 3.4, guard: true };
 const PLAYER = { dmg: 10, range: 2.4, arc: Math.PI * 0.6 };
 const FROG = { hp: 15, dmg: 3, speed: 2.0, aggro: 9, range: 1.4, cd: 1.6, label: '개구리', windup: 0.5, leap: 2.8, gold: 4, teleH: 1.1 };
 const RAT = { hp: 10, dmg: 2, speed: 3.2, aggro: 8, range: 1.2, cd: 1.1, label: '쥐', windup: 0.28, gold: 3, teleH: 0.7 };
@@ -381,7 +398,7 @@ const FSKEL = { ...ENEMY, hp: 32, dmg: 7, speed: 2.2, gold: 10, label: '서리 �
 // 황금 쥐: 희귀 출현, 플레이어에게서 도망, 60초 한정
 const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, tintMix: 0.85, emis: 0x7a5c00, flee: true, noElite: true };
 // Batch AA — 버려진 망루의 수호대장: 1회성 미니보스 (부활·엘리트 승격 없음)
-const CAPTAIN = { ...WARRIOR, hp: 90, dmg: 11, speed: 2.7, aggro: 12, range: 2.0, cd: 1.3, windup: 0.6, gold: 45, label: '망루 수호대장', teleH: 2.6, tint: 0x8fa3c8, tintMix: 0.5, emis: 0x0d1420, noElite: true, noRespawn: true, watch: true };
+const CAPTAIN = { ...WARRIOR, hp: 90, dmg: 11, speed: 2.7, aggro: 12, range: 2.0, cd: 1.3, windup: 0.6, gold: 45, label: '망루 수호대장', teleH: 2.6, tint: 0x8fa3c8, tintMix: 0.5, emis: 0x0d1420, noElite: true, noRespawn: true, watch: true, guard: true };
 
 // ---------- 토스트 (짧은 알림) ----------
 let toastTimer = 0;
@@ -416,11 +433,12 @@ function updateBossPlate() {
   if (!t || state.dead) { bossPlate.style.display = 'none'; return; }
   // 좁은 화면(모바일)에서는 오른쪽 공격/회피 버튼 열과 겹치지 않도록 위로 올리고 폭을 줄임
   const narrow = window.innerWidth < 560;
-  bossPlate.style.bottom = narrow ? '160px' : '96px';
+  bossPlate.style.bottom = narrow ? '160px' : '150px'; // 하단 대화 프롬프트(40px~)와 겹치지 않도록 올림
   bossPlate.style.maxWidth = narrow ? '200px' : '72vw';
   bossPlate.style.minWidth = narrow ? '160px' : '220px';
   bossPlate.style.display = 'block';
-  document.getElementById('bp-name').textContent = t.stats.label;
+  const stag = t.staggerUntil && clock.elapsedTime < t.staggerUntil;
+  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '');
   document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
 }
 
@@ -575,8 +593,9 @@ function tryDodge() {
   state.heading = Math.atan2(state.dodgeDir.x, state.dodgeDir.z);
   state.player.rotation.y = state.heading;
   state.dodgeUntil = now + 0.45;
-  state.dodgeCdUntil = now + 2.5;
+  state.dodgeCdUntil = now + (hasSkill('haste') ? 1.6 : 2.5);
   state.invUntil = now + 0.55;
+  if (hasSkill('blade')) state.bladeUntil = now + 3; // 칼바람: 회피 후 다음 타격 강화
   state.dodgeFrom = state.player.position.clone();
   state.dodgeStart = now;
   state.dodgeCount++;
@@ -984,6 +1003,13 @@ async function build() {
     setMapFrags(n) { state.mapFrags = n; if (n >= 3 && !state.treasureDone) spawnTreasure(); },
     spawnGolden(x, z) { if (!state.protos || !state.protos.Rat) return false; if (!state.golden) state.golden = { nextAt: 0, active: null, until: 0 }; const e = state.spawn(state.protos.Rat, GOLDEN, x, z); e.home.set(x, 0, z); state.golden.active = e; state.golden.until = clock.elapsedTime + 60; return true; },
     setDialog(v) { state.dialog = !!v; },
+    givePts(n) { state.skillPts = (state.skillPts || 0) + n; },
+    questInfo() { return { ...state.quest, progress: questProgress() }; },
+    probeAt(i) { const x = state.enemies[i]; return x ? { label: x.stats.label, hp: x.hp, guard: !!x.stats.guard, staggered: !!(x.staggerUntil && clock.elapsedTime < x.staggerUntil), dead: x.dead } : null; },
+    listEnemies() { return state.enemies.map((e, i) => ({ i, label: e.stats.label, hp: e.hp, guard: !!e.stats.guard, dead: e.dead, x: +e.root.position.x.toFixed(1), z: +e.root.position.z.toFixed(1) })); },
+    learnAll() { for (const s of SKILLS) state.skills[s.id] = true; updateWhirlBtn(); },
+    skillInfo() { return { pts: state.skillPts || 0, skills: { ...state.skills }, whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2) }; },
+    enemyProbe() { let e = null, bd = 1e9; for (const x of state.enemies) { if (x.dead) continue; const d = x.root.position.distanceTo(state.player.position); if (d < bd) { bd = d; e = x; } } return e ? { label: e.stats.label, hp: e.hp, maxHp: e.stats.hp, guard: !!e.stats.guard, staggered: !!(e.staggerUntil && clock.elapsedTime < e.staggerUntil), dist: +bd.toFixed(2) } : null; },
     fadeDebug(cx, cz, r) { let f = 0, n = 0; for (const t of treeFades) { if (cx !== undefined && Math.hypot(t.x - cx, t.z - cz) > r) continue; n++; if (t.op < 0.5) f++; } return { faded: f, total: n }; },
     playerOpacity() { return +playerFade.op.toFixed(2); },
     camDist() { return +camera.position.distanceTo(state.player.position).toFixed(2); },
@@ -1055,10 +1081,11 @@ function gainXp(n) {
   while (state.xp >= xpNeed(state.level || 1)) {
     state.xp -= xpNeed(state.level || 1);
     state.level = (state.level || 1) + 1;
+    state.skillPts = (state.skillPts || 0) + 1;
     applyProgression();
     state.hp = state.maxHp; // 레벨 업 시 완전 회복
     sfx('reward', 1);
-    toast(`레벨 업! Lv ${state.level} — 최대 체력이 늘었습니다`);
+    toast(`레벨 업! Lv ${state.level} — 체력 회복 · 스킬 포인트 +1 (K 또는 스킬 버튼)`);
   }
 }
 
@@ -1260,6 +1287,53 @@ function toggleInv() {
   if (state.dialog) return; // 다른 대화·상점이 열려 있으면 열지 않음
   openInv();
 }
+// ---------- 스킬 트리 (K 키 / 스킬 버튼) ----------
+function openSkillTree() {
+  if (!state.ready || state.dead) return;
+  state.dialog = true;
+  sfx('dialog', 0.5);
+  document.getElementById('dlg-name').textContent = '스킬 트리';
+  const list = document.getElementById('dlg-list');
+  const btns = document.getElementById('dlg-btns');
+  const renderTree = () => {
+    document.getElementById('dlg-text').innerHTML = `보유 스킬 포인트 <b>${state.skillPts || 0}</b> · 레벨업 시 +1<br><small>강풍: 강공격 강화 · 질풍: 회피 강화 · 선풍: 회전베기(신규 기술)</small>`;
+    list.innerHTML = SKILLS.map((s) => {
+      const owned = hasSkill(s.id);
+      const locked = s.req && !hasSkill(s.req);
+      const can = !owned && !locked && (state.skillPts || 0) > 0;
+      const reqName = locked ? SKILLS.find((x) => x.id === s.req).name : '';
+      return `<div class="shoprow"><div class="info">${owned ? '<b style="color:#8fd68f">[습득]</b> ' : locked ? '<small>[잠김] </small>' : ''}<b>${s.branch} · ${s.name}</b><br><small>${s.desc}${locked ? ` (선행: ${reqName})` : ''}</small></div>${!owned && !locked ? `<button data-skill="${s.id}" ${can ? '' : 'disabled'}>습득 (1P)</button>` : ''}</div>`;
+    }).join('');
+    list.querySelectorAll('button[data-skill]').forEach((b) => b.addEventListener('click', () => {
+      const s = SKILLS.find((x) => x.id === b.dataset.skill);
+      if (!s || hasSkill(s.id) || (state.skillPts || 0) < 1 || (s.req && !hasSkill(s.req))) return;
+      state.skillPts--; state.skills[s.id] = true;
+      sfx('reward', 1);
+      toast(s.id === 'whirl' ? '회전베기 해금! F키 또는 회전베기 버튼' : `스킬 습득: ${s.name}`);
+      saveGame(); updateWhirlBtn(); renderTree();
+    }));
+  };
+  btns.innerHTML = '';
+  const close = document.createElement('button');
+  close.textContent = '닫기';
+  close.className = 'sub';
+  close.addEventListener('click', closeDialog);
+  btns.appendChild(close);
+  renderTree();
+  dlgEl().style.display = 'block';
+  document.getElementById('dlgback').style.display = 'block';
+}
+function toggleSkillTree() {
+  const open = dlgEl().style.display !== 'none' && document.getElementById('dlg-name').textContent === '스킬 트리';
+  if (open) { closeDialog(); return; }
+  if (state.dialog) return;
+  openSkillTree();
+}
+function updateWhirlBtn() {
+  const b = document.getElementById('whirl');
+  if (b) b.style.display = hasSkill('whirl') ? 'flex' : 'none';
+}
+
 // ---------- 미니맵 (M 키로 켜기/끄기, 탭하면 크기 전환) ----------
 const mmap = document.getElementById('minimap');
 const mctx = mmap.getContext('2d');
@@ -1409,7 +1483,7 @@ function saveGame() {
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
-      bounty: state.bounty, tracked: state.tracked || 'auto', chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
     }));
   } catch (e) { console.warn('save fail', e); }
@@ -1442,6 +1516,9 @@ function loadGame() {
     state.xp = s.xp || 0;
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.tracked = s.tracked || 'auto';
+    state.skills = s.skills || {};
+    state.skillPts = s.skillPts || 0;
+    updateWhirlBtn();
     state.chestsOpened = s.chestsOpened || [];
     state.shrinesPrayed = s.shrinesPrayed || [];
     state.trialDone = s.trialDone || 0;
@@ -1928,7 +2005,7 @@ const TRIAL_POS = { x: -26, z: 6 };
 const TRIAL_WAVES = [
   { mobs: [[ENEMY, 3]], label: '스켈레톤 3마리' },
   { mobs: [[ENEMY, 2], [FSKEL, 2]], label: '스켈레톤 2 + 서리 스켈레톤 2' },
-  { mobs: [[{ ...ENEMY, hp: 60, dmg: 10, gold: 20, label: '시련 수호자', tint: 0xd4a017, emis: 0x2a1f00 }, 1]], label: '시련 수호자' },
+  { mobs: [[{ ...ENEMY, hp: 60, dmg: 10, gold: 20, label: '시련 수호자', tint: 0xd4a017, emis: 0x2a1f00, guard: true }, 1]], label: '시련 수호자' },
 ];
 function buildTrialStone() {
   const root = new THREE.Group();
@@ -1984,6 +2061,7 @@ function nextTrialWave() {
     for (let k = 0; k < n; k++) {
       const a = (i / 6) * Math.PI * 2;
       const e = state.spawnTrial(stats, TRIAL_POS.x + Math.cos(a) * 7, TRIAL_POS.z + Math.sin(a) * 7);
+      if (stats.guard && !e.nameSprite) { e.nameSprite = makeNameSprite(stats.label); e.nameSprite.position.y = 2.9; e.root.add(e.nameSprite); }
       t.enemies.push(e);
       i++;
     }
@@ -2349,64 +2427,118 @@ document.getElementById('tutskip').addEventListener('click', (e) => {
 });
 
 // ---------- 전투 판정 ----------
+function killEnemy(e) {
+  e.dead = true; e.mode = 'dead';
+  e.anim.playOnce('death_a', 'death');
+  sfx('death', 0.9);
+  e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
+  state.kills++;
+  state.dex[e.stats.label] = (state.dex[e.stats.label] || 0) + 1;
+  gainXp(e.stats.gold || 3);
+  if (e.stats.skel) state.skKills++;
+  if (e.stats.warrior) state.wKills++;
+  if (e.stats.boss) state.bossKills++;
+  if (e.stats.elite) state.eliteKills = (state.eliteKills || 0) + 1;
+  const g = e.stats.gold || 3;
+  state.gold += g;
+  const mat = MATS[(e.stats.label || '').replace(/^엘리트 /, '')];
+  if (mat) {
+    const dn = e.stats.boss ? 3 : e.stats.elite ? 2 : (Math.random() < 0.45 ? 1 : 0);
+    if (dn > 0) { state.mats[mat.name] = (state.mats[mat.name] || 0) + dn; toast(`재료 획득: ${mat.name}${dn > 1 ? ' ×' + dn : ''}`); }
+  }
+  if (e.stats.watch && !state.watchCleared) {
+    state.watchCleared = true;
+    state.mats['수호대장 투구'] = (state.mats['수호대장 투구'] || 0) + 2;
+    state.potions = Math.min(SHOP.potionMax, state.potions + 1);
+    sfx('reward', 1);
+    toast('망루 수호대장 격파! 수호대장 투구 ×2 · 물약 +1');
+    checkAch();
+    saveGame();
+  }
+  toast(e.stats.elite ? `엘리트 처치! +${g} 골드` : `처치! +${g} 골드`);
+  if (e.tele) e.tele.visible = false;
+  setTimeout(() => { e.root.visible = false; }, 1600);
+}
+// heavy = 강공격·회전베기 (가드 파괴 가능). 가드 중인 적은 일반 공격을 30%만 받음
+function damageEnemy(e, dmg, heavy) {
+  const now = clock.elapsedTime;
+  const staggering = e.staggerUntil && now < e.staggerUntil;
+  if (e.stats.guard && !staggering) {
+    if (!heavy) {
+      dmg = Math.max(1, Math.round(dmg * 0.3));
+      e.hp -= dmg;
+      hitFlash(e.root);
+      sfx(Math.random() < 0.5 ? 'hit1' : 'hit2', 0.5);
+      if (e.hp <= 0) killEnemy(e);
+      return;
+    }
+    e.staggerUntil = now + (hasSkill('crush') ? 2.5 : 1.2);
+    if (hasSkill('crush')) dmg = Math.round(dmg * 1.3);
+    toast(`${e.stats.label} 가드 파괴!`);
+    sfx('reward', 0.5);
+  }
+  e.hp -= dmg;
+  window.__dbgDmg = (window.__dbgDmg || 0) + 1;
+  hitFlash(e.root);
+  sfx(Math.random() < 0.5 ? 'hit1' : 'hit2', 0.9);
+  if (heavy && state.attackStrong) {
+    // 강공격 넉백
+    const push = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
+    e.root.position.addScaledVector(push, 1.4);
+    const d0 = Math.hypot(e.root.position.x, e.root.position.z);
+    if (d0 > 78) e.root.position.multiplyScalar(78 / d0);
+  }
+  if (e.hp <= 0) killEnemy(e);
+  else { e.anim.playOnce('hit_a', 'hit'); e.hitUntil = now + 0.4; }
+}
 function playerAttackHit() {
   window.__dbgHit = (window.__dbgHit || 0) + 1;
   const p = state.player.position;
   const fwd = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
+  const strong = state.attackStrong;
+  const mult = strong ? (hasSkill('smash') ? 3.0 : 2.2) : 1;
+  const range = strong && hasSkill('smash') ? PLAYER.range * 1.4 : PLAYER.range;
+  const now = clock.elapsedTime;
+  let bladeUsed = false;
   for (const e of state.enemies) {
     if (e.dead) continue;
     const to = e.root.position.clone().sub(p);
     const d = to.length();
-    if (d > PLAYER.range) continue;
+    if (d > range) continue;
     if (fwd.angleTo(to.normalize()) > PLAYER.arc / 2) continue;
-    const dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * (state.attackStrong ? 2.2 : 1));
-    e.hp -= dmg;
-    window.__dbgDmg = (window.__dbgDmg || 0) + 1;
-    hitFlash(e.root);
-    sfx(Math.random() < 0.5 ? 'hit1' : 'hit2', 0.9);
-    if (state.attackStrong) {
-      // 강공격 넉백
-      const push = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
-      e.root.position.addScaledVector(push, 1.4);
-      const d0 = Math.hypot(e.root.position.x, e.root.position.z);
-      if (d0 > 78) e.root.position.multiplyScalar(78 / d0);
-    }
-    if (e.hp <= 0) {
-      e.dead = true; e.mode = 'dead';
-      e.anim.playOnce('death_a', 'death');
-      sfx('death', 0.9);
-      e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
-      state.kills++;
-      state.dex[e.stats.label] = (state.dex[e.stats.label] || 0) + 1;
-      gainXp(e.stats.gold || 3);
-      if (e.stats.skel) state.skKills++;
-      if (e.stats.warrior) state.wKills++;
-      if (e.stats.boss) state.bossKills++;
-      if (e.stats.elite) state.eliteKills = (state.eliteKills || 0) + 1;
-      const g = e.stats.gold || 3;
-      state.gold += g;
-      const mat = MATS[(e.stats.label || '').replace(/^엘리트 /, '')];
-      if (mat) {
-        const dn = e.stats.boss ? 3 : e.stats.elite ? 2 : (Math.random() < 0.45 ? 1 : 0);
-        if (dn > 0) { state.mats[mat.name] = (state.mats[mat.name] || 0) + dn; toast(`재료 획득: ${mat.name}${dn > 1 ? ' ×' + dn : ''}`); }
-      }
-      if (e.stats.watch && !state.watchCleared) {
-        state.watchCleared = true;
-        state.mats['수호대장 투구'] = (state.mats['수호대장 투구'] || 0) + 2;
-        state.potions = Math.min(SHOP.potionMax, state.potions + 1);
-        sfx('reward', 1);
-        toast('망루 수호대장 격파! 수호대장 투구 ×2 · 물약 +1');
-        checkAch();
-        saveGame();
-      }
-      toast(e.stats.elite ? `엘리트 처치! +${g} 골드` : `처치! +${g} 골드`);
-      if (e.tele) e.tele.visible = false;
-      setTimeout(() => { e.root.visible = false; }, 1600);
-    } else {
-      e.anim.playOnce('hit_a', 'hit');
-      e.hitUntil = clock.elapsedTime + 0.4;
-    }
+    let dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * mult);
+    if (!bladeUsed && state.bladeUntil && now < state.bladeUntil) { dmg = Math.round(dmg * 1.6); bladeUsed = true; state.bladeUntil = 0; } // 칼바람
+    damageEnemy(e, dmg, strong);
   }
+}
+
+// ---------- 회전베기 (선풍 스킬, F키 / 회전베기 버튼): 주위 360° 범위 공격, 가드 파괴 가능 ----------
+let whirlRing = null;
+function tryWhirl() {
+  if (!state.ready || state.dead || state.dialog) return;
+  if (!hasSkill('whirl')) { toggleSkillTree(); return; }
+  const now = clock.elapsedTime;
+  if (now < state.whirlCdUntil || now < state.dodgeUntil || now < state.attackCdUntil) return;
+  state.whirlCdUntil = now + (hasSkill('storm') ? 6 : 8);
+  state.attackUntil = now + 0.5;
+  state.attackCdUntil = now + 0.6;
+  state.attackStrong = false;
+  state.anim.playOnce('slice_diagonal');
+  sfx('swing2', 1);
+  window.__dbgWhirl = (window.__dbgWhirl || 0) + 1;
+  const dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * (hasSkill('storm') ? 2.0 : 1.4));
+  const p = state.player.position;
+  for (const e of state.enemies) {
+    if (e.dead) continue;
+    if (e.root.position.distanceTo(p) > 2.8) continue;
+    damageEnemy(e, dmg, true);
+  }
+  if (!whirlRing) whirlRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.07, 8, 40), new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent: true, opacity: 0.9 }));
+  whirlRing.position.copy(p); whirlRing.position.y = 0.9;
+  whirlRing.rotation.x = Math.PI / 2;
+  whirlRing.visible = true;
+  state.whirlFxUntil = now + 0.35;
+  updateWhirlBtn();
 }
 
 function updateEnemy(e, dt, now) {
@@ -2416,6 +2548,7 @@ function updateEnemy(e, dt, now) {
     return;
   }
   if (e.hitUntil && now < e.hitUntil) { e.anim.update(dt); return; }
+  if (e.staggerUntil && now < e.staggerUntil) { e.anim.update(dt); return; } // 가드 파괴 경직
   const p = state.player.position;
   const to = p.clone().sub(e.root.position); to.y = 0;
   const d = to.length();
@@ -2571,7 +2704,12 @@ function tick() {
         } else {
           state.heading = Math.atan2(toT.x, toT.z);
           state.player.rotation.y = state.heading;
-          if (now >= state.attackCdUntil) tryAttack();
+          if (now >= state.attackCdUntil) {
+            let near = 0;
+            for (const e2 of state.enemies) { if (!e2.dead && e2.root.position.distanceTo(state.player.position) <= 2.8) near++; }
+            if (hasSkill('whirl') && now >= state.whirlCdUntil && near >= 2) tryWhirl();
+            else tryAttack(!!(t.stats.guard && !(t.staggerUntil && now < t.staggerUntil)));
+          }
         }
         if (state.hp < state.maxHp * 0.35 && state.potions > 0) usePotion();
       }
@@ -2625,6 +2763,11 @@ function tick() {
     updateShrines(now);
     updateWatch();
     updateBossPlate();
+    if (whirlRing && whirlRing.visible) {
+      const k = 1 - Math.max(0, state.whirlFxUntil - now) / 0.35;
+      if (now < state.whirlFxUntil) { whirlRing.scale.setScalar(0.3 + k * 2.6); whirlRing.material.opacity = 0.9 * (1 - k); }
+      else whirlRing.visible = false;
+    }
     updateTrial(now);
     checkAch();
     updateWeather(dt, now);
@@ -2736,6 +2879,13 @@ function tick() {
     const potBtn = document.getElementById('pot');
     const potLabel = `물약 ${state.potions}`;
     if (potBtn.textContent !== potLabel) potBtn.textContent = potLabel;
+    const wh = document.getElementById('whirl');
+    if (wh && hasSkill('whirl')) {
+      wh.style.display = 'flex';
+      const left = state.whirlCdUntil - now;
+      const whLabel = left > 0 ? `${Math.ceil(left)}` : '회전베기';
+      if (wh.textContent !== whLabel) wh.textContent = whLabel;
+    }
   }
 
   renderer.render(scene, camera);
