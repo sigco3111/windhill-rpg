@@ -449,6 +449,7 @@ document.body.appendChild(bossPlate);
 const riposteHud = document.createElement('div');
 riposteHud.id = 'riposte-ready';
 riposteHud.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:210px;padding:5px 12px;background:rgba(20,55,43,.88);border:1px solid #70e5a0;border-radius:9px;color:#c6ffda;font:700 13px sans-serif;display:none;z-index:29;pointer-events:none;white-space:nowrap';
+riposteHud.style.fontFamily = "'Noto Sans KR', sans-serif";
 document.body.appendChild(riposteHud);
 const skillTreeStyle = document.createElement('style');
 skillTreeStyle.textContent = '#dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
