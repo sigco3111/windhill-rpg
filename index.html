@@ -143,6 +143,47 @@
       border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer;
     }
     #dlg button.sub { background: #555; }
+    /* 메뉴 (설정/기록/초기화) */
+    #menuBtn {
+      position: fixed; top: 10px; right: 86px; padding: 6px 10px; border-radius: 14px;
+      background: rgba(50,60,50,.7); color: #fff; font: 600 12px 'Noto Sans KR', sans-serif;
+      border: 1px solid rgba(255,255,255,.4); z-index: 11; cursor: pointer;
+      user-select: none; -webkit-user-select: none;
+    }
+    #menuback { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 26; display: none; }
+    #menudlg {
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+      display: none; width: min(460px, 94vw); max-height: calc(100vh - 48px); overflow-y: auto;
+      background: #12161e; border: 1px solid rgba(255,255,255,.25); border-radius: 10px;
+      padding: 12px 14px; color: #eee; font: 14px/1.6 'Noto Sans KR', sans-serif;
+      z-index: 27; scrollbar-width: thin;
+    }
+    #menudlg .mtabs {
+      display: flex; gap: 6px; margin-bottom: 8px; position: sticky; top: -12px;
+      background: #12161e; padding: 4px 0; z-index: 1;
+    }
+    #menudlg .mtabs button {
+      font: 600 13px 'Noto Sans KR', sans-serif; color: #fff; background: #2a3342;
+      border: 0; border-radius: 6px; padding: 7px 12px; cursor: pointer;
+    }
+    #menudlg .mtabs button.on { background: #3a6db5; }
+    #menudlg .mtabs button.sub { background: #555; margin-left: auto; }
+    #menudlg .mrow {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 7px 0; border-top: 1px solid rgba(255,255,255,.12); word-break: keep-all;
+    }
+    #menudlg .mrow small { color: #9fb4c8; }
+    #menudlg button.act {
+      font: 600 13px 'Noto Sans KR', sans-serif; color: #fff; background: #3a6db5;
+      border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; flex-shrink: 0;
+    }
+    #menudlg button.danger { background: #b53a3a; }
+    #menudlg button:disabled { opacity: .4; cursor: default; }
+    #menudlg input {
+      background: #0b0f16; color: #fff; border: 1px solid rgba(255,255,255,.3);
+      border-radius: 6px; padding: 7px 10px; font: 14px 'Noto Sans KR', sans-serif; width: 110px;
+    }
+    #menudlg .recgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
     /* 작은 화면: HUD 겹침·가림 방지 */
     @media (max-height: 500px) {
       .cbtn { width: 46px; height: 46px; right: 16px; font-size: 10px; }
@@ -183,11 +224,12 @@
   <div id="loading"><div class="ttl">바람 언덕의 유랑자</div><div id="loadmsg">불러오는 중…</div></div>
   <div id="hud"></div>
   <canvas id="minimap" width="150" height="150" title="미니맵 (M)"></canvas>
-  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격(길게 강공격) · Q 회피 · R 물약 · T 자동 전투 · I 가방 · M 미니맵 · F 회전베기 · K 스킬 · 드래그 시점</div>
+  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격(길게 강공격) · Q 회피 · R 물약 · T 자동 전투 · I 가방 · M 미니맵 · F 회전베기 · K 스킬 · 드래그 시점 · Esc 메뉴</div>
   <div id="hpwrap"><div id="hpfill"></div></div>
   <div id="atk">공격</div>
   <div id="snd">소리 끔</div>
   <div id="auto">자동 전투 OFF</div>
+  <div id="menuBtn">☰ 메뉴</div>
   <div id="gold"></div>
   <div id="dodge" class="cbtn">회피</div>
   <div id="pot" class="cbtn">물약 0</div>
@@ -200,6 +242,16 @@
   <div id="nav"><span class="arrow" id="navarrow">▲</span> <span id="navtext"></span></div>
   <div id="tut"><span id="tuttext"></span><span class="skip" id="tutskip">건너뛰기</span></div>
   <div id="toast"></div>
+  <div id="menuback"></div>
+  <div id="menudlg">
+    <div class="mtabs" id="menutabs">
+      <button data-tab="set" class="on">설정</button>
+      <button data-tab="rec">기록</button>
+      <button data-tab="reset">초기화</button>
+      <button id="menuclose" class="sub">닫기 ✕</button>
+    </div>
+    <div id="menubody"></div>
+  </div>
   <div id="dlgback"></div>
   <div id="dlg"><h3 id="dlg-name"></h3><div id="dlg-text"></div><div id="dlg-list"></div><div class="btns" id="dlg-btns"></div></div>
   <script type="module" src="/src/main.js"></script>
