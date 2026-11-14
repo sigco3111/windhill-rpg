@@ -1517,7 +1517,12 @@ function loadGame() {
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.tracked = s.tracked || 'auto';
     state.skills = s.skills || {};
-    state.skillPts = s.skillPts || 0;
+    // 구 세이브 소급: (레벨-1) - 이미 습득에 쓴 포인트 - 보유 포인트 만큼만 지급 (중복 지급 방지, 감액 없음)
+    const spentPts = SKILLS.filter((k) => state.skills[k.id]).length;
+    const earnedPts = Math.max(0, (s.level || 1) - 1);
+    const backfill = Math.max(0, earnedPts - spentPts - (s.skillPts || 0));
+    state.skillPts = (s.skillPts || 0) + backfill;
+    if (backfill > 0) setTimeout(() => toast(`기존 레벨 보상: 스킬 포인트 +${backfill}`), 500);
     updateWhirlBtn();
     state.chestsOpened = s.chestsOpened || [];
     state.shrinesPrayed = s.shrinesPrayed || [];
