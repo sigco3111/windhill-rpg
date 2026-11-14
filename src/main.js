@@ -377,12 +377,13 @@ const GEAR_SHOP = [
   { key: 'armor', names: ['가죽 갑옷', '철 갑옷', '뼈 갑옷'], prices: [60, 150, 250], desc: ['받는 피해 -2', '받는 피해 -4', '받는 피해 -6'], mats: [null, null, [['뼈 조각', 5]]] },
   { key: 'boots', names: ['바람 부츠', '폭풍 부츠', '천둥 부츠'], prices: [100, 220, 280], desc: ['이동속도 +12%', '이동속도 +25%', '이동속도 +40%'], mats: [null, null, [['거미줄', 4]]] },
 ];
-// ---------- 스킬 트리 (레벨업으로 포인트 획득, 3계열 6노드, 각 1P) ----------
+// ---------- 스킬 트리 (레벨업으로 포인트 획득, 3계열 7노드, 각 1P) ----------
 const SKILLS = [
   { id: 'crush', branch: '강풍', name: '파쇄', desc: '강공격이 가드를 부수고 2.5초 경직 · 가드 적에게 피해 +30%', req: null },
   { id: 'smash', branch: '강풍', name: '분쇄', desc: '강공격 피해 3.0배 · 범위 +40%', req: 'crush' },
   { id: 'haste', branch: '질풍', name: '잔상', desc: '회피 쿨다운 2.5 → 1.6초', req: null },
   { id: 'blade', branch: '질풍', name: '칼바람', desc: '회피 후 3초 안에 다음 공격 피해 +60%', req: 'haste' },
+  { id: 'riposte', branch: '질풍', name: '역풍', desc: '실제 회피 무적으로 공격을 막으면 4초 반격 준비 · 다음 근접 유효타에 체력12 회복 (회피당 1회, 가드 막힘/회전베기 제외)', req: 'blade' },
   { id: 'whirl', branch: '선풍', name: '회전베기', desc: '주위 모든 적에게 1.4배 피해 (F키 / 쿨 8초)', req: null },
   { id: 'storm', branch: '선풍', name: '폭풍', desc: '회전베기 피해 2.0배 · 쿨 6초', req: 'whirl' },
 ];
@@ -445,6 +446,13 @@ bossPlate.id = 'bossplate';
 bossPlate.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:96px;min-width:220px;max-width:72vw;padding:6px 14px;background:rgba(20,16,26,.78);border:1px solid #6b5566;border-radius:10px;color:#ffd98a;font:700 15px \'Noto Sans KR\',sans-serif;text-align:center;display:none;z-index:30;pointer-events:none';
 bossPlate.innerHTML = '<div id="bp-name"></div><div style="height:7px;background:#3a2f3f;border-radius:4px;margin-top:4px;overflow:hidden"><div id="bp-hp" style="height:100%;width:100%;background:#e05252;border-radius:4px"></div></div>';
 document.body.appendChild(bossPlate);
+const riposteHud = document.createElement('div');
+riposteHud.id = 'riposte-ready';
+riposteHud.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:210px;padding:5px 12px;background:rgba(20,55,43,.88);border:1px solid #70e5a0;border-radius:9px;color:#c6ffda;font:700 13px sans-serif;display:none;z-index:29;pointer-events:none;white-space:nowrap';
+document.body.appendChild(riposteHud);
+const skillTreeStyle = document.createElement('style');
+skillTreeStyle.textContent = '#dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
+document.head.appendChild(skillTreeStyle);
 function updateBossPlate() {
   let t = null, bd = 18;
   for (const e of state.enemies) {
@@ -452,7 +460,7 @@ function updateBossPlate() {
     const d = e.root.position.distanceTo(state.player.position);
     if (d < bd) { bd = d; t = e; }
   }
-  if (!t || state.dead) { bossPlate.style.display = 'none'; return; }
+  if (!t || state.dead || state.dialog || state.menuOpen) { bossPlate.style.display = 'none'; return; }
   // 좁은 화면(모바일)에서는 오른쪽 공격/회피 버튼 열과 겹치지 않도록 위로 올리고 폭을 줄임
   const narrow = window.innerWidth < 560;
   bossPlate.style.bottom = narrow ? '160px' : '150px'; // 하단 대화 프롬프트(40px~)와 겹치지 않도록 올림
@@ -624,6 +632,22 @@ function tryDodge() {
   state.dodgeCount++;
   state.anim.playOnce('dodge_forward', 'dodge');
   sfx('step1', 0.6);
+}
+
+// 역풍은 빈 회피가 아니라 실제 공격의 무적 방지에서만 획득한다.
+function registerDodgeBlock(now) {
+  state.dodgeBlocks = (state.dodgeBlocks || 0) + 1;
+  if (!hasSkill('riposte') || !state.dodgeCount || now < state.dodgeStart || now >= state.dodgeStart + 0.55 || state.riposteDodge === state.dodgeCount) return;
+  state.riposteDodge = state.dodgeCount;
+  state.riposteUntil = now + 4;
+  toast('역풍 준비! 4초 안에 근접 반격하면 체력12 회복');
+}
+function consumeRiposte(e, now, guardHeld, beforeHp) {
+  if (!state.riposteUntil || now >= state.riposteUntil || !hasSkill('riposte') || guardHeld || e.hp >= beforeHp) return;
+  state.riposteUntil = 0;
+  const healed = Math.min(12, state.maxHp - state.hp);
+  state.hp += healed;
+  sfx('reward', 0.6); toast(`역풍 반격! 체력 +${healed}`); saveGame();
 }
 
 // ---------- 물약 (R / 물약 버튼) ----------
@@ -1275,7 +1299,7 @@ async function build() {
     probeAt(i) { const x = state.enemies[i]; return x ? { label: x.stats.label, hp: x.hp, guard: !!x.stats.guard, staggered: !!(x.staggerUntil && clock.elapsedTime < x.staggerUntil), dead: x.dead } : null; },
     listEnemies() { return state.enemies.map((e, i) => ({ i, label: e.stats.label, hp: e.hp, guard: !!e.stats.guard, dead: e.dead, x: +e.root.position.x.toFixed(1), z: +e.root.position.z.toFixed(1) })); },
     learnAll() { for (const s of SKILLS) state.skills[s.id] = true; updateWhirlBtn(); },
-    skillInfo() { return { pts: state.skillPts || 0, skills: { ...state.skills }, whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2) }; },
+    skillInfo() { return { pts: state.skillPts || 0, skills: { ...state.skills }, whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2), riposteLeft: +Math.max(0, (state.riposteUntil || 0) - clock.elapsedTime).toFixed(2), riposteDodge: state.riposteDodge || 0 }; },
     enemyProbe() { let e = null, bd = 1e9; for (const x of state.enemies) { if (x.dead) continue; const d = x.root.position.distanceTo(state.player.position); if (d < bd) { bd = d; e = x; } } return e ? { label: e.stats.label, hp: e.hp, maxHp: e.stats.hp, guard: !!e.stats.guard, staggered: !!(e.staggerUntil && clock.elapsedTime < e.staggerUntil), dist: +bd.toFixed(2) } : null; },
     fadeDebug(cx, cz, r) { let f = 0, n = 0; for (const t of treeFades) { if (cx !== undefined && Math.hypot(t.x - cx, t.z - cz) > r) continue; n++; if (t.op < 0.5) f++; } return { faded: f, total: n }; },
     playerOpacity() { return +playerFade.op.toFixed(2); },
@@ -1689,6 +1713,7 @@ function openSkillTree() {
   if (!state.ready || state.dead) return;
   state.dialog = true;
   sfx('dialog', 0.5);
+  dlgEl().classList.add('skilltree');
   document.getElementById('dlg-name').textContent = '스킬 트리';
   const list = document.getElementById('dlg-list');
   const btns = document.getElementById('dlg-btns');
@@ -1880,6 +1905,7 @@ function openCollectorDialog() {
   document.getElementById('dlgback').style.display = 'block';
 }
 function closeDialog() {
+  dlgEl().classList.remove('skilltree');
   state.dlgFocus = null;
   state.dialog = false;
   dlgEl().style.display = 'none';
@@ -3096,7 +3122,10 @@ function playerAttackHit() {
     if (fwd.angleTo(to.normalize()) > PLAYER.arc / 2) continue;
     let dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * mult);
     if (!bladeUsed && state.bladeUntil && now < state.bladeUntil) { dmg = Math.round(dmg * 1.6); bladeUsed = true; state.bladeUntil = 0; } // 칼바람
+    const guardHeld = e.stats.guard && !(e.staggerUntil && now < e.staggerUntil) && !strong;
+    const beforeHp = e.hp;
     damageEnemy(e, dmg, strong);
+    consumeRiposte(e, now, guardHeld, beforeHp);
   }
 }
 
@@ -3158,7 +3187,7 @@ function updateWardenPulse(e, dt, now) {
     const blocked = now < state.invUntil;
     const beforeHp = state.hp;
     if (d <= 4) {
-      if (blocked) state.dodgeBlocks = (state.dodgeBlocks || 0) + 1;
+      if (blocked) registerDodgeBlock(now);
       else {
         state.hp = Math.max(0, state.hp - Math.max(1, 28 - GEAR_DEF[state.gear.armor]));
         hitFlash(state.player); sfx('hurt', 0.9);
@@ -3219,7 +3248,7 @@ function updateStormCharge(e, dt, now) {
     e.anim.play('running','run','walking','walk'); e.anim.update(dt);
     if (!e.stormHit && segmentDistance(state.player.position,prev,e.root.position)<=1.05) {
       e.stormHit=true; const blocked=now<state.invUntil, before=state.hp;
-      if(blocked) state.dodgeBlocks=(state.dodgeBlocks||0)+1;
+      if(blocked) registerDodgeBlock(now);
       else { state.hp=Math.max(0,state.hp-Math.max(1,25-GEAR_DEF[state.gear.armor])); hitFlash(state.player); sfx('hurt',0.9); if(state.hp<=0) playerDie('칼날 말벌의 돌진'); }
       e.stormResult={hit:true,blocked,damage:before-state.hp,at:now};
     }
@@ -3326,7 +3355,7 @@ function updateEnemy(e, dt, now) {
         }
         if (state.hp <= 0) playerDie(e.stats.label);
       } else if (!state.dead && now < state.invUntil && e.root.position.distanceTo(p) < e.stats.range + 0.4) {
-        state.dodgeBlocks = (state.dodgeBlocks || 0) + 1; // 무적 중 피해 방지 확인용
+        registerDodgeBlock(now); // 무적 중 피해 방지 확인용
         (window.__dbgEnemyHits = window.__dbgEnemyHits || []).push({ t: +now.toFixed(2), invU: +state.invUntil.toFixed(2), d: +e.root.position.distanceTo(p).toFixed(2), blocked: 1, dmg: 0 });
       }
     }
@@ -3339,7 +3368,7 @@ function updateEnemy(e, dt, now) {
         sfx('hurt', 0.7);
         if (state.hp <= 0) playerDie(e.stats.label);
       } else if (!state.dead && now < state.invUntil && e.root.position.distanceTo(p) < e.stats.range + 0.5) {
-        state.dodgeBlocks = (state.dodgeBlocks || 0) + 1;
+        registerDodgeBlock(now);
       }
     }
     e.anim.update(dt);
@@ -3371,6 +3400,7 @@ function updateEnemy(e, dt, now) {
 
 function playerDie(killerLabel) {
   state.dead = true;
+  state.riposteUntil = 0;
   state.anim.playOnce('death_a');
   const over = document.getElementById('over');
   over.innerHTML = `쓰러졌습니다<br><span style="font-size:14px;font-weight:400">${killerLabel ? killerLabel + '의 공격이었습니다<br>' : ''}탭하면 마을에서 다시 일어납니다</span>`;
@@ -3597,6 +3627,9 @@ function tick() {
     sun.target.position.copy(p);
     sun.target.updateMatrixWorld();
 
+    const riposteLeft = Math.max(0, (state.riposteUntil || 0) - now);
+    riposteHud.style.display = riposteLeft > 0 && !state.dead && !state.dialog && !state.menuOpen ? 'block' : 'none';
+    riposteHud.textContent = `역풍 ${Math.ceil(riposteLeft)}초 · 근접 반격 시 체력+12`;
     hpbar.style.width = `${(state.hp / state.maxHp) * 100}%`;
     hpbar.style.background = now < state.poisonUntil ? '#a05ad0' : (state.hp > 40 ? '#5ad06a' : '#e05252');
     drawMinimap();
