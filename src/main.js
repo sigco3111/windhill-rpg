@@ -1281,6 +1281,11 @@ async function build() {
 // ---------- NPC 대화 / 의뢰 ----------
 // ---------- 의뢰(퀘스트) 체인 ----------
 // 보상은 applyProgression()이 완료 idx 기준으로 재계산해 세이브 복원과 항상 일치
+const RUNES = [ // 선택형 성장: 유적 해방 후 3택1 영구 축복 (되돌릴 수 없음)
+  { id: 'blade', name: '칼바람 룬', desc: '공격력 +4' },
+  { id: 'hill', name: '언덕 룬', desc: '최대 체력 +40' },
+  { id: 'gale', name: '질주 룬', desc: '이동 속도 +8%' },
+];
 const QUESTS = [
   { name: '스켈레톤 처치', goal: 3, counter: 'skKills', unit: '마리',
     offer: '유랑자여, 잘 왔네. 언덕에 스켈레톤이 들끓어 마을 사람들이 불안해하고 있네.<br>스켈레톤 <b>3마리</b>를 처치해주게. 사례는 하겠네.',
@@ -1411,6 +1416,8 @@ function applyProgression() {
   if (done >= 18) PLAYER.dmg = 42;
   if (done >= 19) state.maxHp = 370;
   if (done >= 20) PLAYER.dmg = 46;
+  if ((state.runes || []).includes('blade')) PLAYER.dmg += 4; // 칼바람 룬
+  if ((state.runes || []).includes('hill')) state.maxHp += 40; // 언덕 룬
   state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
   state.maxHp += (state.shrinesPrayed || []).length * 5; // 바람 제단 축복: 제단당 최대 체력 +5
   state.hp = Math.min(state.hp, state.maxHp);
@@ -1438,6 +1445,28 @@ function tryInteract() {
   if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); return; }
   if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); }
 }
+function offerRunes() { // 유적 해방 후 룬 3택1 선택 (선택은 되돌릴 수 없음)
+  state.dialog = true;
+  sfx('reward', 0.8);
+  document.getElementById('dlg-name').textContent = '바람의 룬';
+  document.getElementById('dlg-list').innerHTML = '';
+  document.getElementById('dlg-text').innerHTML = '유적의 감시자가 남긴 문양이 세 갈래 바람으로 갈라지네. 자네의 길에 맞는 <b>룬 하나</b>를 선택하게.<br>한번 고른 룬은 되돌릴 수 없다네.';
+  const btns = document.getElementById('dlg-btns');
+  btns.innerHTML = '';
+  for (const r of RUNES) {
+    const b = document.createElement('button');
+    b.textContent = `${r.name} — ${r.desc}`;
+    b.addEventListener('click', () => {
+      state.runes = [...(state.runes || []), r.id];
+      applyProgression(); state.hp = Math.min(state.hp, state.maxHp);
+      sfx('reward', 1); toast(`룬 획득: ${r.name} (${r.desc})`);
+      closeDialog(); saveGame();
+    });
+    btns.appendChild(b);
+  }
+  dlgEl().style.display = 'block';
+  document.getElementById('dlgback').style.display = 'block';
+}
 function openDialog() {
   state.dialog = true;
   sfx('dialog', 0.7);
@@ -1455,6 +1484,7 @@ function openDialog() {
     btns.appendChild(b);
   };
   name.textContent = '마을 장로';
+  if (!d && !(state.runes || []).length) { offerRunes(); return; } // 의뢰 19 완료 후 룬 미선택 시(구 세이브 포함) 우선 제공
   if (!d) {
     // 모든 의뢰 완료 후: 반복 의뢰 (몬스터 처치 ↔ 바람꽃 수집 번갈아 제공)
     const b = state.bounty;
@@ -1503,8 +1533,10 @@ function openDialog() {
       if (claimed === 17) { state.gold += 320; }
       if (claimed === 18) { state.gold += 360; }
       if (claimed === 19) { state.gold += 400; state.potions = Math.min(SHOP.potionMax, state.potions + 2); }
+      const runeOffer = claimed === 19;
       sfx('reward', 1);
       closeDialog(); saveGame();
+      if (runeOffer) offerRunes(); // 의뢰 19 사례 수령 직후 룬 선택
     });
   } else if (q.state === 'active') {
     text.innerHTML = `${d.progress} 현재 <b>${questProgress()} / ${d.goal}</b> ${d.unit}네.<br>조금만 더 힘내주게.`;
@@ -1608,7 +1640,7 @@ function openInv() {
   btns.innerHTML = '';
   const renderInv = () => {
     document.getElementById('dlg-text').innerHTML =
-      `레벨 <b>${state.level || 1}</b> (경험치 ${state.xp || 0}/${xpNeed(state.level || 1)}) · 공격력 <b>${PLAYER.dmg + GEAR_ATK[state.gear.sword]}</b> · 받는 피해 감소 <b>${GEAR_DEF[state.gear.armor]}</b> · 이동속도 <b>×${GEAR_SPD[state.gear.boots]}</b><br>` +
+      `레벨 <b>${state.level || 1}</b> (경험치 ${state.xp || 0}/${xpNeed(state.level || 1)}) · 공격력 <b>${PLAYER.dmg + GEAR_ATK[state.gear.sword]}</b> · 받는 피해 감소 <b>${GEAR_DEF[state.gear.armor]}</b> · 이동속도 <b>×${+(GEAR_SPD[state.gear.boots] * ((state.runes || []).includes('gale') ? 1.08 : 1)).toFixed(2)}</b> · 룬 <b>${(state.runes || []).length ? (state.runes || []).map((id) => (RUNES.find((r) => r.id === id) || {}).name).filter(Boolean).join(', ') : '없음'}</b><br>` +
       `골드 <b>${state.gold}G</b> · 물약 <b>${state.potions}/${SHOP.potionMax}</b> · 바람꽃 <b>${state.flowerCount}송이(판매 가능 ${(state.flowerCount || 0) - (state.flowersSold || 0)})</b> · 보물 상자 <b>${(state.chestsOpened || []).length}개</b> · 재료 <b>${Object.entries(state.mats || {}).filter(([, n]) => n > 0).map(([mn, c]) => `${mn}×${c}`).join(' ') || '없음'}</b>`;
     const gearOwned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? `${g.names[state.gear[g.key] - 1]}(${g.key === 'sword' ? '검' : g.key === 'armor' ? '갑옷' : '부츠'})` : null).filter(Boolean);
     list.innerHTML =
@@ -1857,6 +1889,7 @@ function saveGame() {
       heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      runes: state.runes || [],
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
       playTime: Math.floor(state.playTime || 0),
     }));
@@ -1887,6 +1920,7 @@ function loadGame() {
     state.ruinWarKills = s.ruinWarKills || 0;
     state.ruinWardenKills = s.ruinWardenKills || 0;
     state.ruinsFound = !!s.ruinsFound;
+    state.runes = s.runes || [];
     state.kingSnakeKills = s.kingSnakeKills || 0;
     state.vials = s.vials || 0;
     state.gold = s.gold || 0;
@@ -3191,7 +3225,7 @@ function tick() {
     if (m > 1) { ix /= m; iz /= m; }
 
     const running = keys.has('ShiftLeft') || keys.has('ShiftRight') || (stick.active && m > 0.92);
-    let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) * GEAR_SPD[state.gear.boots] : 0;
+    let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) * GEAR_SPD[state.gear.boots] * ((state.runes || []).includes('gale') ? 1.08 : 1) : 0; // 질주 룬 +8%
     // 회피 구르기 중: 구르기 방향으로 빠르게 이동, 다른 조작/공격 불가
     if (!state.dead && state.dodgeFrom && now < state.dodgeUntil + 0.5) {
       // 시간 기반 보간: 프레임률과 무관하게 0.45초 동안 정확히 4m 이동 (저FPS에서 회피 거리 축소 방지)
@@ -3382,6 +3416,7 @@ function tick() {
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
+    runes: [...(state.runes || [])],
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
     golden: state.golden ? { active: !!state.golden.active, mode: state.golden.active ? state.golden.active.mode : null, pos: state.golden.active ? state.golden.active.root.position.toArray().map((v) => +v.toFixed(1)) : null, until: +state.golden.until.toFixed(1) } : null,
