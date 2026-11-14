@@ -405,8 +405,8 @@ const VSNAKE = { ...SNAKE, hp: 48, dmg: 8, speed: 3.5, cd: 1.3, gold: 15, label:
 const WASP = { hp: 40, dmg: 7, speed: 3.2, aggro: 13, range: 1.6, cd: 1.4, label: '말벌', windup: 0.4, gold: 11, teleH: 1.2, wasp: true, tint: 0xe8c83a, tintMix: 0.4 };
 const QWASP = { ...WASP, hp: 120, dmg: 12, speed: 2.8, aggro: 14, range: 2.0, cd: 1.2, windup: 0.55, gold: 80, label: '여왕벌', queenWasp: true, guard: true, noElite: true, noRespawn: true, tint: 0xc8752a, tintMix: 0.5, emis: 0x241203 };
 // 독 늪지대 계열: 늪독사·늪 거미 — 남서 독 늪지대 (-28, 48) 서식. 독사 퀘스트 카운터와 분리(snake 플래그 없음), 물기에 중독
-const BGSNAKE = { ...SNAKE, hp: 55, dmg: 9, speed: 3.2, cd: 1.3, gold: 14, label: '늪독사', snake: false, kingSnake: false, tint: 0x3f6a2a, emis: 0x0a180a };
-const BGSPIDER = { ...SPIDER, hp: 40, dmg: 8, speed: 2.8, cd: 1.3, gold: 12, label: '늪 거미', poison: true, tint: 0x4a5d6a, emis: 0x0a1218 };
+const BGSNAKE = { ...SNAKE, hp: 55, dmg: 9, speed: 3.2, cd: 1.3, gold: 14, label: '늪독사', snake: false, kingSnake: false, bogSnake: true, tint: 0x3f6a2a, emis: 0x0a180a };
+const BGSPIDER = { ...SPIDER, hp: 40, dmg: 8, speed: 2.8, cd: 1.3, gold: 12, label: '늪 거미', poison: true, bogSpider: true, tint: 0x4a5d6a, emis: 0x0a1218 };
 // 황금 쥐: 희귀 출현, 플레이어에게서 도망, 60초 한정
 const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, tintMix: 0.85, emis: 0x7a5c00, flee: true, noElite: true };
 // Batch AA — 버려진 망루의 수호대장: 1회성 미니보스 (부활·엘리트 승격 없음)
@@ -1261,6 +1261,14 @@ const QUESTS = [
     offer: '벌집 숲 한가운데 무리를 이끄는 <b>여왕벌</b>이 있네. 그녀석이 있는 한 말벌은 계속 불어날 걸세.<br><b>여왕벌</b>을 처치해주게. 덩치가 크니 물약을 넉넉히 챙기게나.',
     progress: '벌집 숲의 여왕벌을 부탁했었지.',
     done: '여왕벌까지 쓰러뜨렸군! 자네야말로 이 언덕의 영웅일세!<br>사례일세: <b>최대 체력 220 → 260</b>과 <b>골드 150G</b>.' },
+  { name: '늪지 독니 수집', goal: 3, counter: 'bogVials', unit: '개',
+    offer: '남서쪽에 <b>독 늪지대</b>가 번지고 있네. 늪의 <b>늪독사</b>에게서 나오는 <b>늪지 독니</b>는 지독한 독을 품고 있어, 약재상이 위험하다며 회수를 부탁해왔네.<br>늪지 독니 <b>3개</b>를 모아다 주게. 수집가에게 팔면 다시 모아야 하니 유의하게.',
+    progress: '독 늪지대의 늪지 독니를 부탁했었지.',
+    done: '이 독기 어린 독니들, 내가 안전하게 봉인해두겠네.<br>사례일세: <b>골드 130G</b>와 <b>체력 물약 2개</b>.' },
+  { name: '늪 거미 토벌', goal: 3, counter: 'bogSpiderKills', unit: '마리',
+    offer: '독 늪지대의 <b>늪 거미</b>들이 독 웅덩이를 지키며 영역을 넓히고 있네. 더 번지기 전에 줄여야 하네.<br>늪 거미 <b>3마리</b>를 처치해주게. 물리면 독에 중독되니 물약을 챙기게나.',
+    progress: '독 늪지대의 늪 거미를 부탁했었지.',
+    done: '늪 거미까지 정리했군! 늪이 한결 안전해졌어.<br>사례일세: <b>최대 체력 260 → 290</b>과 <b>골드 170G</b>.' },
 ];
 function variantKillCount() {
   return Object.entries(state.dex || {}).filter(([k]) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => k === l || k === '엘리트 ' + l)).reduce((s, [, n]) => s + n, 0);
@@ -1279,6 +1287,8 @@ function questCounter(q) {
   if (d.counter === 'waspKills') return state.waspKills || 0;
   if (d.counter === 'queenWaspKills') return state.queenWaspKills || 0;
   if (d.counter === 'vials') return state.mats['독니'] || 0; // 실제 보유 수량 기준: 판매·소비 시 진행도도 줄어듦
+  if (d.counter === 'bogVials') return state.mats['늪지 독니'] || 0; // 독니 수집과 같은 보유량 기준
+  if (d.counter === 'bogSpiderKills') return state.bogSpiderKills || 0;
   return 0;
 }
 function applyProgression() {
@@ -1293,6 +1303,7 @@ function applyProgression() {
   if (done >= 8) state.maxHp = 220;
   if (done >= 9) PLAYER.dmg = 26;
   if (done >= 10) state.maxHp = 260;
+  if (done >= 13) state.maxHp = 290;
   state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
   state.maxHp += (state.shrinesPrayed || []).length * 5; // 바람 제단 축복: 제단당 최대 체력 +5
   state.hp = Math.min(state.hp, state.maxHp);
@@ -1375,6 +1386,8 @@ function openDialog() {
       if (claimed === 7) { state.gold += 120; }
       if (claimed === 8) { state.gold += 100; state.potions = Math.min(SHOP.potionMax, state.potions + 2); state.mats['독니'] = Math.max(0, (state.mats['독니'] || 0) - 3); } // 독니 3개 납품
       if (claimed === 10) { state.gold += 150; }
+      if (claimed === 11) { state.gold += 130; state.potions = Math.min(SHOP.potionMax, state.potions + 2); state.mats['늪지 독니'] = Math.max(0, (state.mats['늪지 독니'] || 0) - 3); } // 늪지 독니 3개 납품
+      if (claimed === 12) { state.gold += 170; }
       sfx('reward', 1);
       closeDialog(); saveGame();
     });
@@ -1714,7 +1727,7 @@ function saveGame() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
-      heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0,
+      heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
@@ -1738,6 +1751,7 @@ function loadGame() {
     state.tutDone = !!s.tutDone;
     state.snakeKills = s.snakeKills || 0;
     state.waspKills = s.waspKills || 0; state.queenWaspKills = s.queenWaspKills || 0;
+    state.bogSpiderKills = s.bogSpiderKills || 0;
     state.kingSnakeKills = s.kingSnakeKills || 0;
     state.vials = s.vials || 0;
     state.gold = s.gold || 0;
@@ -2601,6 +2615,8 @@ function questTargetInner() {
   else if (d.counter === 'kingSnakeKills') pos = nearestEnemyPos((e) => e.stats.kingSnake);
   else if (d.counter === 'waspKills') pos = nearestEnemyPos((e) => e.stats.wasp && !e.stats.queenWasp);
   else if (d.counter === 'queenWaspKills') pos = nearestEnemyPos((e) => e.stats.queenWasp);
+  else if (d.counter === 'bogVials') pos = nearestEnemyPos((e) => e.stats.bogSnake);
+  else if (d.counter === 'bogSpiderKills') pos = nearestEnemyPos((e) => e.stats.bogSpider);
   if (!pos) return null;
   return { x: pos.x, z: pos.z, label: d.name };
 }
@@ -2704,6 +2720,7 @@ function killEnemy(e) {
   if (e.stats.kingSnake) state.kingSnakeKills = (state.kingSnakeKills || 0) + 1;
   if (e.stats.wasp) state.waspKills = (state.waspKills || 0) + 1;
   if (e.stats.queenWasp) state.queenWaspKills = (state.queenWaspKills || 0) + 1;
+  if (e.stats.bogSpider) state.bogSpiderKills = (state.bogSpiderKills || 0) + 1;
   if (e.stats.boss) state.bossKills++;
   if (e.stats.elite) state.eliteKills = (state.eliteKills || 0) + 1;
   const g = e.stats.gold || 3;
@@ -3186,7 +3203,7 @@ function tick() {
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0, order: state.order, orderDone: state.orderDone || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
-    snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0,
+    snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
