@@ -258,6 +258,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyI') toggleInv();
   if (e.code === 'KeyM') toggleMinimap();
   if (e.code === 'KeyN') cycleTrack();
+  if (e.code === 'KeyL' && !state.menuOpen && !state.dialog) openCampaignJournal();
   if (e.code === 'KeyJ' && !state.menuOpen && !state.dialog) openJourneyJournal();
   if (e.code === 'KeyF') tryWhirl();
   if (e.code === 'KeyK') toggleSkillTree();
@@ -702,10 +703,12 @@ function renderMenu() {
     menuBody.innerHTML = `
       <div class="mrow"><div>소리 <small>${audio.muted ? '꺼짐' : '켜짐'}</small></div><button class="act" id="m-snd">${audio.muted ? '소리 켜기' : '소리 끄기'}</button></div>
       <div class="mrow"><div>자동 전투 <small>${state.autoOn ? 'ON' : 'OFF'}</small></div><button class="act" id="m-auto">${state.autoOn ? '끄기' : '켜기'}</button></div>
+      <div class="mrow"><div>모험 일지 <small>장별 진행 · L키</small></div><button class="act" id="m-campaign">열기</button></div>
       <div class="mrow"><div>여행 수첩 <small>끊어진 순례길 · J키</small></div><button class="act" id="m-journey">열기</button></div>
       <div class="mrow"><div>튜토리얼 <small>${state.tutDone ? '완료' : '진행 중'}</small></div><button class="act" id="m-tut">다시 보기</button></div>`;
     menuBody.querySelector('#m-snd').onclick = () => { initAudio(); audio.muted = !audio.muted; if (audio.master) audio.master.gain.value = audio.muted ? 0 : 0.8; syncSndBtn(); renderMenu(); };
     menuBody.querySelector('#m-auto').onclick = () => { toggleAuto(); renderMenu(); };
+    menuBody.querySelector('#m-campaign').onclick = () => { closeMenu(); openCampaignJournal(); };
     menuBody.querySelector('#m-journey').onclick = () => { closeMenu(); openJourneyJournal(); };
     menuBody.querySelector('#m-tut').onclick = () => { state.tutDone = false; toast('도움말이 다시 표시됩니다'); renderMenu(); };
   } else if (menuTab === 'rec') {
@@ -1282,6 +1285,7 @@ async function build() {
       state.heading = Math.atan2(to.x, to.z);
       state.player.rotation.y = state.heading;
     },
+    campaignInfo,
     frogSpit() { return state.enemies.filter(e=>e.stats.rangedSpit).map(e=>({i:state.enemies.indexOf(e),dead:e.dead,hp:e.hp,pos:e.root.position.toArray(),mode:e.mode,at:e.spitAt||0,left:e.spitLeft||0,recover:e.spitRecover||0,next:e.spitNext||0,dir:e.spitDir?.toArray(),orb:e.spitOrb?.position.toArray(),visible:!!e.spitOrb?.visible,line:!!e.spitLine?.visible,result:e.spitResult||null,now:clock.elapsedTime})); },
     stormCharge() { const e=state.enemies.find(e=>e.stats.stormWasp); return e ? {dead:e.dead,hp:e.hp,guard:e.stats.guard,mode:e.mode,at:e.stormAt||0,run:e.stormRun||0,recover:e.stormRecover||0,from:e.stormFrom?.toArray(),to:e.stormTo?.toArray(),pos:e.root.position.toArray(),line:!!e.stormLine?.visible,result:e.stormResult||null,now:clock.elapsedTime} : null; },
     wardenPulse() { const e = state.enemies.find(e => e.stats.ruinWarden); return e ? { dead:e.dead, hp:e.hp, guard:e.stats.guard, mode:e.mode, at:e.pulseAt || 0, recover:e.pulseRecover || 0, center:e.pulseCenter ? [e.pulseCenter.x,e.pulseCenter.z] : null, ring:!!(e.pulseRing && e.pulseRing.visible), result:e.pulseResult || null, now:clock.elapsedTime } : null; },
@@ -1414,6 +1418,43 @@ const QUESTS = [
     progress: '잊힌 유적의 감시자를 부탁했었지.',
     done: '감시자의 저주를 풀어줬군! 수백 년의 짐을 내려놓았을 걸세. 자네는 이 언덕의 전설일세!<br>사례일세: <b>공격력 42 → 46</b>과 <b>골드 400G</b>, <b>체력 물약 2개</b>.' },
 ];
+// 기존 20개 의뢰의 진행 구조를 보여 주는 일지. 새로운 장/보상/완료 조건을 더하지 않는다.
+const CAMPAIGN_CHAPTERS = [
+  {name:'언덕의 첫걸음',from:0,to:5,guide:'기본 공격과 길게 누르는 강공격을 익히고, 서쪽 숲과 지하묘지를 오간다. 스킬 포인트는 K키에서 직접 배분한다.'},
+  {name:'갈라진 숲길',from:5,to:10,guide:'변종과 독사, 벌집 숲으로 향한다. 독 개구리의 녹색 직선 예고는 옆으로 피하고, 중독되면 R 물약으로 해독한다.'},
+  {name:'늪의 그늘',from:10,to:14,guide:'늪 가장자리에서 독 웅덩이를 피해 이동한다. 단단한 가드는 길게 누르는 강공격이나 회전베기로 부순다.'},
+  {name:'세 갈래 수배령',from:14,to:17,guide:'세 수배 대상의 대응을 구분한다. 칼날 말벌의 직선 돌진은 옆으로 비킨 뒤 푸른 반격창을 노린다.'},
+  {name:'잊힌 유적',from:17,to:20,guide:'유적의 해골과 수호자를 지나 감시자에게 향한다. 지면파의 붉은 원에서 벗어난 뒤 푸른 반격창에 접근한다.'},
+];
+function campaignInfo(){
+  const done=Math.max(0,Math.min(QUESTS.length,state.quest.idx||0));
+  const chapter=CAMPAIGN_CHAPTERS.findIndex(c=>done<c.to);
+  return{done,total:QUESTS.length,chapter,chapters:CAMPAIGN_CHAPTERS.map(c=>({name:c.name,done:Math.max(0,Math.min(c.to-c.from,done-c.from)),total:c.to-c.from,locked:done<c.from})),quest:QUESTS[done]?.name||null};
+}
+function openCampaignJournal(){
+  if(!state.ready||state.dead||state.menuOpen)return;
+  const info=campaignInfo(),qd=QUESTS[info.done],active=state.quest.state==='active';state.dlgFocus=null;
+  let html=`<b>메인 의뢰 ${info.done} / ${info.total} 완료</b><br>`;
+  if(qd){const c=CAMPAIGN_CHAPTERS[info.chapter];html+=`현재 ${info.chapter+1}장 · <b>${c.name}</b><br><br><b>${qd.name}</b> · ${active?`${Math.max(0,questProgress())} / ${qd.goal} ${qd.unit}`:'장로에게 수락'}<br>${active?(questProgress()>=qd.goal?'목표를 채웠다. 마을 장로에게 돌아가 보고하자.':`목표: ${qd.goal}${qd.unit}. 목표 추적을 켜면 현재 대상이나 보고 장소를 안내한다.`):'마을 장로와 대화해 다음 의뢰를 받자.'}<br><br>${c.guide}`;}
+  else html+='메인 의뢰 기록을 모두 마쳤다. 이것은 모든 탐험 활동이나 플레이 시간의 완료를 뜻하지 않는다. 남은 탐험과 성장 선택은 아래에서 확인할 수 있다.';
+  html+='<br><br><b>장별 기록</b>';
+  for(const[cidx,c]of CAMPAIGN_CHAPTERS.entries()){
+    const p=info.chapters[cidx];
+    if(p.locked){html+=`<div style="padding:7px 0;border-top:1px solid #445">${cidx+1}장 · 아직 펼치지 않은 기록</div>`;continue;}
+    const names=QUESTS.slice(c.from,Math.min(c.to,info.done)).map(q=>'✓ '+q.name);
+    html+=`<details style="padding:7px 0;border-top:1px solid #445"><summary>${cidx+1}장 · ${c.name} · ${p.done}/${p.total}${p.done===p.total?' 완료':''}</summary>${names.length?names.join('<br>'):'아직 완료한 의뢰가 없다.'}</details>`;
+  }
+  html+=`<br><b>성장 선택</b><br>Lv.${state.level} · 스킬 포인트 ${state.skillPts||0}P · 습득 ${SKILLS.filter(k=>state.skills[k.id]).length}/${SKILLS.length}<br>포인트가 있어도 스킬은 자동으로 배우지 않는다. 스킬 창에서 설명과 선행 조건을 확인하자.`;
+  html+='<br><br><b>선택 탐험</b> · 메인 의뢰와 별도<br>';
+  const optional=[['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
+  html+=optional.map(([k,v])=>`<div style="padding:6px 0;border-top:1px solid #445"><b>${k}</b><br>${v}</div>`).join('');
+  html+='<br><small>이 일지는 기존 의뢰와 탐험의 진행 안내다. 장 수는 새 콘텐츠 분량이나 권장 플레이 시간을 뜻하지 않는다.</small>';
+  const buttons=[];
+  if(qd)buttons.push(['메인 목표 추적',()=>{state.tracked='quest';saveGame();closeDialog();toast('메인 의뢰 목표를 추적합니다')}]);
+  buttons.push(['스킬 보기',()=>{closeDialog();openSkillTree()}],['여행 수첩',()=>{closeDialog();openJourneyJournal()}]);
+  journeyDialog('모험 일지',html,buttons);
+}
+
 function variantKillCount() {
   return Object.entries(state.dex || {}).filter(([k]) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => k === l || k === '엘리트 ' + l)).reduce((s, [, n]) => s + n, 0);
 }
