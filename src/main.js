@@ -420,6 +420,7 @@ const ROCKSP = { ...SPIDER, hp: 380, dmg: 19, speed: 2.2, aggro: 14, range: 2.0,
 // 잊힌 유적 지역 (북서 (-36,-48)): 유적 해골·유적 수호자 — 스켈레톤 프로토 재사용, 카운터 분리(skel/warrior 플래그 끔)
 const RUINSKEL = { ...ENEMY, skel: false, hp: 60, dmg: 11, speed: 2.5, aggro: 12, gold: 16, label: '유적 해골', ruinSkel: true, tint: 0xcfc4a8, tintMix: 0.55, emis: 0x2a2410 };
 const RUINWAR = { ...WARRIOR, skel: false, warrior: false, hp: 110, dmg: 15, speed: 2.7, aggro: 13, gold: 24, label: '유적 수호자', ruinWar: true, tint: 0x9aa8b8, tintMix: 0.55, emis: 0x101820 };
+const WARDEN = { ...RUINWAR, ruinWar: false, hp: 300, dmg: 19, speed: 2.9, aggro: 15, range: 2.2, cd: 1.2, windup: 0.6, gold: 180, label: '유적의 감시자', guard: true, ruinWarden: true, noElite: true, noRespawn: true, big: 1.5, teleH: 1.8, tint: 0x7a6a4a, tintMix: 0.6, emis: 0x1a1408 };
 
 // ---------- 토스트 (짧은 알림) ----------
 let toastTimer = 0;
@@ -1163,6 +1164,7 @@ async function build() {
     const rsk = state.protos['skel'];
     if (rsk) for (const [x, z] of [[-40, -45], [-33, -45], [-38, -52]]) spawn(rsk, RUINSKEL, x, z);
     if (rsk) for (const [x, z] of [[-35, -50], [-41, -49]]) { const e = spawn(rsk, RUINWAR, x, z); e.root.scale.multiplyScalar(1.18); }
+    if (rsk) spawn(rsk, WARDEN, -36, -49); // 유적 중앙 1회성 보스 (의뢰 19)
   } catch (e) { console.warn('ruins fail', e); }
 
   // 바람꽃 (수집 의뢰) — 서쪽 숲에 8송이
@@ -1356,6 +1358,10 @@ const QUESTS = [
     offer: '잊힌 유적 깊은 곳에는 옛 왕국의 무사였던 <b>유적 수호자</b>들이 아직도 망령으로 남아 자리를 지키고 있네.<br>유적 수호자 <b>2기</b>를 처치해주게. 단단하니 물약을 챙기게나.',
     progress: '잊힌 유적의 유적 수호자를 부탁했었지.',
     done: '수호자들의 망령까지 편히 보내줬군! 이제 유적은 고요히 잠들 수 있겠어.<br>사례일세: <b>최대 체력 330 → 370</b>과 <b>골드 360G</b>.' },
+  { name: '유적의 감시자', goal: 1, counter: 'ruinWardenKills', unit: '기', abs: true,
+    offer: '잊힌 유적 한가운데, 옛 왕국의 마지막 무장 <b>유적의 감시자</b>가 아직도 출입을 감시하고 있네. 그의 저주를 풀어주는 것이 유적을 진정으로 해방하는 길일세.<br><b>유적의 감시자</b>를 처치해주게. 단단한 가드를 두르고 있으니 <b>길게 눌러 강공격</b>으로 가드를 부수게나.',
+    progress: '잊힌 유적의 감시자를 부탁했었지.',
+    done: '감시자의 저주를 풀어줬군! 수백 년의 짐을 내려놓았을 걸세. 자네는 이 언덕의 전설일세!<br>사례일세: <b>공격력 42 → 46</b>과 <b>골드 400G</b>, <b>체력 물약 2개</b>.' },
 ];
 function variantKillCount() {
   return Object.entries(state.dex || {}).filter(([k]) => ['독 개구리', '그림자 쥐', '서리 스켈레톤'].some((l) => k === l || k === '엘리트 ' + l)).reduce((s, [, n]) => s + n, 0);
@@ -1382,6 +1388,7 @@ function questCounter(q) {
   if (d.counter === 'rockSpiderKills') return state.rockSpiderKills || 0;
   if (d.counter === 'ruinSkelKills') return state.ruinSkelKills || 0;
   if (d.counter === 'ruinWarKills') return state.ruinWarKills || 0;
+  if (d.counter === 'ruinWardenKills') return state.ruinWardenKills || 0;
   return 0;
 }
 function applyProgression() {
@@ -1403,6 +1410,7 @@ function applyProgression() {
   if (done >= 17) PLAYER.dmg = 38;
   if (done >= 18) PLAYER.dmg = 42;
   if (done >= 19) state.maxHp = 370;
+  if (done >= 20) PLAYER.dmg = 46;
   state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
   state.maxHp += (state.shrinesPrayed || []).length * 5; // 바람 제단 축복: 제단당 최대 체력 +5
   state.hp = Math.min(state.hp, state.maxHp);
@@ -1494,6 +1502,7 @@ function openDialog() {
       if (claimed === 16) { state.gold += 300; state.potions = Math.min(SHOP.potionMax, state.potions + 2); }
       if (claimed === 17) { state.gold += 320; }
       if (claimed === 18) { state.gold += 360; }
+      if (claimed === 19) { state.gold += 400; state.potions = Math.min(SHOP.potionMax, state.potions + 2); }
       sfx('reward', 1);
       closeDialog(); saveGame();
     });
@@ -1732,6 +1741,7 @@ const MATS = {
   '거미': { name: '거미줄', price: 5 },
   '묘지의 왕': { name: '왕의 유품', price: 40 },
   '망루 수호대장': { name: '수호대장 투구', price: 22 },
+  '유적의 감시자': { name: '감시자 문장', price: 30 },
   '독 개구리': { name: '독 주머니', price: 6 },
   '그림자 쥐': { name: '그림자 가죽', price: 5 },
   '서리 스켈레톤': { name: '서리 뼈', price: 7 },
@@ -1844,7 +1854,7 @@ function saveGame() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
-      heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinsFound: !!state.ruinsFound,
+      heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
@@ -1875,6 +1885,7 @@ function loadGame() {
     state.rockSpiderKills = s.rockSpiderKills || 0;
     state.ruinSkelKills = s.ruinSkelKills || 0;
     state.ruinWarKills = s.ruinWarKills || 0;
+    state.ruinWardenKills = s.ruinWardenKills || 0;
     state.ruinsFound = !!s.ruinsFound;
     state.kingSnakeKills = s.kingSnakeKills || 0;
     state.vials = s.vials || 0;
@@ -1929,6 +1940,7 @@ function loadGame() {
     killOnce('bloodRat', state.bloodRatKills || 0);
     killOnce('stormWasp', state.stormWaspKills || 0);
     killOnce('rockSpider', state.rockSpiderKills || 0);
+    killOnce('ruinWarden', state.ruinWardenKills || 0);
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
       if (s.quest.idx === undefined) {
@@ -2601,6 +2613,7 @@ const ACH = [
   { id: 'elite5', name: '엘리트 사냥꾼 (엘리트 5마리)', cond: () => (state.eliteKills || 0) >= 5 },
   { id: 'watch1', name: '망루 해방 (수호대장 격파)', cond: () => !!state.watchCleared },
   { id: 'named3', name: '현상금 사냥꾼 (지명 수배 3종)', cond: () => (state.bloodRatKills || 0) >= 1 && (state.stormWaspKills || 0) >= 1 && (state.rockSpiderKills || 0) >= 1 },
+  { id: 'warden', name: '유적 해방 (유적의 감시자 격파)', cond: () => (state.ruinWardenKills || 0) >= 1 },
 ];
 function checkAch() {
   let changed = false;
@@ -2768,6 +2781,7 @@ function questTargetInner() {
   else if (d.counter === 'rockSpiderKills') pos = nearestEnemyPos((e) => e.stats.rockSpider);
   else if (d.counter === 'ruinSkelKills') pos = nearestEnemyPos((e) => e.stats.ruinSkel);
   else if (d.counter === 'ruinWarKills') pos = nearestEnemyPos((e) => e.stats.ruinWar);
+  else if (d.counter === 'ruinWardenKills') pos = nearestEnemyPos((e) => e.stats.ruinWarden);
   if (!pos) return null;
   return { x: pos.x, z: pos.z, label: d.name };
 }
@@ -2883,6 +2897,7 @@ function killEnemy(e) {
   if (e.stats.rockSpider) state.rockSpiderKills = (state.rockSpiderKills || 0) + 1;
   if (e.stats.ruinSkel) state.ruinSkelKills = (state.ruinSkelKills || 0) + 1;
   if (e.stats.ruinWar) state.ruinWarKills = (state.ruinWarKills || 0) + 1;
+  if (e.stats.ruinWarden) state.ruinWardenKills = (state.ruinWardenKills || 0) + 1;
   if (e.stats.boss) state.bossKills++;
   if (e.stats.elite) state.eliteKills = (state.eliteKills || 0) + 1;
   const g = e.stats.gold || 3;
@@ -3365,7 +3380,7 @@ function tick() {
     tutDone: state.tutDone, tutStep: tut.step, markerOn: marker.visible, camDist: +camera.position.distanceTo(state.player.position).toFixed(2),
     gold: state.gold, potions: state.potions, level: state.level || 1, xp: state.xp || 0, xpNeed: xpNeed(state.level || 1), autoOn: state.autoOn, minimap: !mmap.classList.contains('off'), inv: now < state.invUntil, dodging: now < state.dodgeUntil, dodgeCount: state.dodgeCount, dodgeBlocks: state.dodgeBlocks || 0, order: state.order, orderDone: state.orderDone || 0,
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
-    snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinsFound: !!state.ruinsFound,
+    snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
