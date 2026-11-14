@@ -1281,7 +1281,7 @@ const QUESTS = [
     offer: '남동쪽 <b>벌집 숲</b>의 <b>말벌</b>들이 흉폭해져 길가는 사람들이 쏘이곤 한단다.<br>말벌 <b>5마리</b>를 처치해주게. 벌집 근처는 위험하니 조심하게나.',
     progress: '벌집 숲의 말벌을 부탁했었지.',
     done: '말벌들을 정리했군! 이제 숲길을 오갈 수 있겠어.<br>사례일세: <b>공격력 22 → 26</b>.' },
-  { name: '여왕벌 토벌', goal: 1, counter: 'queenWaspKills', unit: '마리',
+  { name: '여왕벌 토벌', goal: 1, counter: 'queenWaspKills', unit: '마리', abs: true,
     offer: '벌집 숲 한가운데 무리를 이끄는 <b>여왕벌</b>이 있네. 그녀석이 있는 한 말벌은 계속 불어날 걸세.<br><b>여왕벌</b>을 처치해주게. 덩치가 크니 물약을 넉넉히 챙기게나.',
     progress: '벌집 숲의 여왕벌을 부탁했었지.',
     done: '여왕벌까지 쓰러뜨렸군! 자네야말로 이 언덕의 영웅일세!<br>사례일세: <b>최대 체력 220 → 260</b>과 <b>골드 150G</b>.' },
@@ -1293,19 +1293,19 @@ const QUESTS = [
     offer: '독 늪지대의 <b>늪 거미</b>들이 독 웅덩이를 지키며 영역을 넓히고 있네. 더 번지기 전에 줄여야 하네.<br>늪 거미 <b>3마리</b>를 처치해주게. 물리면 독에 중독되니 물약을 챙기게나.',
     progress: '독 늪지대의 늪 거미를 부탁했었지.',
     done: '늪 거미까지 정리했군! 늪이 한결 안전해졌어.<br>사례일세: <b>최대 체력 260 → 290</b>과 <b>골드 170G</b>.' },
-  { name: '늪지 군주 토벌', goal: 1, counter: 'bogLordKills', unit: '마리',
+  { name: '늪지 군주 토벌', goal: 1, counter: 'bogLordKills', unit: '마리', abs: true,
     offer: '독 늪지대 깊은 곳, 커다란 <b>늪지 군주</b>가 독 웅덩이를 거느리고 있네. 그놀이 있는 한 늪의 독기는 사라지지 않을 걸세.<br><b>늪지 군주</b>를 처치해주게. 단단한 가드를 두르고 있으니 <b>길게 눌러 강공격</b>으로 가드를 부수게나.',
     progress: '독 늪지대의 늪지 군주를 부탁했었지.',
     done: '늪지 군주를 쓰러뜨렸군! 이제 늪의 독기도 서서히 걷힐 걸세. 자네는 진정 이 언덕의 수호자일세!<br>사례일세: <b>공격력 26 → 30</b>과 <b>골드 200G</b>.' },
-  { name: '수배: 피빛 왕쥐', goal: 1, counter: 'bloodRatKills', unit: '마리',
+  { name: '수배: 피빛 왕쥐', goal: 1, counter: 'bloodRatKills', unit: '마리', abs: true,
     offer: '서쪽 숲 외곽에 소문의 <b>피빛 왕쥐</b>가 나타났다네. 말만 한 쥐가 마을 창고를 털고 주민까지 물었다는군.<br>수배령이 내려왔으니 처치해주게. 몸놀림이 재빠르고 가드를 두르니, <b>길게 눌러 강공격</b>으로 가드를 부수게나.',
     progress: '서쪽 숲 외곽의 피빛 왕쥐를 부탁했었지.',
     done: '피빛 왕쥐를 잡았군! 이제 창고 곡식이 안전하겠어.<br>수배 사례금일세: <b>공격력 30 → 34</b>와 <b>골드 220G</b>.' },
-  { name: '수배: 칼날 말벌', goal: 1, counter: 'stormWaspKills', unit: '마리',
+  { name: '수배: 칼날 말벌', goal: 1, counter: 'stormWaspKills', unit: '마리', abs: true,
     offer: '벌집 숲에서 쫓겨난 <b>칼날 말벌</b>이 숲 북쪽 원형 빈터에 웅거하고 있네. 날갯짓이 칼날 같아 지나던 상인이 크게 다쳤다는군.<br>처치해주게. 가드를 두르면 <b>강공격</b>으로 부수게나.',
     progress: '숲 북쪽 빈터의 칼날 말벌을 부탁했었지.',
     done: '칼날 말벌까지 잡다니! 상인들이 안심하고 길을 다니겠어.<br>수배 사례금일세: <b>최대 체력 290 → 330</b>과 <b>골드 260G</b>.' },
-  { name: '수배: 바위등 거미', goal: 1, counter: 'rockSpiderKills', unit: '마리',
+  { name: '수배: 바위등 거미', goal: 1, counter: 'rockSpiderKills', unit: '마리', abs: true,
     offer: '북서 바위 벼랑에 등껍질이 바위 같은 <b>바위등 거미</b>가 자리를 잡았다네. 무엇이든 통째로 삼켜버리는 무서운 놈일세.<br>처치해주게. 단단한 가드를 두르니 <b>길게 눌러 강공격</b>으로 가드를 부수는 게 핵심일세.',
     progress: '북서 바위 벼랑의 바위등 거미를 부탁했었지.',
     done: '바위등 거미를 쓰러뜨렸군! 자네는 이제 언덕 최고의 현상금 사냥꾼일세!<br>수배 사례금일세: <b>공격력 34 → 38</b>과 <b>골드 300G</b>, <b>체력 물약 2개</b>.' },
@@ -1372,7 +1372,7 @@ function gainXp(n) {
 }
 
 const dlgEl = () => document.getElementById('dlg');
-function questProgress() { const d = QUESTS[state.quest.idx]; return d ? Math.min(questCounter(state.quest) - state.quest.startKills, d.goal) : 0; }
+function questProgress() { const d = QUESTS[state.quest.idx]; return d ? Math.min(questCounter(state.quest) - (d.abs ? 0 : state.quest.startKills), d.goal) : 0; } // abs: 1회성 보스 의뢰는 수락 전 선처치도 진행 인정
 function tryInteract() {
   if (!state.ready || state.dead || state.dialog) return;
   if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { state.dlgFocus = state.npc.pos; openDialog(); return; }
@@ -1863,6 +1863,13 @@ function loadGame() {
       const g = state.watch.guardian;
       g.dead = true; g.mode = 'dead'; g.hp = 0; g.root.visible = false; g.respawnAt = 1e12;
     }
+    // 1회성 보스(여왕벌·늪지 군주·지명 수배 3종): 처치 기록 있는 세이브면 부팅 스폰분 제거 — 리로드 재스폰·1회성 재료 중복 파밍 방지
+    const killOnce = (flag, killed) => { if (!killed) return; for (const e of state.enemies) { if (e.stats[flag] && !e.dead) { e.dead = true; e.mode = 'dead'; e.hp = 0; e.root.visible = false; if (e.tele) e.tele.visible = false; e.respawnAt = 1e12; } } };
+    killOnce('queenWasp', state.queenWaspKills || 0);
+    killOnce('bogLord', state.bogLordKills || 0);
+    killOnce('bloodRat', state.bloodRatKills || 0);
+    killOnce('stormWasp', state.stormWaspKills || 0);
+    killOnce('rockSpider', state.rockSpiderKills || 0);
     if (s.quest) {
       // 구버전(goal 보유, idx 없음) 마이그레이션: 완료→idx1, 나머지는 idx0 유지
       if (s.quest.idx === undefined) {
