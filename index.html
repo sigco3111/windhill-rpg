@@ -69,6 +69,8 @@
     #dodge { bottom: 146px; background: rgba(60,90,180,.75); }
     #pot { bottom: 214px; background: rgba(160,60,140,.75); }
     #inv { bottom: 282px; background: rgba(40,110,80,.75); cursor: pointer; }
+    #skill { bottom: 350px; background: rgba(90,60,160,.75); cursor: pointer; }
+    #whirl { right: 106px; bottom: 62px; background: rgba(30,120,140,.8); font-size: 10px; }
     #over {
       position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
       background: rgba(0,0,0,.55); color: #fff; font: 700 20px 'Noto Sans KR', sans-serif;
@@ -140,6 +142,16 @@
     }
     #dlg button.sub { background: #555; }
     /* 작은 화면: HUD 겹침·가림 방지 */
+    @media (max-height: 500px) {
+      .cbtn { width: 46px; height: 46px; right: 16px; font-size: 10px; }
+      #dodge { bottom: 104px; }
+      #pot { bottom: 158px; }
+      #inv { bottom: 212px; }
+      #skill { bottom: 266px; }
+      #atk { width: 56px; height: 56px; right: 14px; bottom: 40px; font-size: 12px; }
+      #whirl { right: 84px; bottom: 96px; width: 46px; height: 46px; font-size: 9px; }
+      #msg { display: none; }
+    }
     @media (max-width: 640px) {
       #hud { font-size: 10px; padding: 4px 6px; }
       #hpwrap { top: auto; bottom: 52px; left: 8px; transform: none; width: 130px; height: 10px; }
@@ -151,6 +163,9 @@
       #dodge { bottom: 104px; }
       #pot { bottom: 158px; }
       #inv { bottom: 212px; }
+      #skill { bottom: 266px; }
+      #whirl { right: 84px; bottom: 96px; width: 46px; height: 46px; font-size: 9px; }
+      #msg { display: none; }
       #tut { top: 112px; font-size: 11px; padding: 6px 12px; max-width: 70vw; }
       #toast { top: 96px; font-size: 12px; }
       #minimap { width: 96px; height: 96px; }
@@ -166,7 +181,7 @@
   <div id="loading"><div class="ttl">바람 언덕의 유랑자</div><div id="loadmsg">불러오는 중…</div></div>
   <div id="hud"></div>
   <canvas id="minimap" width="150" height="150" title="미니맵 (M)"></canvas>
-  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격(길게 강공격) · Q 회피 · R 물약 · T 자동 전투 · I 가방 · M 미니맵 · 드래그 시점</div>
+  <div id="msg">WASD 이동 · Shift 달리기 · Space/클릭 공격(길게 강공격) · Q 회피 · R 물약 · T 자동 전투 · I 가방 · M 미니맵 · F 회전베기 · K 스킬 · 드래그 시점</div>
   <div id="hpwrap"><div id="hpfill"></div></div>
   <div id="atk">공격</div>
   <div id="snd">소리 끔</div>
@@ -175,6 +190,8 @@
   <div id="dodge" class="cbtn">회피</div>
   <div id="pot" class="cbtn">물약 0</div>
   <div id="inv" class="cbtn">가방</div>
+  <div id="skill" class="cbtn">스킬</div>
+  <div id="whirl" class="cbtn" style="display:none">회전베기</div>
   <div id="over">쓰러졌습니다<br><span style="font-size:14px;font-weight:400">탭하면 마을에서 다시 일어납니다</span></div>
   <div id="prompt">E · 대화하기</div>
   <div id="quest"></div>
