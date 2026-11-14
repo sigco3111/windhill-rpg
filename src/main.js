@@ -397,6 +397,25 @@ function toast(msg) {
   toastTimer = setTimeout(() => { el.style.opacity = '0'; }, 1500);
 }
 
+// ---------- 보스 정보 플레이트 (이름+체력 HUD): 3D 이름표는 튜토리얼/벽에 가려질 수 있어 HUD로 보장 ----------
+const bossPlate = document.createElement('div');
+bossPlate.id = 'bossplate';
+bossPlate.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:96px;min-width:220px;max-width:72vw;padding:6px 14px;background:rgba(20,16,26,.78);border:1px solid #6b5566;border-radius:10px;color:#ffd98a;font:700 15px \'Noto Sans KR\',sans-serif;text-align:center;display:none;z-index:30;pointer-events:none';
+bossPlate.innerHTML = '<div id="bp-name"></div><div style="height:7px;background:#3a2f3f;border-radius:4px;margin-top:4px;overflow:hidden"><div id="bp-hp" style="height:100%;width:100%;background:#e05252;border-radius:4px"></div></div>';
+document.body.appendChild(bossPlate);
+function updateBossPlate() {
+  let t = null, bd = 18;
+  for (const e of state.enemies) {
+    if (e.dead || !e.nameSprite) continue;
+    const d = e.root.position.distanceTo(state.player.position);
+    if (d < bd) { bd = d; t = e; }
+  }
+  if (!t || state.dead) { bossPlate.style.display = 'none'; return; }
+  bossPlate.style.display = 'block';
+  document.getElementById('bp-name').textContent = t.stats.label;
+  document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
+}
+
 // ---------- 공격 예고 표시 (!) ----------
 let teleTex = null;
 function telegraphTexture() {
@@ -2541,6 +2560,7 @@ function tick() {
     updateRings(dt);
     updateShrines(now);
     updateWatch();
+    updateBossPlate();
     updateTrial(now);
     checkAch();
     updateWeather(dt, now);
