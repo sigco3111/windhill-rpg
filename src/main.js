@@ -354,7 +354,7 @@ const state = {
   dialog: false, tutDone: false, attacksDone: 0,
   gold: 0, potions: 0, potCdUntil: 0, invUntil: 0, dodgeUntil: 0, dodgeCdUntil: 0, dodgeCount: 0,
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
-  skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0,
+  skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0, poisonUntil: 0, poisonTickAt: 0,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
   level: 1, xp: 0,
   bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
@@ -398,6 +398,9 @@ const SPIDER = { hp: 25, dmg: 6, speed: 2.6, aggro: 10, range: 1.5, cd: 1.5, lab
 const PFROG = { ...FROG, hp: 24, dmg: 5, speed: 2.4, cd: 1.3, gold: 8, label: '독 개구리', tint: 0x6fd94f };
 const SRAT = { ...RAT, hp: 16, dmg: 4, speed: 3.8, gold: 7, label: '그림자 쥐', tint: 0x3a3a55 };
 const FSKEL = { ...ENEMY, hp: 32, dmg: 7, speed: 2.2, gold: 10, label: '서리 스켈레톤', tint: 0x55bbff, emis: 0x0a2a3a };
+// 독사 계열: 물기에 중독(6초 DoT, 초당 2, 최소 1HP) — 회피로 피하고 물약으로 해독
+const SNAKE = { hp: 30, dmg: 5, speed: 3.0, aggro: 12, range: 1.5, cd: 1.5, label: '독사', windup: 0.45, gold: 9, teleH: 1.0, poison: true, tint: 0x86c93f };
+const VSNAKE = { ...SNAKE, hp: 48, dmg: 8, speed: 3.5, cd: 1.3, gold: 15, label: '왕독사', tint: 0x6a3aa0, emis: 0x180a28 };
 // 황금 쥐: 희귀 출현, 플레이어에게서 도망, 60초 한정
 const GOLDEN = { ...RAT, hp: 30, dmg: 0, speed: 5.2, aggro: 0, range: 0, cd: 9, gold: 50, label: '황금 쥐', tint: 0xffd24a, tintMix: 0.85, emis: 0x7a5c00, flee: true, noElite: true };
 // Batch AA — 버려진 망루의 수호대장: 1회성 미니보스 (부활·엘리트 승격 없음)
@@ -617,9 +620,11 @@ function usePotion() {
   state.potCdUntil = now + 1.2;
   const healed = Math.min(60, state.maxHp - state.hp);
   state.hp += healed;
+  const cured = clock.elapsedTime < state.poisonUntil;
+  state.poisonUntil = 0; state.poisonTickAt = 0;
   state.anim.playOnce('use_item');
   sfx('reward', 0.8);
-  toast(`체력 +${healed}`);
+  toast(`체력 +${healed}${cured ? ' · 독 해독' : ''}`);
 }
 
 // ---------- 자동 전투 (T / 자동 버튼) ----------
@@ -853,6 +858,7 @@ async function build() {
     ['Rat', RAT, 0.42, [[24, 6], [8, 26], [-26, 10]]],
     ['Rat', SRAT, 0.42, [[20, -22], [-28, -4]]],
     ['Spider', SPIDER, 0.55, [[32, -14], [-30, -18]]],
+    ['Snake', SNAKE, 0.6, [[36, 18], [40, -6], [-36, -16]]],
   ];
   await Promise.all(fieldMobs.map(async ([name, stats, hMul, spots]) => {
     try {
@@ -959,6 +965,7 @@ async function build() {
       ['Frog', FROG, 0.42, [[-40, 24], [-50, 12]]],
       ['Frog', PFROG, 0.42, [[-44, 18], [-36, 30]]],
       ['Spider', SPIDER, 0.55, [[-38, 10], [-52, 26]]],
+      ['Snake_angry', VSNAKE, 0.7, [[-48, 8], [-34, 32]]],
     ];
     await Promise.all(forestMobs.map(async ([name, stats, hMul, spots]) => {
       try {
@@ -1065,6 +1072,7 @@ async function build() {
     setFlowers(n) { state.flowerCount = n; },
     setFlowersSold(n) { state.flowersSold = n; },
     setMat(name, n) { state.mats[name] = n; },
+    poisonInfo() { return { poisoned: clock.elapsedTime < state.poisonUntil, until: +state.poisonUntil.toFixed(2), hp: state.hp, potions: state.potions }; },
     setMapFrags(n) { state.mapFrags = n; if (n >= 3 && !state.treasureDone) spawnTreasure(); },
     spawnGolden(x, z) { if (!state.protos || !state.protos.Rat) return false; if (!state.golden) state.golden = { nextAt: 0, active: null, until: 0 }; const e = state.spawn(state.protos.Rat, GOLDEN, x, z); e.home.set(x, 0, z); state.golden.active = e; state.golden.until = clock.elapsedTime + 60; return true; },
     setDialog(v) { state.dialog = !!v; },
@@ -1453,6 +1461,8 @@ const MATS = {
   '독 개구리': { name: '독 주머니', price: 6 },
   '그림자 쥐': { name: '그림자 가죽', price: 5 },
   '서리 스켈레톤': { name: '서리 뼈', price: 7 },
+  '독사': { name: '독니', price: 7 },
+  '왕독사': { name: '맹독 주머니', price: 12 },
 };
 const MAT_PRICE = Object.fromEntries(Object.values(MATS).map((m) => [m.name, m.price]));
 // 수집가 특별 주문: 무작위 재료를 고급(기본가의 2.5배)에 매입. 납품하면 다음 주문 생성
@@ -2676,6 +2686,11 @@ function updateEnemy(e, dt, now) {
         (window.__dbgEnemyHits = window.__dbgEnemyHits || []).push({ t: +now.toFixed(2), invU: +state.invUntil.toFixed(2), d: +e.root.position.distanceTo(p).toFixed(2), blocked: 0, dmg: e.stats.dmg });
         hitFlash(state.player);
         sfx('hurt', 0.9);
+        if (e.stats.poison && state.hp > 0) {
+          const fresh = now >= state.poisonUntil;
+          state.poisonUntil = now + 6; state.poisonTickAt = now + 1;
+          if (fresh) toast('독에 중독되었습니다! 물약(R)으로 해독');
+        }
         if (state.hp <= 0) playerDie(e.stats.label);
       } else if (!state.dead && now < state.invUntil && e.root.position.distanceTo(p) < e.stats.range + 0.4) {
         state.dodgeBlocks = (state.dodgeBlocks || 0) + 1; // 무적 중 피해 방지 확인용
@@ -2751,6 +2766,11 @@ function tick() {
 
   if (state.ready) {
     state.playTime = (state.playTime || 0) + dt;
+    // 중독 DoT: 초당 2, 중독만으로는 쓰러지지 않음(최소 1HP)
+    if (!state.dead && now < state.poisonUntil && now >= state.poisonTickAt) {
+      state.poisonTickAt = now + 1;
+      state.hp = Math.max(1, state.hp - 2);
+    }
     let ix = 0, iz = 0;
     if (keys.has('KeyW') || keys.has('ArrowUp')) iz -= 1;
     if (keys.has('KeyS') || keys.has('ArrowDown')) iz += 1;
@@ -2943,7 +2963,7 @@ function tick() {
     sun.target.updateMatrixWorld();
 
     hpbar.style.width = `${(state.hp / state.maxHp) * 100}%`;
-    hpbar.style.background = state.hp > 40 ? '#5ad06a' : '#e05252';
+    hpbar.style.background = now < state.poisonUntil ? '#a05ad0' : (state.hp > 40 ? '#5ad06a' : '#e05252');
     drawMinimap();
     // 골드/물약 표시
     const goldEl = document.getElementById('gold');
