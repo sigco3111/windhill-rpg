@@ -368,7 +368,7 @@ const state = {
   gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
-  playTime: 0, menuOpen: false, // playTime: 누적 플레이 초 / menuOpen: 메뉴 대시보드 표시 중
+  playTime: 0, menuOpen: false, // playTime: dt상한 누적 시뮬레이션 초 (실제 경과 아님) / menuOpen: 메뉴 대시보드 표시 중
 };
 // 장비 효과표 (등급 0=없음)
 const GEAR_ATK = [0, 4, 9, 15];        // 검: 공격력 추가
@@ -715,7 +715,7 @@ function renderMenu() {
     const pt = Math.floor(state.playTime || 0);
     const hh = Math.floor(pt / 3600), mm = Math.floor((pt % 3600) / 60);
     const rows = [
-      ['플레이 시간', (hh > 0 ? hh + '시간 ' : '') + mm + '분'],
+      ['시뮬레이션 시간', (hh > 0 ? hh + '시간 ' : '') + mm + '분 · 실제 경과와 다름'],
       ['레벨 / XP', 'Lv.' + state.level + ' (' + (state.xp || 0) + ' XP)'],
       ['총 처치', state.kills + ' (전사 ' + state.wKills + ' · 엘리트 ' + state.eliteKills + ' · 보스 ' + state.bossKills + ')'],
       ['도감 발견', Object.keys(state.dex || {}).length + '종'],
@@ -3656,7 +3656,8 @@ const WALK = 3.2, RUN = 6.5;
 
 function tick() {
   requestAnimationFrame(tick);
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const frameElapsed = clock.getDelta(); // 제한 전 실제 프레임 간 경과 초
+  const dt = Math.min(frameElapsed, 0.05); // 움직임 안정화용 시뮬레이션 dt
   const now = clock.elapsedTime;
 
   if (state.ready) {
@@ -3889,11 +3890,12 @@ function tick() {
 
   renderer.render(scene, camera);
 
-  fpsAcc += dt; fpsN++; fpsTimer += dt;
+  fpsAcc += frameElapsed; fpsN++; fpsTimer += frameElapsed;
   if (fpsTimer > 0.5) {
     fps = Math.round(fpsN / fpsAcc);
+    window.__frameTiming = { frames: fpsN, elapsedSeconds: fpsAcc, fps, lastFrameMs: frameElapsed * 1000, simulationStepMs: dt * 1000 };
     fpsAcc = 0; fpsN = 0; fpsTimer = 0;
-    hud.textContent = `FPS ${fps} · 드로콜 ${renderer.info.render.calls} · 삼각형 ${(renderer.info.render.triangles / 1000).toFixed(0)}k · 처치 ${state.kills}`;
+    hud.textContent = `실제 FPS ${fps} · 드로콜 ${renderer.info.render.calls} · 삼각형 ${(renderer.info.render.triangles / 1000).toFixed(0)}k · 처치 ${state.kills}`;
     window.__fps = fps;
     window.__drawCalls = renderer.info.render.calls;
   }
