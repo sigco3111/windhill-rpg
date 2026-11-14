@@ -2346,7 +2346,9 @@ function updateDens() {
           if (!proto) continue;
           for (let k = 0; k < n; k++) {
             const a = Math.random() * Math.PI * 2;
-            d.mobs.push(state.spawn(proto, stats, d.x + Math.cos(a) * 2.5, d.z + Math.sin(a) * 2.5));
+            const mob = state.spawn(proto, stats, d.x + Math.cos(a) * 2.5, d.z + Math.sin(a) * 2.5);
+            mob.denMob = true; // 소굴은 전멸시키는 1회성 전투. 일반 필드 리스폰과 분리
+            d.mobs.push(mob);
           }
         }
         toast(`${d.name} 발견! 매복한 몬스터를 물리치세요`);
@@ -3516,7 +3518,7 @@ function updateFrogSpit(e,dt,now) {
 
 function updateEnemy(e, dt, now) {
   if (e.dead) {
-    if (!e.trial && !e.stats.noRespawn && now > e.respawnAt) respawnEnemy(e);
+    if (!e.trial && !e.denMob && !e.stats.noRespawn && now > e.respawnAt) respawnEnemy(e);
     e.anim.update(dt);
     return;
   }
