@@ -420,7 +420,7 @@ const ROCKSP = { ...SPIDER, hp: 380, dmg: 19, speed: 2.2, aggro: 14, range: 2.0,
 // 잊힌 유적 지역 (북서 (-36,-48)): 유적 해골·유적 수호자 — 스켈레톤 프로토 재사용, 카운터 분리(skel/warrior 플래그 끔)
 const RUINSKEL = { ...ENEMY, skel: false, hp: 60, dmg: 11, speed: 2.5, aggro: 12, gold: 16, label: '유적 해골', ruinSkel: true, tint: 0xcfc4a8, tintMix: 0.55, emis: 0x2a2410 };
 const RUINWAR = { ...WARRIOR, skel: false, warrior: false, hp: 110, dmg: 15, speed: 2.7, aggro: 13, gold: 24, label: '유적 수호자', ruinWar: true, tint: 0x9aa8b8, tintMix: 0.55, emis: 0x101820 };
-const WARDEN = { ...RUINWAR, ruinWar: false, hp: 300, dmg: 19, speed: 2.9, aggro: 15, range: 2.2, cd: 1.2, windup: 0.6, gold: 180, label: '유적의 감시자', guard: true, ruinWarden: true, noElite: true, noRespawn: true, big: 1.5, teleH: 1.8, tint: 0x7a6a4a, tintMix: 0.6, emis: 0x1a1408 };
+const WARDEN = { ...RUINWAR, ruinWar: false, hp: 300, dmg: 19, speed: 2.9, aggro: 15, range: 2.2, cd: 1.2, windup: 0.6, gold: 180, label: '유적의 감시자', guard: false, combo: false, ruinWarden: true, noElite: true, noRespawn: true, big: 1.5, teleH: 1.8, tint: 0x7a6a4a, tintMix: 0.6, emis: 0x1a1408 };
 
 // ---------- 토스트 (짧은 알림) ----------
 let toastTimer = 0;
@@ -459,8 +459,9 @@ function updateBossPlate() {
   bossPlate.style.maxWidth = narrow ? '200px' : '72vw';
   bossPlate.style.minWidth = narrow ? '160px' : '220px';
   bossPlate.style.display = 'block';
+  const pulse = t.stats.ruinWarden && (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '');
   const stag = t.staggerUntil && clock.elapsedTime < t.staggerUntil;
-  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '');
+  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse;
   document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
 }
 
@@ -796,7 +797,7 @@ async function build() {
     const anim = new AnimSet(root, gltf.animations);
     anim.play('walking', 'walk', 'jump', 'idle');
     const e = { root, anim, angle: Math.atan2(x, z), stats: st, home: new THREE.Vector3(x, 0, z), hp: st.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 };
-    if (st.guard && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
+    if ((st.guard || st.ruinWarden) && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
     state.enemies.push(e);
     return e;
   };
@@ -1239,6 +1240,7 @@ async function build() {
       state.heading = Math.atan2(to.x, to.z);
       state.player.rotation.y = state.heading;
     },
+    wardenPulse() { const e = state.enemies.find(e => e.stats.ruinWarden); return e ? { dead:e.dead, hp:e.hp, guard:e.stats.guard, mode:e.mode, at:e.pulseAt || 0, recover:e.pulseRecover || 0, center:e.pulseCenter ? [e.pulseCenter.x,e.pulseCenter.z] : null, ring:!!(e.pulseRing && e.pulseRing.visible), result:e.pulseResult || null, now:clock.elapsedTime } : null; },
     heal() { state.hp = state.maxHp; if (state.dead) respawn(); },
     talk() { tryInteract(); },
     addKills(n) { state.kills += n; },
@@ -1364,7 +1366,7 @@ const QUESTS = [
     progress: '잊힌 유적의 유적 수호자를 부탁했었지.',
     done: '수호자들의 망령까지 편히 보내줬군! 이제 유적은 고요히 잠들 수 있겠어.<br>사례일세: <b>최대 체력 330 → 370</b>과 <b>골드 360G</b>.' },
   { name: '유적의 감시자', goal: 1, counter: 'ruinWardenKills', unit: '기', abs: true,
-    offer: '잊힌 유적 한가운데, 옛 왕국의 마지막 무장 <b>유적의 감시자</b>가 아직도 출입을 감시하고 있네. 그의 저주를 풀어주는 것이 유적을 진정으로 해방하는 길일세.<br><b>유적의 감시자</b>를 처치해주게. 단단한 가드를 두르고 있으니 <b>길게 눌러 강공격</b>으로 가드를 부수게나.',
+    offer: '잊힌 유적 한가운데, 옛 왕국의 마지막 무장 <b>유적의 감시자</b>가 아직도 출입을 감시하고 있네. 그의 저주를 풀어주는 것이 유적을 진정으로 해방하는 길일세.<br><b>유적의 감시자</b>를 처치해주게. 붉은 원으로 <b>지면파</b>를 예고하네. <b>원 밖으로 이동하거나 회피</b>하고, 공격 후 푸른 원이 보일 때 반격하게나.',
     progress: '잊힌 유적의 감시자를 부탁했었지.',
     done: '감시자의 저주를 풀어줬군! 수백 년의 짐을 내려놓았을 걸세. 자네는 이 언덕의 전설일세!<br>사례일세: <b>공격력 42 → 46</b>과 <b>골드 400G</b>, <b>체력 물약 2개</b>.' },
 ];
@@ -2913,6 +2915,7 @@ document.getElementById('tutskip').addEventListener('click', (e) => {
 // ---------- 전투 판정 ----------
 function killEnemy(e) {
   e.dead = true; e.mode = 'dead';
+  cancelWardenPulse(e);
   e.anim.playOnce('death_a', 'death');
   sfx('death', 0.9);
   e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
@@ -2939,7 +2942,7 @@ function killEnemy(e) {
   state.gold += g;
   const mat = MATS[(e.stats.label || '').replace(/^엘리트 /, '')];
   if (mat) {
-    const dn = e.stats.boss ? 3 : e.stats.elite ? 2 : e.stats.guard ? 1 : (Math.random() < 0.45 ? 1 : 0); // 가드 미니보스는 재료 확정 드롭 (1회성이라 미드롭 시 영구 상실 방지)
+    const dn = e.stats.boss ? 3 : e.stats.elite ? 2 : (e.stats.guard || e.stats.noRespawn) ? 1 : (Math.random() < 0.45 ? 1 : 0); // 가드 미니보스는 재료 확정 드롭 (1회성이라 미드롭 시 영구 상실 방지)
     if (dn > 0) { state.mats[mat.name] = (state.mats[mat.name] || 0) + dn; toast(`재료 획득: ${mat.name}${dn > 1 ? ' ×' + dn : ''}`); if (mat.name === '독니') state.vials = (state.vials || 0) + dn; }
   }
   if (e.stats.watch && !state.watchCleared) {
@@ -3037,12 +3040,76 @@ function tryWhirl() {
   updateWhirlBtn();
 }
 
+// 감시자 고유 패턴: 고정된 붉은 원 예고 -> 지면파 -> 푸른 반격 시간.
+function cancelWardenPulse(e) {
+  e.pulseAt = 0; e.pulseRecover = 0;
+  if (e.pulseRing) e.pulseRing.visible = false;
+  if (e.pulseDisc) e.pulseDisc.visible = false;
+}
+function updateWardenPulse(e, dt, now) {
+  if (!e.stats.ruinWarden) return false;
+  if (state.dead || state.dialog) {
+    cancelWardenPulse(e); e.pulseNext = now + 2;
+    return false;
+  }
+  if (e.pulseRecover && now < e.pulseRecover) {
+    e.mode = 'recover'; e.anim.play('idle'); e.anim.update(dt);
+    return true;
+  }
+  if (e.pulseRecover) { cancelWardenPulse(e); }
+  if (e.pulseAt) {
+    e.mode = 'pulse'; e.anim.update(dt);
+    if (now < e.pulseAt) {
+      const k = Math.max(0, 1 - (e.pulseAt - now) / 1.5);
+      e.pulseDisc.scale.setScalar(Math.max(0.05, k));
+      e.pulseRing.material.opacity = 0.6 + 0.35 * Math.sin(now * 12) ** 2;
+      return true;
+    }
+    const d = Math.hypot(state.player.position.x - e.pulseCenter.x, state.player.position.z - e.pulseCenter.z);
+    const blocked = now < state.invUntil;
+    const beforeHp = state.hp;
+    if (d <= 4) {
+      if (blocked) state.dodgeBlocks = (state.dodgeBlocks || 0) + 1;
+      else {
+        state.hp = Math.max(0, state.hp - Math.max(1, 28 - GEAR_DEF[state.gear.armor]));
+        hitFlash(state.player); sfx('hurt', 0.9);
+        if (state.hp <= 0) playerDie('감시자의 지면파');
+      }
+    }
+    e.pulseResult = { inside: d <= 4, blocked, d: +d.toFixed(2), damage: beforeHp - state.hp, at: now };
+    e.mode = 'recover'; e.pulseAt = 0; e.pulseRecover = now + 1.8; e.pulseNext = now + 5.5;
+    e.pulseRing.material.color.setHex(0x5ee7ff); e.pulseRing.material.opacity = 0.9;
+    e.pulseDisc.visible = false; e.pendingHit = 0; e.combo2 = 0;
+    sfx('swing2', 0.8); toast('지면파 끝! 푸른 원이 보일 때 반격');
+    return true;
+  }
+  const dist = e.root.position.distanceTo(state.player.position);
+  if (dist < 8 && now >= (e.pulseNext || 0)) {
+    if (!e.pulseRing) {
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xff5a42, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
+      e.pulseRing = new THREE.Mesh(new THREE.RingGeometry(3.88, 4, 64), ringMat);
+      e.pulseRing.rotation.x = -Math.PI / 2; scene.add(e.pulseRing);
+      e.pulseDisc = new THREE.Mesh(new THREE.CircleGeometry(3.88, 64), new THREE.MeshBasicMaterial({color: 0xff7a43, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide}));
+      e.pulseDisc.rotation.x = -Math.PI / 2; scene.add(e.pulseDisc);
+    }
+    e.pulseCenter = e.root.position.clone(); e.pulseCenter.y = 0.08;
+    e.pulseRing.position.copy(e.pulseCenter); e.pulseDisc.position.copy(e.pulseCenter); e.pulseDisc.position.y = 0.07;
+    e.pulseRing.material.color.setHex(0xff5a42); e.pulseRing.visible = true;
+    e.pulseDisc.visible = true; e.pulseDisc.scale.setScalar(0.05);
+    e.pulseAt = now + 1.5; e.pendingHit = 0; e.combo2 = 0; e.leapFrom = null;
+    e.mode = 'pulse'; e.anim.playOnce('unarmed_melee_attack_punch', 'attack');
+    toast('감시자 지면파! 붉은 원 밖으로 회피');
+    return true;
+  }
+  return false;
+}
 function updateEnemy(e, dt, now) {
   if (e.dead) {
     if (!e.trial && !e.stats.noRespawn && now > e.respawnAt) respawnEnemy(e);
     e.anim.update(dt);
     return;
   }
+  if (updateWardenPulse(e, dt, now)) return;
   if (e.hitUntil && now < e.hitUntil) { e.anim.update(dt); return; }
   if (e.staggerUntil && now < e.staggerUntil) { e.anim.update(dt); return; } // 가드 파괴 경직
   const p = state.player.position;
