@@ -1188,7 +1188,7 @@ async function build() {
     talk() { tryInteract(); },
     addKills(n) { state.kills += n; },
     addVariantKills(label, n) { state.dex[label] = (state.dex[label] || 0) + n; },
-    setBounty(kind, active) { state.bounty.kind = kind; state.bounty.active = !!active; if (kind === 'variants') state.bounty.startVariants = variantKillCount(); if (kind === 'kills') state.bounty.startKills = state.kills; if (kind === 'flowers') state.bounty.startFlowers = state.flowerCount; if (kind === 'elite') state.bounty.startElites = state.eliteKills || 0; },
+    setBounty(kind, active) { state.bounty.kind = kind; state.bounty.active = !!active; if (kind === 'variants') state.bounty.startVariants = variantKillCount(); if (kind === 'kills') state.bounty.startKills = state.kills; if (kind === 'flowers') state.bounty.startFlowers = state.flowerCount; if (kind === 'elite') state.bounty.startElites = state.eliteKills || 0; if (kind === 'mats') { if (!state.bounty.mat) state.bounty.mat = BOUNTY_MATS[(state.bounty.count || 0) % BOUNTY_MATS.length]; state.bounty.startMats = state.mats[state.bounty.mat] || 0; } },
     setCounters(k, sk, w) { state.kills = k; state.skKills = sk; state.wKills = w; },
     save() { saveGame(); },
     teleport(x, z) { state.player.position.set(x, 0, z); },
@@ -1368,21 +1368,22 @@ function openDialog() {
     // 모든 의뢰 완료 후: 반복 의뢰 (몬스터 처치 ↔ 바람꽃 수집 번갈아 제공)
     const b = state.bounty;
     b.kind = b.kind || 'kills';
-    const BOUNTY_ROT = ['kills', 'flowers', 'variants', 'elite']; // 처치 → 수집 → 변종 → 엘리트 순환
-    const goal = b.kind === 'flowers' ? 4 : b.kind === 'variants' ? 2 : b.kind === 'elite' ? 1 : 8;
-    const prog = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : b.kind === 'variants' ? variantKillCount() - (b.startVariants || 0) : b.kind === 'elite' ? state.eliteKills - (b.startElites || 0) : state.kills - b.startKills;
-    const what = b.kind === 'flowers' ? '바람꽃 <b>4송이</b> 수집' : b.kind === 'variants' ? '변종 <b>2마리</b> 처치' : b.kind === 'elite' ? '엘리트 <b>1마리</b> 토벌' : '몬스터 <b>8마리</b> 처치';
-    const reward = 35 + Math.min(b.count * 5, 25) + (b.kind === 'variants' ? 15 : 0) + (b.kind === 'elite' ? 25 : 0); // 변종·엘리트는 위험수당
-    const acceptText = b.kind === 'flowers' ? '바람꽃 4송이 수집' : b.kind === 'variants' ? '변종 2마리 처치' : b.kind === 'elite' ? '엘리트 1마리 토벌' : '몬스터 8마리 처치';
+    const BOUNTY_ROT = ['kills', 'flowers', 'mats', 'variants', 'elite']; // 처치 → 수집 → 재료 납품 → 변종 → 엘리트 순환
+    if (b.kind === 'mats' && !b.mat) b.mat = BOUNTY_MATS[(b.count || 0) % BOUNTY_MATS.length];
+    const goal = bountyGoal(b);
+    const prog = bountyProg(b);
+    const what = b.kind === 'flowers' ? '바람꽃 <b>4송이</b> 수집' : b.kind === 'variants' ? '변종 <b>2마리</b> 처치' : b.kind === 'elite' ? '엘리트 <b>1마리</b> 토벌' : b.kind === 'mats' ? '<b>' + b.mat + ' 3개</b> 납품' : '몬스터 <b>8마리</b> 처치';
+    const reward = 35 + Math.min(b.count * 5, 25) + (b.kind === 'variants' ? 15 : 0) + (b.kind === 'elite' ? 25 : 0) + (b.kind === 'mats' ? (MAT_PRICE[b.mat] || 5) * 3 : 0); // 변종·엘리트는 위험수당, 납품은 재료값 보전
+    const acceptText = b.kind === 'flowers' ? '바람꽃 4송이 수집' : b.kind === 'variants' ? '변종 2마리 처치' : b.kind === 'elite' ? '엘리트 1마리 토벌' : b.kind === 'mats' ? b.mat + ' 3개 납품' : '몬스터 8마리 처치';
     if (b.active && prog >= goal) {
       text.innerHTML = `의뢰를 마쳤군! 목표 달성(${what})을 확인했네.<br>사례일세: <b>골드 ${reward}</b>.`;
-      mk('사례를 받는다', '', () => { state.gold += reward; b.count++; b.active = false; b.kind = BOUNTY_ROT[(BOUNTY_ROT.indexOf(b.kind) + 1) % BOUNTY_ROT.length]; sfx('reward', 1); closeDialog(); saveGame(); });
+      mk('사례를 받는다', '', () => { state.gold += reward; if (b.kind === 'mats') { state.mats[b.mat] = Math.max(0, (state.mats[b.mat] || 0) - 3); b.mat = null; } b.count++; b.active = false; b.kind = BOUNTY_ROT[(BOUNTY_ROT.indexOf(b.kind) + 1) % BOUNTY_ROT.length]; sfx('reward', 1); closeDialog(); saveGame(); });
     } else if (b.active) {
       text.innerHTML = `반복 의뢰: ${what} — 현재 <b>${prog} / ${goal}</b>.<br>조금만 더 힘내주게.`;
       mk('계속', '', closeDialog);
     } else {
       text.innerHTML = `마을의 모든 부탁을 들어주었네. 자네는 이제 이 언덕의 영웅일세.<br>바람 언덕에서 마음껏 유랑하게나.<br><br>마을에는 늘 손이 모자라니, <b>반복 의뢰</b>(${what})도 맡아주면 고맙겠네.`;
-      mk('의뢰를 받는다', '', () => { b.active = true; b.startKills = state.kills; b.startFlowers = state.flowerCount; b.startVariants = variantKillCount(); b.startElites = state.eliteKills || 0; sfx('dialog', 0.7); closeDialog(); saveGame(); toast(`반복 의뢰: ${acceptText}`); });
+      mk('의뢰를 받는다', '', () => { b.active = true; b.startKills = state.kills; b.startFlowers = state.flowerCount; b.startVariants = variantKillCount(); b.startElites = state.eliteKills || 0; if (b.kind === 'mats') b.startMats = state.mats[b.mat] || 0; sfx('dialog', 0.7); closeDialog(); saveGame(); toast(`반복 의뢰: ${acceptText}`); });
       mk('닫기', '', closeDialog);
     }
   } else if (q.state === 'none') {
@@ -1654,6 +1655,10 @@ const MATS = {
   '늪 거미': { name: '늪 거미줄', price: 8 },
 };
 const MAT_PRICE = Object.fromEntries(Object.values(MATS).map((m) => [m.name, m.price]));
+// 반복 의뢰 '재료 납품' 변형: 리스폰되는 몹의 재료만 대상 (1회성 보스 재료 제외). 목표 3개, 수령 시 납품 소비
+const BOUNTY_MATS = ['뼈 조각', '거미줄', '독니', '벌집 조각', '늪지 독니', '늪 거미줄', '맹독 주머니', '독 주머니', '그림자 가죽', '서리 뼈'];
+function bountyGoal(b) { return b.kind === 'flowers' ? 4 : b.kind === 'variants' ? 2 : b.kind === 'elite' ? 1 : b.kind === 'mats' ? 3 : 8; }
+function bountyProg(b) { return b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : b.kind === 'variants' ? variantKillCount() - (b.startVariants || 0) : b.kind === 'elite' ? state.eliteKills - (b.startElites || 0) : b.kind === 'mats' ? (state.mats[b.mat] || 0) - (b.startMats || 0) : state.kills - (b.startKills || 0); }
 // 수집가 특별 주문: 무작위 재료를 고급(기본가의 2.5배)에 매입. 납품하면 다음 주문 생성
 const ORDER_POOL = ['뼈 조각', '투구 파편', '개구리 기름', '부드러운 가죽', '거미줄', '독 주머니', '그림자 가죽', '서리 뼈'];
 function genOrder(exclude) {
@@ -2645,9 +2650,14 @@ function bountyTarget() {
   const npcPos = { x: state.npc.pos.x, z: state.npc.pos.z, label: '마을 장로' };
   const b = state.bounty;
   if (!b || !b.active) return null;
-  const goal = b.kind === 'flowers' ? 4 : b.kind === 'variants' ? 2 : b.kind === 'elite' ? 1 : 8;
-  const prog = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : b.kind === 'variants' ? variantKillCount() - (b.startVariants || 0) : b.kind === 'elite' ? state.eliteKills - (b.startElites || 0) : state.kills - b.startKills;
+  const goal = bountyGoal(b);
+  const prog = bountyProg(b);
   if (prog >= goal) return { ...npcPos, label: '장로에게 보고' };
+  if (b.kind === 'mats') {
+    const labels = Object.keys(MATS).filter((l) => MATS[l].name === b.mat);
+    const mp = nearestEnemyPos((e) => labels.some((l) => e.stats.label === l || e.stats.label === '엘리트 ' + l));
+    return mp ? { x: mp.x, z: mp.z, label: b.mat + ' 사냥' } : null;
+  }
   if (b.kind === 'elite') {
     const ep = nearestEnemyPos((e) => e.stats.elite);
     return ep ? { x: ep.x, z: ep.z, label: '엘리트 토벌' } : null;
@@ -3126,11 +3136,10 @@ function tick() {
       lines.push(`${resolved === 'quest' ? '▸ ' : ''}의뢰 · ${qd.name} ${questProgress()} / ${qd.goal}${questProgress() >= qd.goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
     }
     if (b && b.active) {
-      const goal = b.kind === 'flowers' ? 4 : b.kind === 'variants' ? 2 : b.kind === 'elite' ? 1 : 8;
-      const raw = b.kind === 'flowers' ? state.flowerCount - (b.startFlowers || 0) : b.kind === 'variants' ? variantKillCount() - (b.startVariants || 0) : b.kind === 'elite' ? state.eliteKills - (b.startElites || 0) : state.kills - b.startKills;
-      const bp = Math.min(raw, goal);
+      const goal = bountyGoal(b);
+      const bp = Math.min(bountyProg(b), goal);
       const t = bountyTarget();
-      lines.push(`${resolved === 'bounty' ? '▸ ' : ''}반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
+      lines.push(`${resolved === 'bounty' ? '▸ ' : ''}반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : b.kind === 'mats' ? b.mat + ' 납품' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
     }
     if (lines.length) {
       qEl.style.display = 'block';
