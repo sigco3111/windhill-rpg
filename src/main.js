@@ -258,6 +258,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyI') toggleInv();
   if (e.code === 'KeyM') toggleMinimap();
   if (e.code === 'KeyN') cycleTrack();
+  if (e.code === 'KeyJ' && !state.menuOpen && !state.dialog) openJourneyJournal();
   if (e.code === 'KeyF') tryWhirl();
   if (e.code === 'KeyK') toggleSkillTree();
 });
@@ -452,7 +453,7 @@ riposteHud.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);b
 riposteHud.style.fontFamily = "'Noto Sans KR', sans-serif";
 document.body.appendChild(riposteHud);
 const skillTreeStyle = document.createElement('style');
-skillTreeStyle.textContent = '#dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
+skillTreeStyle.textContent = '#dlg.journey-dialog .btns { flex-wrap:wrap; } #dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
 document.head.appendChild(skillTreeStyle);
 function updateBossPlate() {
   let t = null, bd = 18;
@@ -701,9 +702,11 @@ function renderMenu() {
     menuBody.innerHTML = `
       <div class="mrow"><div>소리 <small>${audio.muted ? '꺼짐' : '켜짐'}</small></div><button class="act" id="m-snd">${audio.muted ? '소리 켜기' : '소리 끄기'}</button></div>
       <div class="mrow"><div>자동 전투 <small>${state.autoOn ? 'ON' : 'OFF'}</small></div><button class="act" id="m-auto">${state.autoOn ? '끄기' : '켜기'}</button></div>
+      <div class="mrow"><div>여행 수첩 <small>끊어진 순례길 · J키</small></div><button class="act" id="m-journey">열기</button></div>
       <div class="mrow"><div>튜토리얼 <small>${state.tutDone ? '완료' : '진행 중'}</small></div><button class="act" id="m-tut">다시 보기</button></div>`;
     menuBody.querySelector('#m-snd').onclick = () => { initAudio(); audio.muted = !audio.muted; if (audio.master) audio.master.gain.value = audio.muted ? 0 : 0.8; syncSndBtn(); renderMenu(); };
     menuBody.querySelector('#m-auto').onclick = () => { toggleAuto(); renderMenu(); };
+    menuBody.querySelector('#m-journey').onclick = () => { closeMenu(); openJourneyJournal(); };
     menuBody.querySelector('#m-tut').onclick = () => { state.tutDone = false; toast('도움말이 다시 표시됩니다'); renderMenu(); };
   } else if (menuTab === 'rec') {
     const pt = Math.floor(state.playTime || 0);
@@ -727,6 +730,7 @@ function renderMenu() {
       ['버려진 망루', state.watchCleared ? '수호대장 격파' : (state.watchFound ? '발견' : '미발견')],
       ['지명 수배', (((state.bloodRatKills || 0) >= 1 ? 1 : 0) + ((state.stormWaspKills || 0) >= 1 ? 1 : 0) + ((state.rockSpiderKills || 0) >= 1 ? 1 : 0)) + ' / 3'],
       ['잊힌 유적', state.ruinsFound ? '발견' : '미발견'],
+      ['끊어진 순례길', state.journey === 5 ? '완결' : state.journey ? `${Math.min(3,state.journey-1)} / 3 기록` : '미시작'],
       ['유적 바람길', state.sealSolved ? '개통' : '봉인'],
       ['꽃 판매', (state.flowersSold || 0) + '송이'],
     ];
@@ -976,6 +980,7 @@ async function build() {
       inst.rotation.y = rng() * Math.PI * 2;
       inst.scale.setScalar(0.8 + rng() * 0.5);
       if (Math.hypot(x - 48, z - 40) < 9) continue; // 칼날 말벌 전투 빈터, 난수 소비 후 제외해 다른 배치 유지
+      if (journeyClearing(x,z)) continue; // 순례길 배낭의 읽기/접근 공간
       scene.add(inst);
       if (isTree) { colliders.push({ x, z, r: 0.6 }); registerTreeFade(inst, x, z); }
     }
@@ -995,6 +1000,7 @@ async function build() {
       inst.position.set(x, 0, z);
       inst.rotation.y = frng() * Math.PI * 2;
       inst.scale.setScalar(0.9 + frng() * 0.5);
+      if (journeyClearing(x,z)) continue;
       scene.add(inst);
       colliders.push({ x, z, r: 0.6 });
       registerTreeFade(inst, x, z);
@@ -1005,6 +1011,7 @@ async function build() {
       const a = frng() * Math.PI * 2, r = 4 + frng() * 14;
       inst.position.set(-45 + Math.cos(a) * r, 0, 18 + Math.sin(a) * r);
       inst.rotation.y = frng() * Math.PI * 2;
+      if (journeyClearing(inst.position.x,inst.position.z)) continue;
       scene.add(inst);
     }
     // 숲 서식 몬스터 (개구리 2, 거미 2)
@@ -1046,6 +1053,7 @@ async function build() {
       inst.position.set(x, 0, z);
       inst.rotation.y = hrng() * Math.PI * 2;
       inst.scale.setScalar(0.9 + hrng() * 0.5);
+      if (journeyClearing(x,z)) continue;
       if (Math.hypot(x - 48, z - 40) < 9) continue; // 돌진 경로/이름표를 덮는 수관 제외
       scene.add(inst);
       colliders.push({ x, z, r: 0.6 });
@@ -1057,6 +1065,7 @@ async function build() {
       const a = hrng() * Math.PI * 2, r = 5 + hrng() * 12;
       inst.position.set(56 + Math.cos(a) * r, 0, 30 + Math.sin(a) * r);
       inst.rotation.y = hrng() * Math.PI * 2;
+      if (journeyClearing(inst.position.x,inst.position.z)) continue;
       if (Math.hypot(inst.position.x - 48, inst.position.z - 40) < 9) continue;
       scene.add(inst);
     }
@@ -1127,6 +1136,7 @@ async function build() {
       inst.position.set(x, 0, z);
       inst.rotation.y = srng() * Math.PI * 2;
       inst.scale.setScalar(0.85 + srng() * 0.4);
+      if (journeyClearing(x,z)) continue;
       scene.add(inst);
       colliders.push({ x, z, r: 0.6 });
       registerTreeFade(inst, x, z);
@@ -1205,6 +1215,7 @@ async function build() {
   buildTrialStone();
   buildDens();
   buildSeals();
+  buildJourneySites();
 
   // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
   try {
@@ -1478,7 +1489,9 @@ function tryInteract() {
   if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); return; }
   if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); return; }
   const seal = nearbySeal();
-  if (seal) openSealDialog(seal);
+  if (seal) { openSealDialog(seal); return; }
+  const site = nearbyJourneySite();
+  if (site) openJourneySite(site);
 }
 function offerRunes() { // 유적 해방 후 룬 3택1 선택 (선택은 되돌릴 수 없음)
   state.dialog = true;
@@ -1578,6 +1591,7 @@ function openDialog() {
     text.innerHTML = `${d.progress} 현재 <b>${questProgress()} / ${d.goal}</b> ${d.unit}네.<br>조금만 더 힘내주게.`;
     mk('계속', '', closeDialog);
   }
+  mk('여행 수첩', 'sub', openJourneyJournal);
   mk('상점', 'sub', openShop);
   document.getElementById('dlg-list').innerHTML = '';
   dlgEl().style.display = 'block';
@@ -1788,6 +1802,7 @@ function drawMinimap() {
   if (!state.watchCleared) dot(WATCH_POS.x, WATCH_POS.z, state.watchFound ? '#e8a04c' : '#b8b2a6', 3.5); // 버려진 망루: 미발견 회색 → 발견 후 호박색
   if (state.swampPos) dot(state.swampPos.x, state.swampPos.z, '#8aa24f', 4); // 독 늪지대
   if (state.ruinsPos) dot(state.ruinsPos.x, state.ruinsPos.z, state.ruinsFound ? '#d8cba8' : '#b8b2a6', 4); // 잊힌 유적: 미발견 회색 → 발견 후 모래색
+  for (const d of state.journeySites || []) dot(d.x,d.z,state.journey>d.step?'#8aa2a2':'#8be1e5',3);
   for (const d of state.sealObjects || []) if (d.id.endsWith('Gate')) dot(d.x, d.z, state.sealSolved ? '#83dcff' : '#737b87', 4);
   if (state.flowers) for (const f of state.flowers) if (!f.taken) dot(f.x, f.z, '#7de87d', 2.5);
   if (state.npc) dot(state.npc.pos.x, state.npc.pos.z, '#6db3ff', 3.5);
@@ -1906,7 +1921,7 @@ function openCollectorDialog() {
   document.getElementById('dlgback').style.display = 'block';
 }
 function closeDialog() {
-  dlgEl().classList.remove('skilltree');
+  dlgEl().classList.remove('skilltree','journey-dialog');
   state.dlgFocus = null;
   state.dialog = false;
   dlgEl().style.display = 'none';
@@ -1928,6 +1943,7 @@ function saveGame() {
       heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
       bounty: state.bounty, tracked: state.tracked || 'auto', skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      journey: state.journey || 0, journeyEnding: state.journeyEnding || null,
       sealSolved: !!state.sealSolved,
       runes: state.runes || [],
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
@@ -1960,6 +1976,8 @@ function loadGame() {
     state.ruinWarKills = s.ruinWarKills || 0;
     state.ruinWardenKills = s.ruinWardenKills || 0;
     state.ruinsFound = !!s.ruinsFound;
+    state.journey = Number.isInteger(s.journey) ? Math.max(0,Math.min(5,s.journey)) : 0;
+    state.journeyEnding = ['remember','share'].includes(s.journeyEnding) && state.journey === 5 ? s.journeyEnding : null;
     state.sealSolved = s.sealSolved === true;
     state.sealInput = [];
     updateSealVisuals();
@@ -2405,6 +2423,73 @@ async function buildWatchtower() {
   }
   state.watch = { root, guardian };
 }
+// ---------- 끊어진 순례길: 지역을 잇는 독립 탐험 이야기 ----------
+const JOURNEY_SITES = [
+  {step:1,x:-32,z:18,name:'숲의 낡은 배낭',hint:'마을 서쪽, 바람꽃 숲으로 가는 길 가장자리의 낡은 배낭을 찾자.',
+   title:'첫째 날 - 빈 배낭',story:'낡은 천 사이에 작은 편지가 남아 있다.<br>"약초를 팔아 돌아가려던 날, 늪의 다리가 무너졌다. 짐을 버리면 빨리 갈 수 있었겠지만, 건너편에는 아이가 기다리고 있었다. 나는 돌아서서 얕은 여울을 찾았다."<br>배낭에는 돈도 약초도 없다. 대신 누군가를 업을 때 쓰는 넓은 끈이 매여 있다.',
+   next:'다음 쪽지에는 <b>독 늪 동쪽 가장자리</b>의 마른 징검돌을 가리키는 그림이 있다.'},
+  {step:2,x:-17,z:44,name:'여울의 낡은 끈',hint:'독 늪의 동쪽 가장자리로 돌아가 마른 여울의 끈을 살피자. 독 웅덩이 한가운데로 들어갈 필요는 없다.',
+   title:'둘째 날 - 돌아간 길',story:'진흙 위에 같은 모양의 발자국이 여러 번 겹쳤다. 물가의 끈은 작은 손이 잡기 좋게 매듭지어져 있다.<br>"한 사람을 건너게 하면 끝일 줄 알았다. 그런데 뒤에서 다른 이들이 왔다. 마지막 사람이 건널 때까지 나는 건너편으로 가지 못했다. 해는 졌지만 아무도 길을 잃지 않았다."<br>늦어진 여행은 실패가 아니었다. 누군가가 안전하게 돌아갈 수 있는 길이 되었다.',
+   next:'젖지 않은 종이에는 <b>벌집 숲 서쪽 입구</b>의 오래된 이정표가 그려져 있다.'},
+  {step:3,x:43,z:29,name:'순례자의 이정표',hint:'벌집 숲 서쪽 입구의 이정표로 가자. 벌집의 여왕을 쓰러뜨릴 필요는 없다.',
+   title:'셋째 날 - 남겨진 이름',story:'이정표 뒤에 짧은 글이 새겨져 있다.<br>"이름을 남겨 달라는 부탁을 받았다. 하지만 내 이름보다 여울의 위치를 적는 편이 낫겠다. 나를 기억하지 않아도 괜찮다. 다음 여행자가 돌아갈 길을 알면 된다."<br>아래에는 마을을 향한 화살표와 삐뚤빼뚤한 작은 글씨가 있다.<br>"덕분에 집에 왔어요."',
+   next:'세 기록을 연결했다. <b>마을 장로</b>에게 돌아가 순례자의 이야기를 전하자.'},
+];
+function journeyClearing(x,z) { return [[-32,18],[-17,44],[43,29]].some(([a,b])=>Math.hypot(x-a,z-b)<8); }
+function buildJourneySites() {
+  state.journeySites=JOURNEY_SITES.map(d=>{
+    const root=new THREE.Group();root.position.set(d.x,0,d.z);
+    const post=new THREE.Mesh(new THREE.BoxGeometry(0.18,1.3,0.18),new THREE.MeshLambertMaterial({color:0x80603d}));post.position.y=.65;root.add(post);
+    const board=new THREE.Mesh(new THREE.BoxGeometry(1.2,.55,.16),new THREE.MeshLambertMaterial({color:0xd9bb82}));board.position.y=1.1;root.add(board);
+    if(d.step===1){const bag=new THREE.Mesh(new THREE.BoxGeometry(.65,.65,.4),new THREE.MeshLambertMaterial({color:0x846342}));bag.position.set(.65,.33,.2);root.add(bag);const strap=new THREE.Mesh(new THREE.TorusGeometry(.25,.035,6,20),new THREE.MeshBasicMaterial({color:0xd9b178}));strap.position.set(.65,.65,.2);root.add(strap);}
+    if(d.step===2){const rope=new THREE.Mesh(new THREE.TorusGeometry(.5,.055,6,24),new THREE.MeshLambertMaterial({color:0xc8a767}));rope.rotation.x=-Math.PI/2;rope.position.set(.8,.07,.3);root.add(rope);}
+    const gem=new THREE.Mesh(new THREE.OctahedronGeometry(.2),new THREE.MeshBasicMaterial({color:0x8be1e5}));gem.position.y=1.85;root.add(gem);
+    const label=makeNameSprite(d.name);label.position.y=2.35;root.add(label);scene.add(root);return{...d,root};
+  });
+}
+function nearbyJourneySite() {
+  if(!state.ready || state.dead)return null;
+  return(state.journeySites||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<=2.2)||null;
+}
+function journeyTarget(){
+  if(!state.journey || state.journey>=5)return null;
+  if(state.journey===4)return state.npc?{x:state.npc.pos.x,z:state.npc.pos.z,label:'순례길 이야기 전하기'}:null;
+  const d=JOURNEY_SITES[state.journey-1];return{x:d.x,z:d.z,label:d.name};
+}
+function journeyDialog(title,html,buttons=[]) {
+  state.dialog=true;dlgEl().classList.add('journey-dialog');document.getElementById('dlg-name').textContent=title;
+  document.getElementById('dlg-text').innerHTML=html;document.getElementById('dlg-list').innerHTML='';
+  const btns=document.getElementById('dlg-btns');btns.innerHTML='';
+  for(const[label,fn]of[...buttons,['닫기',closeDialog]]){const b=document.createElement('button');b.textContent=label;b.onclick=()=>{if(!state.dialog||state.dead)return;b.disabled=true;fn()};btns.appendChild(b)}
+  dlgEl().style.display='block';document.getElementById('dlgback').style.display='block';
+}
+function openJourneySite(d){
+  state.dlgFocus=d.root.position;
+  if(!state.journey || state.journey<d.step){journeyDialog(d.name,'아직 이 흔적을 해석할 단서가 없다.<br>마을 장로의 <b>여행 수첩</b>에서 끊어진 순례길을 시작하고 이전 기록을 먼저 찾아보자.');return;}
+  const fresh=state.journey===d.step;
+  journeyDialog(d.title,d.story+'<br><br>'+d.next,fresh?[[ '수첩에 기록하기',()=>{
+    if(state.journey!==d.step || nearbyJourneySite()?.step!==d.step)return;
+    state.journey=d.step+1;state.tracked='journey';saveGame();closeDialog();toast(`순례길 기록 ${d.step}/3 · 수첩(J)에서 다시 읽기`);
+  }]]:[]);
+}
+function openJourneyJournal(){
+  if(!state.ready||state.dead)return;
+  const nearElder=state.npc && state.player.position.distanceTo(state.npc.pos)<=2.6;
+  const step=state.journey||0;let html='';const buttons=[];
+  if(!step){
+    html='장로가 펼친 낡은 지도에는 세 지역을 잇는 선이 끊겨 있다.<br>"이 길을 만든 사람은 영웅도 왕도 아니었네. 이름 없는 여행자였지. 숲의 배낭과 늪의 여울, 벌집 숲의 이정표에 그의 기록이 남아 있다더군. 그가 왜 돌아오지 않았는지 알아봐 주겠나?"<br><br>전투 의뢰와 별도로 진행되는 탐험 이야기다. 기록은 직접 읽어야 남으며 수첩에서 언제든 다시 볼 수 있다.';
+    if(nearElder)buttons.push(['순례길을 찾아본다',()=>{if(state.journey || !state.npc || state.player.position.distanceTo(state.npc.pos)>2.6)return;state.journey=1;state.tracked='journey';saveGame();closeDialog();toast('탐험 시작: 끊어진 순례길')}]);
+    else html+='<br><br><b>마을 장로 곁에서 시작할 수 있다.</b>';
+  }else if(step<4){html=`기록 ${step-1}/3<br><b>다음 단서</b>: ${JOURNEY_SITES[step-1].hint}`;}
+  else if(step===4){
+    html='세 기록을 모았다. 순례자가 사라진 이유를 알게 되었다. 그는 혼자 빨리 돌아가는 대신, 모두가 돌아올 수 있는 길을 남겼다.<br><br>'+(nearElder?'장로가 고개를 끄덕인다.<br>"그래서 우리 마을에는 그의 무덤이 없었군. 그 사람이 남긴 것은 길이었어. 자네는 이 기록을 어떻게 남기겠나?"':'마을 장로에게 돌아가 이야기를 전하자.');
+    if(nearElder)for(const[id,label]of[['remember','이름 없는 여행자의 기억으로 남긴다'],['share','다음 여행자를 위한 길 안내로 남긴다']])buttons.push([label,()=>{if(state.journey!==4 || !state.npc || state.player.position.distanceTo(state.npc.pos)>2.6)return;state.journey=5;state.journeyEnding=id;if(state.tracked==='journey')state.tracked='auto';saveGame();openJourneyJournal();sfx('reward',.7)}]);
+  }else html='장로와 함께 끊어진 순례길을 지도에 다시 이었다.<br>'+ (state.journeyEnding==='share'?'기록은 다음 여행자를 위한 길 안내가 되었다. 이름을 몰라도 누군가가 남긴 배려는 길 위에 남는다.':'기록은 이름 없는 여행자를 기억하는 이야기가 되었다. 가장 늦게 돌아온 사람도 누군가에게는 길을 밝혀 준 사람이었다.')+'<br><br><b>탐험 이야기 완결</b> · 기록은 아래에서 다시 읽을 수 있다. 이 선택은 이야기의 기록 방식만 바꾸며 능력치나 전투 보상을 바꾸지 않는다.';
+  for(let i=0;i<Math.min(3,Math.max(0,step-1));i++)html+=`<details style="margin-top:10px;border-top:1px solid #445;padding-top:6px"><summary>${JOURNEY_SITES[i].title}</summary>${JOURNEY_SITES[i].story}</details>`;
+  if(step>0&&step<5)buttons.unshift([state.tracked==='journey'?'탐험 추적 끄기':'탐험 목표 추적',()=>{state.tracked=state.tracked==='journey'?'auto':'journey';saveGame();closeDialog()}]);
+  journeyDialog('여행 수첩 · 끊어진 순례길',html,buttons);
+}
+
 // ---------- 유적의 세 문양: 단서 해독으로 여는 왕복 탐험 지름길 ----------
 const SEALS = [
   { id: 'sun', name: '해 문양', x: -30, z: -36, color: 0xffc85b },
@@ -2886,6 +2971,7 @@ function objectiveTarget() {
   if (!state.npc) return null;
   const mode = state.tracked || 'auto';
   if (mode === 'none') return null;
+  if (mode === 'journey') return journeyTarget() || autoObjective();
   if (mode === 'quest') return questTargetInner() || autoObjective();
   if (mode === 'bounty') return bountyTarget() || autoObjective();
   return autoObjective();
@@ -2900,6 +2986,7 @@ function cycleTrack() {
   const opts = ['auto'];
   if (QUESTS[state.quest.idx]) opts.push('quest');
   if (state.bounty && state.bounty.active) opts.push('bounty');
+  if (journeyTarget()) opts.push('journey');
   opts.push('none');
   const cur = opts.indexOf(state.tracked || 'auto');
   state.tracked = opts[(cur + 1) % opts.length];
@@ -3546,8 +3633,9 @@ function tick() {
     const trialNear = state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8 && !state.dead;
     const promptEl = document.getElementById('prompt');
     const sealNear = nearbySeal();
-    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : sealNear ? `E · ${sealNear.name}` : '';
-    promptEl.style.display = (npcNear || trialNear || sealNear) && !state.dialog ? 'block' : 'none';
+    const journeyNear = nearbyJourneySite();
+    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : sealNear ? `E · ${sealNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
+    promptEl.style.display = (npcNear || trialNear || sealNear || journeyNear) && !state.dialog ? 'block' : 'none';
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
@@ -3563,7 +3651,7 @@ function tick() {
     const pp2 = state.player.position;
     const lines = [];
     const distTo = (t) => t ? Math.round(Math.hypot(t.x - pp2.x, t.z - pp2.z)) + 'm' : '';
-    const resolved = state.tracked === 'none' ? null : (state.tracked === 'quest' || state.tracked === 'bounty') ? state.tracked : (qd ? 'quest' : (b && b.active ? 'bounty' : null));
+    const resolved = state.tracked === 'none' ? null : (state.tracked === 'quest' || state.tracked === 'bounty' || state.tracked === 'journey') ? state.tracked : (qd ? 'quest' : (b && b.active ? 'bounty' : null));
     if (qd && state.quest.state === 'active') {
       const t = questTargetInner();
       lines.push(`${resolved === 'quest' ? '▸ ' : ''}의뢰 · ${qd.name} ${questProgress()} / ${qd.goal}${questProgress() >= qd.goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
@@ -3574,6 +3662,8 @@ function tick() {
       const t = bountyTarget();
       lines.push(`${resolved === 'bounty' ? '▸ ' : ''}반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : b.kind === 'mats' ? b.mat + ' 납품' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
     }
+    const jt = journeyTarget();
+    if (jt) lines.push(`${state.tracked === 'journey' ? '▸ ' : ''}탐험 · 순례길 기록 ${Math.min(3,state.journey-1)}/3 · ${jt.label} ${distTo(jt)}`);
     if (lines.length) {
       qEl.style.display = 'block';
       qEl.innerHTML = lines.join('<br>') + '<br><span style="opacity:.65;font-size:.85em">탭·N: 추적 전환</span>';
@@ -3671,6 +3761,7 @@ function tick() {
     bossKills: state.bossKills, flowerCount: state.flowerCount, flowersSold: state.flowersSold || 0, mats: { ...state.mats }, weather: weather.mode, sky: scene.background.getHexString(), npc2: state.npc2 ? { x: state.npc2.pos.x, z: state.npc2.pos.z } : null,
     snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
     chestsOpened: state.chestsOpened ? state.chestsOpened.length : 0, shrinesPrayed: state.shrinesPrayed ? state.shrinesPrayed.length : 0, trial: state.trial ? { active: state.trial.active, wave: state.trial.wave, alive: state.trial.enemies.filter((e) => !e.dead).length } : null, trialDone: state.trialDone || 0, bounty: state.bounty ? { ...state.bounty } : null,
+    journey: { step: state.journey || 0, ending: state.journeyEnding || null, target: journeyTarget() },
     seal: { solved: !!state.sealSolved, input: [...(state.sealInput || [])] },
     runes: [...(state.runes || [])],
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
