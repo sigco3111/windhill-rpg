@@ -780,6 +780,7 @@ async function build() {
     const anim = new AnimSet(root, gltf.animations);
     anim.play('walking', 'walk', 'jump', 'idle');
     const e = { root, anim, angle: Math.atan2(x, z), stats: st, home: new THREE.Vector3(x, 0, z), hp: st.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 };
+    if (st.guard && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
     state.enemies.push(e);
     return e;
   };
