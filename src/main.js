@@ -506,7 +506,7 @@ function toast(msg) {
 const bossPlate = document.createElement('div');
 bossPlate.id = 'bossplate';
 bossPlate.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:96px;min-width:220px;max-width:72vw;padding:6px 14px;background:rgba(20,16,26,.78);border:1px solid #6b5566;border-radius:10px;color:#ffd98a;font:700 15px \'Noto Sans KR\',sans-serif;text-align:center;display:none;z-index:30;pointer-events:none';
-bossPlate.innerHTML = '<div id="bp-name"></div><div style="height:7px;background:#3a2f3f;border-radius:4px;margin-top:4px;overflow:hidden"><div id="bp-hp" style="height:100%;width:100%;background:#e05252;border-radius:4px"></div></div>';
+bossPlate.innerHTML = '<div id="bp-name"></div><div id="bp-cue"></div><div style="height:7px;background:#3a2f3f;border-radius:4px;margin-top:4px;overflow:hidden"><div id="bp-hp" style="height:100%;width:100%;background:#e05252;border-radius:4px"></div></div>';
 document.body.appendChild(bossPlate);
 const riposteHud = document.createElement('div');
 riposteHud.id = 'riposte-ready';
@@ -527,16 +527,39 @@ document.head.appendChild(windStyle);
 const skillTreeStyle = document.createElement('style');
 skillTreeStyle.textContent = '#dlg.journey-dialog #dlg-text { max-height:min(38vh,260px);overflow-y:auto;scrollbar-width:thin; } #dlg.journey-dialog .btns { flex-wrap:wrap; } #dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
 document.head.appendChild(skillTreeStyle);
+// 이름과 대응 지시를 분리한다. HUD 대상만 바뀌며 실제 공격/자동전투 대상은 그대로다.
+const combatHudStyle=document.createElement('style');
+combatHudStyle.textContent='#bp-name{line-height:1.35;word-break:keep-all;overflow-wrap:normal}#bp-cue{font-size:13px;line-height:1.4;color:#f5eddb}#bp-cue span{display:block;white-space:nowrap}#bossplate[data-warning="true"]{border-color:#ff8a75}#bossplate[data-warning="true"] #bp-cue{color:#ffb39c}@media(max-width:559px),(max-height:500px){#bossplate{padding:6px 8px!important;font-size:12px!important}#bp-cue{font-size:11px}}';
+combatHudStyle.textContent+='@media(min-width:560px) and (max-height:500px){#quest{left:176px;right:150px;top:44px;max-width:none;box-sizing:border-box;text-align:center;font-size:10px;line-height:1.4;padding:4px 6px;word-break:keep-all}}';
+document.head.appendChild(combatHudStyle);
+function combatCue(e,now){
+ const at=[e.archerAt,e.mistAt,e.bellAt,e.pulseAt,e.stormAt,e.spitAt].filter(t=>t>now);
+ const deadline=at.length?Math.min(...at):0;
+ let lines=[];
+ if(e.staggerUntil>now)lines=['경직 · 반격'];
+ else if(e.stats.mistHunter)lines=e.mistAt?['붉은 원 예고','원 밖 · 회피']:mistLit(e)?['빛 안 · 공격 가능']:['안개 · 피해 차단','등불로 유인'];
+ else if(e.stats.bellBoss)lines=e.bellAt?(e.bellOuter?['고리 예고','3m 안 · 8m 밖']:['원형 예고','4.5m 밖으로']):e.bellExposed>now?['방어 해제 · 공격']:['푸른 방어','원거리 · 강공격'];
+ else if(e.stats.echoBoss&&state.echoFight?.shield)lines=['보호막','봉인석 해제'];
+ else if(e.stats.ruinWarden)lines=e.pulseAt?['지면파 예고','원 밖으로']:e.pulseRecover>now?['반격 기회']:[];
+ else if(e.stats.stormWasp)lines=e.stormAt?['돌진 예고','옆으로 회피']:e.stormRun?['돌진 중','옆으로 이동']:e.stormRecover>now?['반격 기회']:[];
+ else if(e.stats.rangedSpit)lines=e.spitAt?['독침 예고','옆으로 회피']:e.spitLeft>0?['독침 비행','옆으로 이동']:e.spitRecover>now?['반격 기회']:['거리 유지'];
+ else if(e.stats.archer)lines=e.archerAt?['세 갈래 예고','엄폐 · 옆 회피']:e.archerRecover>now?['사격 후 빈틈']:['원거리 사수'];
+ else if(e.stats.guard)lines=['방패 · 강공격'];
+ return{lines,deadline};
+}
 function updateBossPlate() {
-  let t = null, bd = 18;
-  for (const e of state.enemies) {
-    if (e.dead || !e.nameSprite) continue;
-    const d = e.root.position.distanceTo(state.player.position);
-    if (d < bd) { bd = d; t = e; }
+  const now=clock.elapsedTime;
+  let t=null,bd=18,warningAt=Infinity;
+  for(const e of state.enemies){
+    if(e.dead||!e.nameSprite)continue;
+    const d=e.root.position.distanceTo(state.player.position);if(d>=18)continue;
+    const cue=combatCue(e,now),at=cue.deadline;
+    if(at&&(at<warningAt||(at===warningAt&&d<bd))){t=e;bd=d;warningAt=at;}
+    else if(!at&&warningAt===Infinity&&d<bd){t=e;bd=d;}
   }
   if (!t || state.dead || state.dialog || state.menuOpen) { bossPlate.style.display = 'none'; return; }
   // 좁은 화면(모바일)에서는 오른쪽 공격/회피 버튼 열과 겹치지 않도록 위로 올리고 폭을 줄임
-  const narrow = window.innerWidth < 560;
+  const narrow = window.innerWidth < 560 || window.innerHeight <= 500;
   bossPlate.style.bottom = narrow ? '160px' : '150px'; // 하단 대화 프롬프트(40px~)와 겹치지 않도록 올림
   bossPlate.style.left = narrow ? '10px' : '50%';
   bossPlate.style.transform = narrow ? 'none' : 'translateX(-50%)';
@@ -545,10 +568,13 @@ function updateBossPlate() {
   bossPlate.style.maxWidth = narrow ? '200px' : '72vw';
   bossPlate.style.minWidth = narrow ? '120px' : '220px';
   bossPlate.style.display = 'block';
-  const echoShield=t.stats.echoBoss&&state.echoFight?.shield;
-  const pulse = t.stats.mistHunter ? (t.mistAt ? ' - 붉은 원! 회피' : mistLit(t) ? ' - 빛 안 · 공격 가능' : ' - 안개 · 등불로 유인') : echoShield ? ' - 보호막 · 봉인석 해제' : t.stats.ruinWarden ? (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '') : '';
-  const stag = t.staggerUntil && clock.elapsedTime < t.staggerUntil;
-  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse + (t.stats.stormWasp ? (t.stormAt ? ' - 돌진! 옆으로 회피' : t.stormRun ? ' - 돌진 중' : t.stormRecover > clock.elapsedTime ? ' - 반격 기회' : '') : '') + (t.stats.rangedSpit ? (t.spitAt ? ' - 독침! 옆으로 회피' : t.spitLeft>0 ? ' - 독침 비행' : t.spitRecover>clock.elapsedTime ? ' - 반격 기회' : ' - 거리 유지') : '') + (t.stats.archer ? (t.archerAt ? ' - 세 갈래 사격! 엄폐/옆으로 회피' : t.archerRecover>clock.elapsedTime ? ' - 사격 후 빈틈' : ' - 궁수') : '');
+  const cue=combatCue(t,now),stag=t.staggerUntil>now;
+  document.getElementById('bp-name').textContent=(stag?'💫 ':t.stats.guard?'🛡 ':'')+t.stats.label;
+  const cueEl=document.getElementById('bp-cue');
+  const cueKey=cue.lines.join('|');
+  if(cueEl.dataset.key!==cueKey){cueEl.replaceChildren(...cue.lines.map(text=>{const line=document.createElement('span');line.textContent=text;return line;}));cueEl.dataset.key=cueKey;}
+  cueEl.style.display=cue.lines.length?'block':'none';
+  bossPlate.dataset.warning=String(!!cue.deadline);
   document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
 }
 
