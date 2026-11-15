@@ -512,6 +512,7 @@ windBtn.addEventListener('click',e=>{e.stopPropagation();tryWindshot()});
 windBtn.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();tryWindshot()},{passive:false});
 const windStyle=document.createElement('style');
 windStyle.textContent='#windshot{right:106px;bottom:138px;background:rgba(30,110,175,.85);font-size:10px;} @media(max-width:800px),(max-height:500px){#windshot{right:84px;bottom:154px;width:46px;height:46px;font-size:9px;}}';
+windStyle.textContent+=' @media(max-width:560px){#prompt{left:10px;transform:none;max-width:calc(100vw - 190px);box-sizing:border-box;white-space:normal;text-align:center;}}';
 document.head.appendChild(windStyle);
 
 const skillTreeStyle = document.createElement('style');
