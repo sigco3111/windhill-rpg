@@ -380,7 +380,7 @@ const GEAR_SHOP = [
   { key: 'armor', names: ['가죽 갑옷', '철 갑옷', '뼈 갑옷'], prices: [60, 150, 250], desc: ['받는 피해 -2', '받는 피해 -4', '받는 피해 -6'], mats: [null, null, [['뼈 조각', 5]]] },
   { key: 'boots', names: ['바람 부츠', '폭풍 부츠', '천둥 부츠'], prices: [100, 220, 280], desc: ['이동속도 +12%', '이동속도 +25%', '이동속도 +40%'], mats: [null, null, [['거미줄', 4]]] },
 ];
-// ---------- 스킬 트리 (레벨업으로 포인트 획득, 3계열 7노드, 각 1P) ----------
+// ---------- 스킬 트리 (레벨업으로 포인트 획득, 4계열 8노드, 각 1P) ----------
 const SKILLS = [
   { id:'windshot',branch:'원풍',name:'바람칼날',desc:'바라보는 방향으로 직선 바람탄 · 첫 적 1명에 1.2배 피해 · 사거리10m · G키/쿨5초 · 벽에 막힘/가드 파괴 불가',req:null },
   { id: 'crush', branch: '강풍', name: '파쇄', desc: '강공격이 가드를 부수고 2.5초 경직 · 가드 적에게 피해 +30%', req: null },
@@ -395,6 +395,7 @@ const hasSkill = (id) => !!state.skills[id];
 // 전투 숙련: 기존 스킬과 별도. 선택만 저장하고 연격/감속은 전투 중에만 유지한다.
 const MASTERIES = [
   {id:'chain',name:'연격',desc:'같은 적에게 3초 안에 일반공격을 이어 3번 적중하면 세번째가 가드 파괴. 헛침·강공격·회전베기는 연속 초기화. 일반공격 기본 피해로 가드 파괴 (기존 파쇄 효과 적용).'},
+  {id:'pursuit',name:'추격',desc:'바람칼날이 가드·보호막 없는 적에게 실제 피해를 주면 4초 표식. 같은 적에게 다음 일반 근접 타격이 1.5배, 바람칼날 남은 쿨 2초 감소. 강공격·회전베기는 소비 불가. 표식은 저장되지 않는다.',req:'windshot'},
   {id:'gale',name:'돌풍',desc:'회전베기에 맞은 일반 적의 이동만 3초간 50% 감속. 공격·독침 속도는 그대로. 보스·1회성 적·시련·원정 보초 제외.',req:'whirl'},
 ];
 function activeMastery(id) { return state.level >= 8 && state.mastery === id; }
@@ -404,6 +405,7 @@ function masterySafe() {
 }
 function resetMasteryCombat() {
   state.masteryChain = null;
+  state.pursuit = null;
   for (const e of state.enemies) e.galeUntil = 0;
 }
 function chainStrike(e, now) {
@@ -414,6 +416,7 @@ function chainStrike(e, now) {
   state.masteryChain = {target:e,count,until:now+3};
   return false;
 }
+function pursuitReady(e,now){const m=state.pursuit;return activeMastery('pursuit')&&m&&m.target===e&&!e.dead&&now<m.until;}
 function galeEligible(e) { return !e.dead && !e.stats.boss && !e.stats.noRespawn && !e.trial && !e.expedition; }
 function enemyMoveScale(e, now) { return activeMastery('gale') && now < (e.galeUntil || 0) ? 0.5 : 1; }
 
@@ -1370,7 +1373,7 @@ async function build() {
     probeAt(i) { const x = state.enemies[i]; return x ? { label: x.stats.label, hp: x.hp, guard: !!x.stats.guard, staggered: !!(x.staggerUntil && clock.elapsedTime < x.staggerUntil), dead: x.dead } : null; },
     listEnemies() { return state.enemies.map((e, i) => ({ i, label: e.stats.label, hp: e.hp, guard: !!e.stats.guard, dead: e.dead, x: +e.root.position.x.toFixed(1), z: +e.root.position.z.toFixed(1) })); },
     learnAll() { for (const s of SKILLS) state.skills[s.id] = true; updateWhirlBtn(); },
-    skillInfo() { return { pts: state.skillPts || 0, mastery: state.mastery, chain: state.masteryChain && clock.elapsedTime <= state.masteryChain.until && !state.masteryChain.target.dead ? {count:state.masteryChain.count,left:+(state.masteryChain.until-clock.elapsedTime).toFixed(2),label:state.masteryChain.target.stats.label} : null, slowed:state.enemies.filter(e=>!e.dead&&enemyMoveScale(e,clock.elapsedTime)<1).length, skills: { ...state.skills }, windCd:+Math.max(0,state.windCdUntil-clock.elapsedTime).toFixed(2), windshot:state.windshot?{left:state.windshot.left,pos:state.windshot.pos.toArray(),dir:state.windshot.dir.toArray()}:null, windResult:state.windResult||null, fx:skillFxPool.filter(f=>f.root.visible).map(f=>({kind:f.kind,position:f.root.position.toArray(),age:+(clock.elapsedTime-f.start).toFixed(2)})), whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2), riposteLeft: +Math.max(0, (state.riposteUntil || 0) - clock.elapsedTime).toFixed(2), riposteDodge: state.riposteDodge || 0 }; },
+    skillInfo() { return { pts: state.skillPts || 0, mastery: state.mastery, pursuit: state.pursuit&&pursuitReady(state.pursuit.target,clock.elapsedTime)?{label:state.pursuit.target.stats.label,i:state.enemies.indexOf(state.pursuit.target),left:+(state.pursuit.until-clock.elapsedTime).toFixed(2)}:null, pursuitHits:window.__dbgPursuit||0, chain: state.masteryChain && clock.elapsedTime <= state.masteryChain.until && !state.masteryChain.target.dead ? {count:state.masteryChain.count,left:+(state.masteryChain.until-clock.elapsedTime).toFixed(2),label:state.masteryChain.target.stats.label} : null, slowed:state.enemies.filter(e=>!e.dead&&enemyMoveScale(e,clock.elapsedTime)<1).length, skills: { ...state.skills }, windCd:+Math.max(0,state.windCdUntil-clock.elapsedTime).toFixed(2), windshot:state.windshot?{left:state.windshot.left,pos:state.windshot.pos.toArray(),dir:state.windshot.dir.toArray()}:null, windResult:state.windResult||null, fx:skillFxPool.filter(f=>f.root.visible).map(f=>({kind:f.kind,position:f.root.position.toArray(),age:+(clock.elapsedTime-f.start).toFixed(2)})), whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2), riposteLeft: +Math.max(0, (state.riposteUntil || 0) - clock.elapsedTime).toFixed(2), riposteDodge: state.riposteDodge || 0 }; },
     enemyProbe() { let e = null, bd = 1e9; for (const x of state.enemies) { if (x.dead) continue; const d = x.root.position.distanceTo(state.player.position); if (d < bd) { bd = d; e = x; } } return e ? { label: e.stats.label, hp: e.hp, maxHp: e.stats.hp, guard: !!e.stats.guard, staggered: !!(e.staggerUntil && clock.elapsedTime < e.staggerUntil), dist: +bd.toFixed(2) } : null; },
     fadeDebug(cx, cz, r) { let f = 0, n = 0; for (const t of treeFades) { if (cx !== undefined && Math.hypot(t.x - cx, t.z - cz) > r) continue; n++; if (t.op < 0.5) f++; } return { faded: f, total: n }; },
     playerOpacity() { return +playerFade.op.toFixed(2); },
@@ -1835,7 +1838,7 @@ function openSkillTree() {
   const list = document.getElementById('dlg-list');
   const btns = document.getElementById('dlg-btns');
   const renderTree = () => {
-    document.getElementById('dlg-text').innerHTML = `보유 스킬 포인트 <b>${state.skillPts || 0}</b> · 레벨업 시 +1<br><small>강풍: 강공격 강화 · 질풍: 회피 강화 · 선풍: 회전베기(신규 기술)</small>`;
+    document.getElementById('dlg-text').innerHTML = `보유 스킬 포인트 <b>${state.skillPts || 0}</b> · 레벨업 시 +1<br><small>원풍: 바람칼날 · 강풍: 강공격 · 질풍: 회피 · 선풍: 회전베기</small>`;
     list.innerHTML = SKILLS.map((s) => {
       const owned = hasSkill(s.id);
       const locked = s.req && !hasSkill(s.req);
@@ -1844,10 +1847,10 @@ function openSkillTree() {
       return `<div class="shoprow"><div class="info">${owned ? '<b style="color:#8fd68f">[습득]</b> ' : locked ? '<small>[잠김] </small>' : ''}<b>${s.branch} · ${s.name}</b><br><small>${s.desc}${locked ? ` (선행: ${reqName})` : ''}</small></div>${!owned && !locked ? `<button data-skill="${s.id}" ${can ? '' : 'disabled'}>습득 (1P)</button>` : ''}</div>`;
     }).join('');
     const safe = masterySafe();
-    list.innerHTML += `<div class="shoprow"><div class="info"><b>Lv.8 전투 숙련 · 2택1</b><br><small>현재: ${MASTERIES.find(m=>m.id===state.mastery)?.name || '미선택'} · 기존 스킬/포인트 유지<br>장로 곁 2.6m · 주변 12m 적 없음일 때 무료 선택·교체. 전투 중 교체 불가.</small></div></div>` + MASTERIES.map(m=>{
+    list.innerHTML += `<div class="shoprow"><div class="info"><b>Lv.8 전투 숙련 · 3택1</b><br><small>현재: ${MASTERIES.find(m=>m.id===state.mastery)?.name || '미선택'} · 기존 스킬/포인트 유지<br>장로 곁 2.6m · 주변 12m 적 없음일 때 무료 선택·교체. 전투 중 교체 불가.</small></div></div>` + MASTERIES.map(m=>{
       const owned = state.mastery === m.id;
       const can = safe && (!m.req || hasSkill(m.req));
-      return `<div class="shoprow"><div class="info"><b>${m.name}${owned ? ' [선택 중]' : ''}</b><br><small>${m.desc}${m.req && !hasSkill(m.req) ? ' (회전베기 습득 필요)' : ''}</small></div><button data-mastery="${m.id}" ${!can || owned ? 'disabled' : ''}>${owned?'선택 중':'무료 선택'}</button></div>`;
+      return `<div class="shoprow"><div class="info"><b>${m.name}${owned ? ' [선택 중]' : ''}</b><br><small>${m.desc}${m.req && !hasSkill(m.req) ? ` (${SKILLS.find(s=>s.id===m.req)?.name||m.req} 습득 필요)` : ''}</small></div><button data-mastery="${m.id}" ${!can || owned ? 'disabled' : ''}>${owned?'선택 중':'무료 선택'}</button></div>`;
     }).join('');
     list.querySelectorAll('button[data-mastery]').forEach(b=>b.addEventListener('click',()=>{
       const m = MASTERIES.find(m=>m.id===b.dataset.mastery);
@@ -3526,12 +3529,15 @@ function playerAttackHit() {
     const d = to.length();
     if (d > range || observatoryBlocked(p,e.root.position)) continue;
     if (fwd.angleTo(to.normalize()) > PLAYER.arc / 2) continue;
-    let dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * mult);
+    const guardNow=(e.stats.echoBoss&&state.echoFight?.shield)||(e.stats.guard&&!(e.staggerUntil&&now<e.staggerUntil));
+    const pursuitHit=!strong&&!guardNow&&pursuitReady(e,now);
+    let dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * mult * (pursuitHit?1.5:1));
     let bladeHit=false;
     if (!bladeUsed && state.bladeUntil && now < state.bladeUntil) { bladeHit=true; dmg = Math.round(dmg * 1.6); bladeUsed = true; state.bladeUntil = 0; } // 칼바람
     const guardHeld = e.stats.guard && !(e.staggerUntil && now < e.staggerUntil) && !strong;
     const beforeHp = e.hp;
     damageEnemy(e, dmg, strong || (chainBreak && e === chainTarget));
+    if(pursuitHit&&e.hp<beforeHp){state.pursuit=null;state.windCdUntil=Math.max(now,state.windCdUntil-2);window.__dbgPursuit=(window.__dbgPursuit||0)+1;skillFx(e.root.position,0xffc862,1.5,'hit');sfx('reward',.55);toast('추격 성공! 일반 타격1.5배 · 바람칼날 쿨 -2초');}
     if(strong) skillFx(e.root.position,0xffd68b,1.15,'hit');
     else if(bladeHit) skillFx(e.root.position,0xc5a1ff,.85,'hit');
     consumeRiposte(e, now, guardHeld && !(chainBreak && e === chainTarget), beforeHp);
@@ -3621,10 +3627,18 @@ function updateWindshot(dt,now){
     let target=null,best=Infinity;for(const e of state.enemies){if(e.dead||e.root.position.clone().sub(w.origin).dot(w.dir)<0)continue;const d=segmentDistance(e.root.position,w.pos,next);if(d<.7){const t=e.root.position.clone().sub(w.pos).dot(w.dir);if(t<best){best=t;target=e}}}
     if(!target&&hitObservatoryBell(w,next)){cancelWindshot('bell');break;}
     w.pos.copy(next);w.left-=step;remaining-=step;
-    if(target){const guard=(target.stats.echoBoss&&state.echoFight?.shield)||(target.stats.guard&&!(target.staggerUntil&&now<target.staggerUntil));damageEnemy(target,w.dmg,false);skillFx(target.root.position,guard?0xa4b5c0:0xffe29b,1.2,'hit');cancelWindshot(guard?'guard':'hit');break;}
+    if(target){const guard=(target.stats.echoBoss&&state.echoFight?.shield)||(target.stats.guard&&!(target.staggerUntil&&now<target.staggerUntil)),before=target.hp;damageEnemy(target,w.dmg,false);if(activeMastery('pursuit')&&!guard&&!target.dead&&target.hp<before){state.pursuit={target,until:now+4};skillFx(target.root.position,0xffc862,1,'ready');toast('추격 표식! 4초 안에 같은 적을 일반 근접 타격');}skillFx(target.root.position,guard?0xa4b5c0:0xffe29b,1.2,'hit');cancelWindshot(guard?'guard':'hit');break;}
     if(w.left<=.0001){cancelWindshot('range');break;}
   }
   if(state.windshot&&windVisual){windVisual.position.copy(w.pos);windVisual.rotation.y=Math.atan2(w.dir.x,w.dir.z);}
+}
+
+let pursuitVisual=null;
+function updatePursuit(now){
+ const m=state.pursuit;if(m&&!pursuitReady(m.target,now))state.pursuit=null;
+ const show=state.pursuit&&!state.dead&&!state.dialog&&!state.menuOpen;
+ if(show&&!pursuitVisual){const root=new THREE.Group(),mat=new THREE.MeshBasicMaterial({color:0xffcf68,transparent:true,opacity:.85,depthWrite:false});const ring=new THREE.Mesh(new THREE.TorusGeometry(.85,.055,6,32),mat);ring.rotation.x=Math.PI/2;ring.position.y=.15;root.add(ring);const gem=new THREE.Mesh(new THREE.OctahedronGeometry(.16),mat);gem.position.y=2.7;root.add(gem);const label=makeNameSprite('추격 표식');label.position.y=3.1;root.add(label);scene.add(root);pursuitVisual={root,ring,gem};}
+ if(!pursuitVisual)return;pursuitVisual.root.visible=!!show;if(show){pursuitVisual.root.position.copy(state.pursuit.target.root.position);pursuitVisual.ring.scale.setScalar(1+.08*Math.sin(now*8));pursuitVisual.gem.rotation.y=now*2;}
 }
 
 // 감시자 고유 패턴: 고정된 붉은 원 예고 -> 지면파 -> 푸른 반격 시간.
@@ -4044,6 +4058,7 @@ function tick() {
     updateSwamp(now);
     updateWindshot(dt,now);
     updateSkillFx(now);
+    updatePursuit(now);
     updateGolden(now);
     updateRings(dt);
     updateShrines(now);
@@ -4167,13 +4182,14 @@ function tick() {
     sun.target.updateMatrixWorld();
 
     const riposteLeft = Math.max(0, (state.riposteUntil || 0) - now);
+    const pursuit=state.pursuit;
     const chain = state.masteryChain;
     const chainLive = chain && now <= chain.until && !chain.target.dead;
     const slowCount = state.enemies.filter(e=>!e.dead&&enemyMoveScale(e,now)<1).length;
     riposteHud.style.whiteSpace = 'pre-line';
     riposteHud.style.textAlign = 'center';
-    riposteHud.style.display = (riposteLeft > 0 || chainLive || slowCount > 0) && !state.dead && !state.dialog && !state.menuOpen ? 'block' : 'none';
-    riposteHud.textContent = [riposteLeft > 0 ? `역풍 ${Math.ceil(riposteLeft)}초 · 근접 반격 시 체력+12` : '', chainLive ? `연격 ${chain.count}/3 · ${Math.ceil(chain.until-now)}초 내 같은 적` : '', slowCount ? `돌풍 · 일반 적 ${slowCount}마리 이동 감속` : ''].filter(Boolean).join('\n');
+    riposteHud.style.display = (riposteLeft > 0 || chainLive || slowCount > 0 || pursuit) && !state.dead && !state.dialog && !state.menuOpen ? 'block' : 'none';
+    riposteHud.textContent = [pursuit?`추격 · ${pursuit.target.stats.label} · ${Math.ceil(pursuit.until-now)}초 내 일반 타격`: '', riposteLeft > 0 ? `역풍 ${Math.ceil(riposteLeft)}초 · 근접 반격 시 체력+12` : '', chainLive ? `연격 ${chain.count}/3 · ${Math.ceil(chain.until-now)}초 내 같은 적` : '', slowCount ? `돌풍 · 일반 적 ${slowCount}마리 이동 감속` : ''].filter(Boolean).join('\n');
     hpbar.style.width = `${(state.hp / state.maxHp) * 100}%`;
     hpbar.style.background = now < state.poisonUntil ? '#a05ad0' : (state.hp > 40 ? '#5ad06a' : '#e05252');
     drawMinimap();
