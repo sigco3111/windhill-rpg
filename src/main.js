@@ -359,7 +359,7 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   windCdUntil: 0, windshot: null, mastery: null, masteryChain: null, skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0, poisonUntil: 0, poisonTickAt: 0,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
-  level: 1, xp: 0, echo: 0, cartStage: 0,
+  level: 1, xp: 0, echo: 0, cartStage: 0, courier: 0,
   bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
@@ -513,7 +513,7 @@ function updateBossPlate() {
   const echoShield=t.stats.echoBoss&&state.echoFight?.shield;
   const pulse = echoShield ? ' - 보호막 · 봉인석 해제' : t.stats.ruinWarden ? (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '') : '';
   const stag = t.staggerUntil && clock.elapsedTime < t.staggerUntil;
-  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse + (t.stats.stormWasp ? (t.stormAt ? ' - 돌진! 옆으로 회피' : t.stormRun ? ' - 돌진 중' : t.stormRecover > clock.elapsedTime ? ' - 반격 기회' : '') : '') + (t.stats.rangedSpit ? (t.spitAt ? ' - 독침! 옆으로 회피' : t.spitLeft>0 ? ' - 독침 비행' : t.spitRecover>clock.elapsedTime ? ' - 반격 기회' : ' - 거리 유지') : '');
+  document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse + (t.stats.stormWasp ? (t.stormAt ? ' - 돌진! 옆으로 회피' : t.stormRun ? ' - 돌진 중' : t.stormRecover > clock.elapsedTime ? ' - 반격 기회' : '') : '') + (t.stats.rangedSpit ? (t.spitAt ? ' - 독침! 옆으로 회피' : t.spitLeft>0 ? ' - 독침 비행' : t.spitRecover>clock.elapsedTime ? ' - 반격 기회' : ' - 거리 유지') : '') + (t.stats.archer ? (t.archerAt ? ' - 세 갈래 사격! 엄폐/옆으로 회피' : t.archerRecover>clock.elapsedTime ? ' - 사격 후 빈틈' : ' - 궁수') : '');
   document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
 }
 
@@ -879,7 +879,7 @@ async function build() {
     const anim = new AnimSet(root, gltf.animations);
     anim.play('walking', 'walk', 'jump', 'idle');
     const e = { root, anim, angle: Math.atan2(x, z), stats: st, home: new THREE.Vector3(x, 0, z), hp: st.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 };
-    if ((st.guard || st.ruinWarden || st.stormWasp || st.rangedSpit) && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
+    if ((st.guard || st.ruinWarden || st.stormWasp || st.rangedSpit || st.archer) && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
     state.enemies.push(e);
     return e;
   };
@@ -1272,6 +1272,7 @@ async function build() {
   buildObservatory();
   buildEchoSite();
   buildCart();
+  buildCourierSite();
 
   // NPC 마을 장로 (KayKit Mage, CC0) — 광장 분수 옆
   try {
@@ -1338,6 +1339,7 @@ async function build() {
       state.player.rotation.y = state.heading;
     },
     beaconInfo(){return{...state.beacon,status:beaconStatus(),target:beaconTarget(),fight:state.beaconFight?{step:state.beaconFight.step,enemies:state.beaconFight.enemies.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),guard:e.stats.guard,label:e.stats.label}))}:null}},
+    courierInfo(){return{stage:state.courier||0,status:courierStatus(),target:courierTarget(),fight:state.courierFight?state.courierFight.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),aim:e.archerAt||0,next:e.archerNext||0,recover:e.archerRecover||0,fired:e.archerFired||0,walls:e.archerWalls||0,hits:e.archerHits||0,dodges:e.archerDodges||0,interrupts:e.archerInterrupts||0,result:e.archerResult||null,lines:(e.archerLines||[]).filter(m=>m.visible).length,arrows:(e.arrows||[]).map(a=>({left:a.left,pos:a.root.position.toArray(),visible:a.root.visible,dir:a.dir.toArray()}))})):null}},
     cartInfo(){const f=state.cartRun;return{stage:state.cartStage||0,status:cartStatus(),pos:state.cartModel.root.position.toArray(),run:f?{hp:f.hp,wave:f.wave,moved:f.moved,total:f.total,raiders:f.raiders.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray()}))}:null}},
     echoInfo(){const f=state.echoFight;return{done:state.echo||0,status:echoStatus(),target:echoTarget(),fight:f?{phase:f.phase,sequence:f.sequence,shield:f.shield,hp:f.boss.hp,i:state.enemies.indexOf(f.boss),pos:f.boss.root.position.toArray(),dead:f.boss.dead,pulseAt:f.boss.pulseAt||0}:null}},
     observatoryInfo(){return{step:state.observatory||0,status:observatoryStatus(),target:observatoryTarget(),doors:colliders.filter(c=>c.observatoryDoor).length,enemies:(state.observatoryFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),label:e.stats.label}))}},
@@ -1502,7 +1504,7 @@ function openCampaignJournal(){
   }
   html+=`<br><b>성장 선택</b><br>Lv.${state.level} · 스킬 포인트 ${state.skillPts||0}P · 습득 ${SKILLS.filter(k=>state.skills[k.id]).length}/${SKILLS.length}<br>포인트가 있어도 스킬은 자동으로 배우지 않는다. 스킬 창에서 설명과 선행 조건을 확인하자.`;
   html+='<br><br><b>선택 탐험</b> · 메인 의뢰와 별도<br>';
-  const optional=[['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
+  const optional=[['북서 전령길',courierStatus()],['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
   html+=optional.map(([k,v])=>`<div style="padding:6px 0;border-top:1px solid #445"><b>${k}</b><br>${v}</div>`).join('');
   html+='<br><small>이 일지는 기존 의뢰와 탐험의 진행 안내다. 장 수는 새 콘텐츠 분량이나 권장 플레이 시간을 뜻하지 않는다.</small>';
   const buttons=[];
@@ -1588,6 +1590,7 @@ function tryInteract() {
   if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { state.dlgFocus = state.npc.pos; openDialog(); return; }
   if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); return; }
   if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); return; }
+  const courier=nearbyCourier();if(courier){openCourier(courier);return;}
   if(nearbyCart()){openCart();return;}
   const echo=nearbyEcho(); if(echo){openEcho(echo);return;}
   const obs=nearbyObservatory(); if(obs){openObservatoryDialog(obs);return;}
@@ -1920,6 +1923,7 @@ function drawMinimap() {
   if (state.swampPos) dot(state.swampPos.x, state.swampPos.z, '#8aa24f', 4); // 독 늪지대
   if (state.ruinsPos) dot(state.ruinsPos.x, state.ruinsPos.z, state.ruinsFound ? '#d8cba8' : '#b8b2a6', 4); // 잊힌 유적: 미발견 회색 → 발견 후 모래색
   for (const d of state.journeySites || []) dot(d.x,d.z,state.journey>d.step?'#8aa2a2':'#8be1e5',3);
+  if(state.courier!==3)dot(-47,-14,'#f2ce81',4);
   if(state.cartModel&&state.cartStage!==3)dot(state.cartModel.root.position.x,state.cartModel.root.position.z,'#78e4d8',4);
   dot(-8,-58,state.echo===2?'#d8c47c':'#bca0fa',4);
   dot(60,5,state.observatory===4?'#e8cf7c':'#6ee0ed',4);
@@ -2065,7 +2069,7 @@ function saveGame() {
       bounty: state.bounty, tracked: state.tracked || 'auto', mastery: state.mastery || null, skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       observatory: state.observatory || 0, observatorySeen: !!state.observatorySeen,
       beacon: {step:state.beacon?.step||0,supply:state.beacon?.supply||null},
-      cartStage: state.cartStage || 0,
+      cartStage: state.cartStage || 0, courier: state.courier || 0,
       echo: state.echo || 0,
       journey: state.journey || 0, journeyEnding: state.journeyEnding || null,
       sealSolved: !!state.sealSolved,
@@ -2104,6 +2108,7 @@ function loadGame() {
     state.journey = Number.isInteger(s.journey) ? Math.max(0,Math.min(5,s.journey)) : 0;
     state.journeyEnding = ['remember','share'].includes(s.journeyEnding) && state.journey === 5 ? s.journeyEnding : null;
     state.observatory = Number.isInteger(s.observatory) ? Math.max(0,Math.min(4,s.observatory)) : 0;
+    state.courier=Number.isInteger(s.courier)?Math.max(0,Math.min(3,s.courier)):0;
     state.cartStage=Number.isInteger(s.cartStage)?Math.max(0,Math.min(3,s.cartStage)):0;
     state.cartModel.root.position.set(cartPoint().x,0,cartPoint().z);
     state.echo=Number.isInteger(s.echo)?Math.max(0,Math.min(2,s.echo)):0;
@@ -2663,6 +2668,42 @@ function updateObservatory(){
  state.observatoryFight=defs.map(([proto,stats,x,z])=>{const e=state.spawn(proto,{...stats,noElite:true,noRespawn:true},x,z);e.trial=true;e.expedition=true;e.observatoryGuard=true;if(!e.nameSprite){e.nameSprite=makeNameSprite(stats.label);e.nameSprite.position.y=2.3;e.root.add(e.nameSprite)}return e;});
 }
 
+// ---------- 북서 전령길: 엄폐와 세 갈래 사격 ----------
+const COURIER_CENTER={x:-54,z:-23},COURIER_BOARD={x:-47,z:-14,name:'북서 전령길 안내판',id:'board'},COURIER_BOX={x:-54,z:-31,name:'전령의 봉인함',id:'box'};
+function courierStatus(){if(state.courier===3)return '북서 전령 기록 인계 완료';if(state.courier===2)return '전령길 안내판에 기록 인계';if(state.courier===1)return '길 안쪽 봉인함 회수';if(state.courierFight)return `전령길 궁수 ${(state.courierFight||[]).filter(e=>!e.dead).length}명 · 엄폐/사격 예고 끊기`;return state.quest.idx>=10?'북서 전령길 안내판에서 시작':'메인 의뢰 10개 완료 후 도전';}
+function courierTarget(){if(state.courier===3||state.quest.idx<10)return null;const d=state.courier===1?COURIER_BOX:state.courierFight?COURIER_CENTER:COURIER_BOARD;return{x:d.x,z:d.z,label:state.courierFight?'전령길 엄폐 전투':d.name};}
+function buildCourierSite(){
+ const wood=new THREE.MeshLambertMaterial({color:0x82613e}),stone=new THREE.MeshLambertMaterial({color:0x7a8c99});
+ state.courierProps=[COURIER_BOARD,COURIER_BOX].map(d=>{const root=new THREE.Group();root.position.set(d.x,0,d.z);const body=new THREE.Mesh(new THREE.BoxGeometry(d.id==='board'?1.5:1.1,d.id==='board'?.65:.7,.65),wood);body.position.y=d.id==='board'?1.3:.4;root.add(body);if(d.id==='board'){const post=new THREE.Mesh(new THREE.BoxGeometry(.15,1.6,.15),wood);post.position.y=.8;root.add(post)}else{const band=new THREE.Mesh(new THREE.BoxGeometry(1.15,.1,.7),stone);band.position.y=.65;root.add(band)}const gem=new THREE.Mesh(new THREE.OctahedronGeometry(.2),new THREE.MeshBasicMaterial({color:0xf2ce81}));gem.position.y=d.id==='board'?2.05:1.25;root.add(gem);const label=makeNameSprite(d.name);label.position.y=d.id==='board'?2.5:1.8;root.add(label);scene.add(root);return{...d,root,gem}});
+ for(const [x,z] of [[-57,-20],[-51,-22],[-54,-26]]){const m=new THREE.Mesh(new THREE.BoxGeometry(1.7,1.7,1.7),stone);m.position.set(x,.85,z);scene.add(m);registerTreeFade(m,x,z);colliders.push({x,z,r:1.1,courierCover:true});const cap=new THREE.Mesh(new THREE.BoxGeometry(1.95,.2,1.95),wood);cap.position.set(x,1.8,z);scene.add(cap);registerTreeFade(cap,x,z);}
+}
+function nearbyCourier(){if(!state.ready||state.dead)return null;return(state.courierProps||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.2)||null;}
+function cancelArcher(e,result='cancelled'){if(!e.stats.archer)return;if(result==='interrupted'&&(e.archerAt||(e.arrows||[]).some(a=>a.left>0)))e.archerInterrupts=(e.archerInterrupts||0)+1;e.archerAt=0;e.archerRecover=0;if(e.archerLines)for(const m of e.archerLines)m.visible=false;if(e.arrows)for(const a of e.arrows){a.left=0;a.root.visible=false;}e.archerResult=result;}
+function clearCourierFight(){const es=state.courierFight;if(!es)return;for(const e of es){cancelArcher(e);e.dead=true;e.despawned=true;if(e.tele)scene.remove(e.tele);if(e.archerLines)for(const m of e.archerLines)scene.remove(m);if(e.arrows)for(const a of e.arrows)scene.remove(a.root);scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1)}state.courierFight=null;}
+function startCourierFight(){if(state.quest.idx<10||state.courier||state.courierFight||!state.protos.skel)return;clearCartRun();clearEchoFight();clearObservatoryFight();clearBeaconFight();if(state.trial?.active)endTrial(false);
+ state.courierFight=[[-61,-24],[-54,-32],[-46,-26]].map(([x,z])=>{const e=state.spawn(state.protos.skel,{...ENEMY,hp:70,dmg:10,speed:2.2,aggro:17,range:1.7,cd:1.7,label:'전령길 궁수',archer:true,noElite:true,noRespawn:true},x,z);e.expedition=true;e.trial=true;e.archerNext=clock.elapsedTime+1.8;const bow=new THREE.Group(),mat=new THREE.MeshLambertMaterial({color:0xb8864c});const curve=new THREE.Mesh(new THREE.TorusGeometry(.48,.055,5,18,Math.PI),mat);curve.rotation.z=Math.PI/2;bow.add(curve);bow.add(new THREE.Mesh(new THREE.BoxGeometry(.025,.96,.025),new THREE.MeshBasicMaterial({color:0xeee4c9})));bow.position.set(-.48,1.25,.15);e.root.add(bow);return e});state.tracked='courier';closeDialog();toast('궁수의 세 갈래 예고! 기둥 엄폐 또는 바람칼날로 준비 끊기');
+}
+function openCourier(d){state.dlgFocus=d.root.position;
+ if(d.id==='box'){if(state.courier===1){journeyDialog('지켜 낸 봉인함','봉인함에는 다음 마을로 이어지는 대피 경로가 담겨 있다. 화살에 찢기지 않은 기록을 가져가자.',[['봉인함 회수',()=>{if(state.courier!==1||nearbyCourier()?.id!=='box')return;state.courier=2;saveGame();closeDialog();sfx('reward',.7);toast('봉인함 회수 · 전령길 안내판으로 돌아가 기록 인계');}]]);}else journeyDialog(d.name,state.courier>=2?'봉인함의 기록은 이미 회수했다.':'궁수의 사격이 닿는 길이다. 안내판에서 전령길을 확보한 뒤 회수하자.');return;}
+ if(state.courier===3){journeyDialog('북서 전령 기록','엄폐물 사이의 길을 다시 열고 대피 경로를 돌려주었다.<br>기록: <b>바람길 전령</b> · 보상은 이미 받았다.');return;}
+ if(state.courier===2){journeyDialog('전령 기록 인계','봉인함의 경로를 마을에 전한다. 기록 <b>바람길 전령</b>과 한 번만 <b>180XP · 120G</b>를 받는다.',[['전령 기록 인계',()=>{if(state.courier!==2||nearbyCourier()?.id!=='board')return;state.courier=3;state.gold+=120;gainXp(180);if(state.tracked==='courier')state.tracked='auto';saveGame();closeDialog();sfx('reward',1);toast('바람길 전령 · 180XP · 120G');}]]);return;}
+ const text='기록을 나르던 전령이 북서 길에서 봉인함을 남기고 돌아왔다. 세 궁수가 길을 막고 있다.<br><br><b>메인 의뢰 10개 완료 후 시작</b><br>궁수는 마지막으로 본 방향에 <b>세 갈래 붉은 사격 예고</b>를 남긴 뒤 화살을 쏜다. 옆으로 피하거나 <b>기둥 뒤</b>에 숨자. 화살과 바람칼날 모두 기둥에 막힌다.<br>바람칼날·근접 적중으로 사격 준비를 끊을 수 있다. 발사 후 잠깐의 빈틈에 접근하자. 가까이 붙으면 근접 공격도 한다.<br><br>궁수 3명을 처치한 뒤 안쪽 봉인함을 회수해 이 안내판에 인계한다. 궁수별 전리품은 없다. <b>도전료 없음</b>. 사망·중앙에서20m 이탈·재접속은 이번 전투만 초기화하며 기존 진행은 보존한다. 전투 승리와 봉인함 회수는 각각 저장된다.<br>최종 1회180XP·120G.';
+ journeyDialog('북서 전령길',courierStatus()+'<br><br>'+text,state.quest.idx>=10&&!state.courier&&!state.courierFight?[["전령길 확보 시작",()=>{if(nearbyCourier()?.id==='board')startCourierFight();}]]:[]);
+}
+function updateCourier(){const es=state.courierFight;if(!es)return;if(state.dead||Math.hypot(state.player.position.x+54,state.player.position.z+23)>20){clearCourierFight();toast('전령길 전투 중단 · 안내판에서 무료 재도전');return;}if(es.every(e=>e.dead)){clearCourierFight();state.courier=1;saveGame();sfx('reward',.8);toast('사격이 멎었다! 안쪽 전령의 봉인함을 회수하자.');}}
+let archerResources=null;
+function makeArcherShots(e){if(e.arrows)return;if(!archerResources)archerResources={line:new THREE.PlaneGeometry(.32,14),shaft:new THREE.BoxGeometry(.065,.065,1.1),tip:new THREE.ConeGeometry(.12,.3,5),lineMat:new THREE.MeshBasicMaterial({color:0xff735c,transparent:true,opacity:.4,depthWrite:false,side:THREE.DoubleSide}),arrowMat:new THREE.MeshBasicMaterial({color:0xffe8b2})};const r=archerResources;e.archerLines=[];e.arrows=[];for(let i=0;i<3;i++){const line=new THREE.Mesh(r.line,r.lineMat);line.rotation.x=-Math.PI/2;line.visible=false;scene.add(line);e.archerLines.push(line);const root=new THREE.Group(),shaft=new THREE.Mesh(r.shaft,r.arrowMat),tip=new THREE.Mesh(r.tip,r.arrowMat);tip.rotation.x=Math.PI/2;tip.position.z=.65;root.add(shaft,tip);root.visible=false;scene.add(root);e.arrows.push({root,left:0,dir:new THREE.Vector3()});}}
+function archerAimLength(from,dir){let length=14;for(const c of colliders){const dx=c.x-from.x,dz=c.z-from.z,t=dx*dir.x+dz*dir.z,r=c.r+.15,perp=dx*dx+dz*dz-t*t;if(t>0&&perp<r*r)length=Math.min(length,Math.max(0,t-Math.sqrt(r*r-perp)));}return length;}
+function updateArcher(e,dt,now){if(!e.stats.archer)return false;
+ if(state.dead||state.dialog||state.menuOpen||e.dead){cancelArcher(e);e.archerNext=now+1.6;e.anim.update(dt);return true;}
+ if(now<(e.hitUntil||0)||now<(e.staggerUntil||0)){cancelArcher(e,'interrupted');e.archerNext=now+1.6;e.anim.update(dt);return true;}
+ makeArcherShots(e);const p=state.player.position;let flying=false;
+ for(const a of e.arrows){if(a.left<=0)continue;flying=true;const from=a.root.position.clone(),step=Math.min(a.left,10*dt),to=from.clone().addScaledVector(a.dir,step);if(colliders.some(c=>segmentDistance(c,from,to)<c.r+.15)){a.left=0;a.root.visible=false;e.archerWalls=(e.archerWalls||0)+1;e.archerResult='wall';}else if(segmentDistance(p,from,to)<.65){a.left=0;a.root.visible=false;if(!e.archerBatchHit){e.archerBatchHit=true;if(now<state.invUntil){registerDodgeBlock(now);e.archerDodges=(e.archerDodges||0)+1;e.archerResult='dodge';}else if(now>=(state.arrowSafeUntil||0)){state.arrowSafeUntil=now+.35;state.hp=Math.max(0,state.hp-Math.max(1,e.stats.dmg-GEAR_DEF[state.gear.armor]));hitFlash(state.player);sfx('hurt',.7);e.archerHits=(e.archerHits||0)+1;e.archerResult='hit';if(state.hp<=0)playerDie(e.stats.label);}}}else{a.root.position.copy(to);a.left-=step;if(a.left<=0){a.root.visible=false;e.archerResult='miss';}}}
+ if(e.archerAt){e.mode='archerAim';if(now>=e.archerAt){e.archerAt=0;for(const l of e.archerLines)l.visible=false;for(let i=0;i<3;i++){const a=e.arrows[i];a.root.position.copy(e.archerFrom);a.root.position.y=.8;a.dir.copy(e.archerDirs[i]);a.root.rotation.y=Math.atan2(a.dir.x,a.dir.z);a.root.visible=true;a.left=14;}e.archerBatchHit=false;e.archerRecover=now+2;e.archerNext=now+5;e.archerFired=(e.archerFired||0)+1;e.archerResult='flying';e.anim.playOnce('attack');}e.anim.update(dt);return true;}
+ if(flying||now<(e.archerRecover||0)){e.mode='archerRecover';e.anim.update(dt);return true;}
+ const dir=p.clone().sub(e.root.position);dir.y=0;const d=dir.length();if(d<2.4)return false;e.anim.play('idle');e.mode='archerWait';if(d<17&&now>=(e.archerNext||0)){dir.normalize();e.root.rotation.y=Math.atan2(dir.x,dir.z);e.archerFrom=e.root.position.clone();e.archerDirs=[-.25,0,.25].map(a=>dir.clone().applyAxisAngle(new THREE.Vector3(0,1,0),a));e.archerAt=now+1.2;e.archerResult='aim';e.pendingHit=0;e.combo2=0;if(e.tele)e.tele.visible=false;for(let i=0;i<3;i++){const l=e.archerLines[i],v=e.archerDirs[i],length=archerAimLength(e.archerFrom,v);l.scale.y=length/14;l.position.copy(e.archerFrom).addScaledVector(v,length/2);l.position.y=.075;l.rotation.z=Math.atan2(v.x,v.z);l.visible=length>.05;}}e.anim.update(dt);return true;
+}
+
 // ---------- 관측 기록 운반: 수레를 노리는 습격자 호위 ----------
 const CART_ROUTE=[{x:48,z:-7,name:'관측소 앞 출발지'},{x:34,z:1,name:'들판 중간 쉼터'},{x:18,z:5,name:'마을 앞 인계소'}];
 function cartPoint(){return CART_ROUTE[state.cartStage===1?1:state.cartStage>=2?2:0]}
@@ -2737,7 +2778,7 @@ const JOURNEY_SITES = [
    title:'셋째 날 - 남겨진 이름',story:'이정표 뒤에 짧은 글이 새겨져 있다.<br>"이름을 남겨 달라는 부탁을 받았다. 하지만 내 이름보다 여울의 위치를 적는 편이 낫겠다. 나를 기억하지 않아도 괜찮다. 다음 여행자가 돌아갈 길을 알면 된다."<br>아래에는 마을을 향한 화살표와 삐뚤빼뚤한 작은 글씨가 있다.<br>"덕분에 집에 왔어요."',
    next:'세 기록을 연결했다. <b>마을 장로</b>에게 돌아가 순례자의 이야기를 전하자.'},
 ];
-function journeyClearing(x,z) { if((x>31&&x<51&&Math.abs(z-(-7+(48-x)*8/14))<3.2)||(x>15&&x<37&&Math.abs(z-(1+(34-x)/4))<3.2))return true; if(Math.hypot(x+8,z+58)<12)return true; if(x>48&&x<73&&z>-13&&z<16)return true; return [[10,10],[0,28],[-20,18],[18,40],[8,60],[-32,18],[-17,44],[43,29]].some(([a,b])=>Math.hypot(x-a,z-b)<8); }
+function journeyClearing(x,z) { if(Math.hypot(x+54,z+23)<14)return true; if((x>31&&x<51&&Math.abs(z-(-7+(48-x)*8/14))<3.2)||(x>15&&x<37&&Math.abs(z-(1+(34-x)/4))<3.2))return true; if(Math.hypot(x+8,z+58)<12)return true; if(x>48&&x<73&&z>-13&&z<16)return true; return [[10,10],[0,28],[-20,18],[18,40],[8,60],[-32,18],[-17,44],[43,29]].some(([a,b])=>Math.hypot(x-a,z-b)<8); }
 function buildJourneySites() {
   state.journeySites=JOURNEY_SITES.map(d=>{
     const root=new THREE.Group();root.position.set(d.x,0,d.z);
@@ -3274,6 +3315,7 @@ function objectiveTarget() {
   if (!state.npc) return null;
   const mode = state.tracked || 'auto';
   if (mode === 'none') return null;
+  if (mode === 'courier') return courierTarget() || autoObjective();
   if (mode === 'cart') return cartTarget() || autoObjective();
   if (mode === 'echo') return echoTarget() || autoObjective();
   if (mode === 'observatory') return observatoryTarget() || autoObjective();
@@ -3297,6 +3339,7 @@ function cycleTrack() {
   if (beaconTarget()) opts.push('beacon');
   if (observatoryTarget()) opts.push('observatory');
   if (echoTarget()) opts.push('echo');
+  if (courierTarget()) opts.push('courier');
   if (cartTarget()) opts.push('cart');
   opts.push('none');
   const cur = opts.indexOf(state.tracked || 'auto');
@@ -3431,6 +3474,7 @@ function killEnemy(e) {
   cancelWardenPulse(e);
   cancelStormCharge(e);
   cancelFrogSpit(e);
+  cancelArcher(e);
   e.anim.playOnce('death_a', 'death');
   sfx('death', 0.9);
   e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
@@ -3819,6 +3863,7 @@ function updateEnemy(e, dt, now) {
     e.anim.update(dt);
     return;
   }
+  if (updateArcher(e,dt,now))return;
   if (updateCartRaider(e,dt,now))return;
   if (updateFrogSpit(e, dt, now)) return;
   if (updateWardenPulse(e, dt, now)) return;
@@ -3933,6 +3978,7 @@ function updateEnemy(e, dt, now) {
 function playerDie(killerLabel) {
   state.dead = true;
   clearCartRun();
+  clearCourierFight();
   clearEchoFight();
   clearObservatoryFight();
   cancelWindshot('death');
@@ -4070,6 +4116,7 @@ function tick() {
     updateObservatory();
     updateEcho();
     updateCart(dt,now);
+    updateCourier();
     checkAch();
     updateWeather(dt, now);
 
@@ -4087,14 +4134,15 @@ function tick() {
     }
     const trialNear = state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8 && !state.dead;
     const promptEl = document.getElementById('prompt');
+    const courierNear=nearbyCourier();
     const cartNear=nearbyCart();
     const echoNear=nearbyEcho();
     const obsNear=nearbyObservatory();
     const sealNear = nearbySeal();
     const journeyNear = nearbyJourneySite();
     const beaconNear = nearbyBeacon();
-    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : cartNear ? 'E · 기록 운반 수레' : echoNear ? `E · ${echoNear.name}` : obsNear ? `E · ${obsNear.name}` : sealNear ? `E · ${sealNear.name}` : beaconNear ? `E · ${beaconNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
-    promptEl.style.display = (npcNear || trialNear || sealNear || journeyNear || beaconNear || obsNear || echoNear || cartNear) && !state.dialog ? 'block' : 'none';
+    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : courierNear ? `E · ${courierNear.name}` : cartNear ? 'E · 기록 운반 수레' : echoNear ? `E · ${echoNear.name}` : obsNear ? `E · ${obsNear.name}` : sealNear ? `E · ${sealNear.name}` : beaconNear ? `E · ${beaconNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
+    promptEl.style.display = (npcNear || trialNear || sealNear || journeyNear || beaconNear || obsNear || echoNear || cartNear || courierNear) && !state.dialog ? 'block' : 'none';
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
@@ -4122,6 +4170,7 @@ function tick() {
       lines.push(`${resolved === 'bounty' ? '▸ ' : ''}반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : b.kind === 'mats' ? b.mat + ' 납품' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
     }
     const bt=beaconTarget();if(bt)lines.push(`${state.tracked==='beacon'?'▸ ':''}원정 · ${bt.label} ${distTo(bt)}<br><span style="font-size:.85em">${beaconStatus()}</span>`);
+    const crt=courierTarget();if(crt)lines.push(`${state.tracked==='courier'?'▸ ':''}전령길 · ${courierStatus()} ${distTo(crt)}`);
     const ct=cartTarget();if(ct)lines.push(`${state.tracked==='cart'?'▸ ':''}호위 · ${cartStatus()} ${distTo(ct)}`);
     const et=echoTarget();if(et)lines.push(`${state.tracked==='echo'?'▸ ':''}잔향 · ${echoStatus()} ${distTo(et)}`);
     const ot=observatoryTarget();if(ot)lines.push(`${state.tracked==='observatory'?'▸ ':''}관측소 · ${ot.label} ${distTo(ot)}`);
