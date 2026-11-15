@@ -359,7 +359,7 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   windCdUntil: 0, windshot: null, mastery: null, masteryChain: null, skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0, poisonUntil: 0, poisonTickAt: 0,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
-  level: 1, xp: 0, echo: 0, cartStage: 0, courier: 0,
+  level: 1, xp: 0, echo: 0, cartStage: 0, courier: 0, insignia: null,
   bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
@@ -419,6 +419,27 @@ function chainStrike(e, now) {
 function pursuitReady(e,now){const m=state.pursuit;return activeMastery('pursuit')&&m&&m.target===e&&!e.dead&&now<m.until;}
 function galeEligible(e) { return !e.dead && !e.stats.boss && !e.stats.noRespawn && !e.trial && !e.expedition; }
 function enemyMoveScale(e, now) { return activeMastery('gale') && now < (e.galeUntil || 0) ? 0.5 : 1; }
+
+// 여행 인장: 원정 완료 기록으로 해금, 전투 숙련/룬과 독립된 한 칸. 미해금 저장값은 효과 없음.
+const INSIGNIAS = [
+ {id:'care',name:'돌봄',desc:'사용하는 물약의 회복량 60 → 85. 해독·소모·재사용 시간은 그대로.',hint:'동쪽 관측소 기록 회수',unlocked:()=>state.observatory===4},
+ {id:'guard',name:'수호',desc:'최대 체력 +25. 장착·교체로 현재 체력이 회복되지는 않는다.',hint:'관측 기록 수레 최종 인계',unlocked:()=>state.cartStage===3},
+ {id:'stride',name:'발걸음',desc:'다음 회피부터 재사용 시간 -0.25초. 잔상과 함께 1.35초. 무적·거리 그대로.',hint:'북서 전령 기록 최종 인계',unlocked:()=>state.courier===3},
+];
+function activeInsignia(id){return state.insignia===id&&!!INSIGNIAS.find(d=>d.id===id)?.unlocked();}
+function insigniaSafe(){return !state.dead&&state.npc&&state.player.position.distanceTo(state.npc.pos)<=2.6&&!state.enemies.some(e=>!e.dead&&e.root.position.distanceTo(state.player.position)<12);}
+function insigniaName(){return INSIGNIAS.find(d=>activeInsignia(d.id))?.name||'미장착';}
+function renderInsignias(list,rerender){
+ const safe=insigniaSafe();
+ list.innerHTML+=`<div class="shoprow"><div class="info"><b>여행 인장 · 독립 1칸</b><br><small>현재: ${insigniaName()} · 해금 ${INSIGNIAS.filter(d=>d.unlocked()).length}/3<br>장로 곁 2.6m · 주변 12m 적 없음일 때 무료 장착·교체·해제. 스킬 포인트/골드/룬/숙련은 유지된다.</small></div><button data-insignia="none" ${!safe||!state.insignia?'disabled':''}>해제</button></div>`+INSIGNIAS.map(d=>`<div class="shoprow"><div class="info"><b>${d.name}${activeInsignia(d.id)?' [장착 중]':''}</b><br><small>${d.desc}<br>${d.unlocked()?'✓ 해금 완료':'잠김: '+d.hint}</small></div><button data-insignia="${d.id}" ${!safe||!d.unlocked()||activeInsignia(d.id)?'disabled':''}>${activeInsignia(d.id)?'장착 중':'무료 장착'}</button></div>`).join('');
+}
+function bindInsignias(list,rerender){
+ list.querySelectorAll('[data-insignia]').forEach(b=>b.addEventListener('click',()=>{
+  const id=b.dataset.insignia,d=INSIGNIAS.find(d=>d.id===id);
+  if(!state.dialog||!insigniaSafe()||(id!=='none'&&(!d||!d.unlocked()))||state.insignia===id)return;
+  state.insignia=id==='none'?null:id;applyProgression();saveGame();sfx('reward',.6);skillFx(state.player.position,0xf2ce81,1.1,'ready');toast(`여행 인장: ${insigniaName()} · 현재 체력 회복 없음`);rerender();
+ }));
+}
 
 const ENEMY = { hp: 20, dmg: 5, speed: 2.4, aggro: 11, range: 1.7, cd: 1.4, skel: true, label: '스켈레톤', windup: 0.45, gold: 5, teleH: 1.9 };
 const WARRIOR = { hp: 40, dmg: 8, speed: 2.8, aggro: 12, range: 1.8, cd: 1.2, skel: true, warrior: true, label: '스켈레톤 전사', windup: 0.55, combo: true, gold: 12, teleH: 2.1 };
@@ -670,7 +691,7 @@ function tryDodge() {
   state.heading = Math.atan2(state.dodgeDir.x, state.dodgeDir.z);
   state.player.rotation.y = state.heading;
   state.dodgeUntil = now + 0.45;
-  state.dodgeCdUntil = now + (hasSkill('haste') ? 1.6 : 2.5);
+  state.dodgeCdUntil = now + (hasSkill('haste') ? 1.6 : 2.5) - (activeInsignia('stride') ? .25 : 0);
   state.invUntil = now + 0.55;
   if (hasSkill('blade')) state.bladeUntil = now + 3; // 칼바람: 회피 후 다음 타격 강화
   state.dodgeFrom = state.player.position.clone();
@@ -708,7 +729,8 @@ function usePotion() {
   if (state.hp >= state.maxHp) { toast('체력이 가득 찼습니다'); return; }
   state.potions--;
   state.potCdUntil = now + 1.2;
-  const healed = Math.min(60, state.maxHp - state.hp);
+  const healed = Math.min(activeInsignia('care') ? 85 : 60, state.maxHp - state.hp);
+  if(activeInsignia('care'))skillFx(state.player.position,0x85ffc0,1.4,'heal');
   state.hp += healed;
   const cured = clock.elapsedTime < state.poisonUntil;
   state.poisonUntil = 0; state.poisonTickAt = 0;
@@ -1339,6 +1361,7 @@ async function build() {
       state.player.rotation.y = state.heading;
     },
     beaconInfo(){return{...state.beacon,status:beaconStatus(),target:beaconTarget(),fight:state.beaconFight?{step:state.beaconFight.step,enemies:state.beaconFight.enemies.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),guard:e.stats.guard,label:e.stats.label}))}:null}},
+    insigniaInfo(){return{selected:state.insignia,active:insigniaName(),safe:insigniaSafe(),unlocked:INSIGNIAS.filter(d=>d.unlocked()).map(d=>d.id),hp:state.hp,maxHp:state.maxHp,potionHeal:activeInsignia('care')?85:60,dodgeRemaining:Math.max(0,state.dodgeCdUntil-clock.elapsedTime),dodgeCooldown:(hasSkill('haste')?1.6:2.5)-(activeInsignia('stride')?.25:0)}},
     courierInfo(){return{stage:state.courier||0,status:courierStatus(),target:courierTarget(),fight:state.courierFight?state.courierFight.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),aim:e.archerAt||0,next:e.archerNext||0,recover:e.archerRecover||0,fired:e.archerFired||0,walls:e.archerWalls||0,hits:e.archerHits||0,dodges:e.archerDodges||0,interrupts:e.archerInterrupts||0,result:e.archerResult||null,lines:(e.archerLines||[]).filter(m=>m.visible).length,arrows:(e.arrows||[]).map(a=>({left:a.left,pos:a.root.position.toArray(),visible:a.root.visible,dir:a.dir.toArray()}))})):null}},
     cartInfo(){const f=state.cartRun;return{stage:state.cartStage||0,status:cartStatus(),pos:state.cartModel.root.position.toArray(),run:f?{hp:f.hp,wave:f.wave,moved:f.moved,total:f.total,raiders:f.raiders.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray()}))}:null}},
     echoInfo(){const f=state.echoFight;return{done:state.echo||0,status:echoStatus(),target:echoTarget(),fight:f?{phase:f.phase,sequence:f.sequence,shield:f.shield,hp:f.boss.hp,i:state.enemies.indexOf(f.boss),pos:f.boss.root.position.toArray(),dead:f.boss.dead,pulseAt:f.boss.pulseAt||0}:null}},
@@ -1503,6 +1526,7 @@ function openCampaignJournal(){
     html+=`<details style="padding:7px 0;border-top:1px solid #445"><summary>${cidx+1}장 · ${c.name} · ${p.done}/${p.total}${p.done===p.total?' 완료':''}</summary>${names.length?names.join('<br>'):'아직 완료한 의뢰가 없다.'}</details>`;
   }
   html+=`<br><b>성장 선택</b><br>Lv.${state.level} · 스킬 포인트 ${state.skillPts||0}P · 습득 ${SKILLS.filter(k=>state.skills[k.id]).length}/${SKILLS.length}<br>포인트가 있어도 스킬은 자동으로 배우지 않는다. 스킬 창에서 설명과 선행 조건을 확인하자.`;
+  html+=`<br>여행 인장: <b>${insigniaName()}</b> · 해금 ${INSIGNIAS.filter(d=>d.unlocked()).length}/3 · 장로 곁 스킬 창에서 한 개 장착. 관측소·수레·전령길 완료 기록으로 열린다.`;
   html+='<br><br><b>선택 탐험</b> · 메인 의뢰와 별도<br>';
   const optional=[['북서 전령길',courierStatus()],['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
   html+=optional.map(([k,v])=>`<div style="padding:6px 0;border-top:1px solid #445"><b>${k}</b><br>${v}</div>`).join('');
@@ -1566,6 +1590,7 @@ function applyProgression() {
   state.maxHp += ((state.level || 1) - 1) * 10; // 레벨당 최대 체력 +10
   state.maxHp += (state.shrinesPrayed || []).length * 5; // 바람 제단 축복: 제단당 최대 체력 +5
   if(state.observatory === 4) state.maxHp += 10; // 관측소 기록의 가호, 재계산해도 중첩 안 됨
+  if(activeInsignia('guard'))state.maxHp+=25;
   state.hp = Math.min(state.hp, state.maxHp);
 }
 // ---------- 레벨·경험치 ----------
@@ -1842,7 +1867,8 @@ function openSkillTree() {
   const btns = document.getElementById('dlg-btns');
   const renderTree = () => {
     document.getElementById('dlg-text').innerHTML = `보유 스킬 포인트 <b>${state.skillPts || 0}</b> · 레벨업 시 +1<br><small>원풍: 바람칼날 · 강풍: 강공격 · 질풍: 회피 · 선풍: 회전베기</small>`;
-    list.innerHTML = SKILLS.map((s) => {
+    list.innerHTML='';renderInsignias(list,renderTree);
+    list.innerHTML += SKILLS.map((s) => {
       const owned = hasSkill(s.id);
       const locked = s.req && !hasSkill(s.req);
       const can = !owned && !locked && (state.skillPts || 0) > 0;
@@ -1855,6 +1881,7 @@ function openSkillTree() {
       const can = safe && (!m.req || hasSkill(m.req));
       return `<div class="shoprow"><div class="info"><b>${m.name}${owned ? ' [선택 중]' : ''}</b><br><small>${m.desc}${m.req && !hasSkill(m.req) ? ` (${SKILLS.find(s=>s.id===m.req)?.name||m.req} 습득 필요)` : ''}</small></div><button data-mastery="${m.id}" ${!can || owned ? 'disabled' : ''}>${owned?'선택 중':'무료 선택'}</button></div>`;
     }).join('');
+    bindInsignias(list,renderTree);
     list.querySelectorAll('button[data-mastery]').forEach(b=>b.addEventListener('click',()=>{
       const m = MASTERIES.find(m=>m.id===b.dataset.mastery);
       if (!m || !masterySafe() || (m.req && !hasSkill(m.req)) || state.mastery===m.id) return;
@@ -2069,7 +2096,7 @@ function saveGame() {
       bounty: state.bounty, tracked: state.tracked || 'auto', mastery: state.mastery || null, skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       observatory: state.observatory || 0, observatorySeen: !!state.observatorySeen,
       beacon: {step:state.beacon?.step||0,supply:state.beacon?.supply||null},
-      cartStage: state.cartStage || 0, courier: state.courier || 0,
+      cartStage: state.cartStage || 0, courier: state.courier || 0, insignia: state.insignia || null,
       echo: state.echo || 0,
       journey: state.journey || 0, journeyEnding: state.journeyEnding || null,
       sealSolved: !!state.sealSolved,
@@ -2110,6 +2137,7 @@ function loadGame() {
     state.observatory = Number.isInteger(s.observatory) ? Math.max(0,Math.min(4,s.observatory)) : 0;
     state.courier=Number.isInteger(s.courier)?Math.max(0,Math.min(3,s.courier)):0;
     state.cartStage=Number.isInteger(s.cartStage)?Math.max(0,Math.min(3,s.cartStage)):0;
+    state.insignia=INSIGNIAS.some(d=>d.id===s.insignia&&d.unlocked())?s.insignia:null;
     state.cartModel.root.position.set(cartPoint().x,0,cartPoint().z);
     state.echo=Number.isInteger(s.echo)?Math.max(0,Math.min(2,s.echo)):0;
     state.observatorySeen=!!s.observatorySeen || state.observatory>0;
@@ -2644,7 +2672,7 @@ function openObservatoryDialog(d){
  state.dialog=true;state.dlgFocus=new THREE.Vector3(d.x,0,d.z);document.getElementById('dlg-name').textContent=d.name;document.getElementById('dlg-list').innerHTML='';const btns=document.getElementById('dlg-btns');btns.innerHTML='';
  const add=(label,fn)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>{if(state.dead||!state.dialog||nearbyObservatory()?.id!==d.id)return;b.disabled=true;fn()};btns.appendChild(b)};
  const n=state.observatory||0;
- document.getElementById('dlg-text').innerHTML=d.id==='board'?`<b>바람을 멀리 보내는 이에게</b><br>입구 왼쪽의 종을 <b>3m 이상 떨어져</b> 바람칼날(G/버튼)로 울리면 문이 열린다. K에서 1P로 배운다. 근접공격과 회전베기로는 종을 울릴 수 없다.<br>안쪽 보초 둘은 근접 공격과 독침을 함께 쓴다. 낮은 돌벽으로 독침을 막고, 정리한 뒤 벽을 돌아 안쪽 종을 울리자. 마지막 기록함은 북쪽에 있다.<br><b>현재: ${observatoryStatus()}</b><br>단계마다 저장. 사망·멀리 이탈하면 미완료 전투만 다시 시작한다. 보초는 전리품을 주지 않으며 최종 기록 보상은 한 번뿐이다.`:n<3?`기록함이 잠겨 있다.<br>${observatoryStatus()}<br>보초를 정리하고 안쪽 종에 바람칼날을 보내자.`:n===3?'안쪽에 구름과 바람의 방향을 그린 장부가 남았다.<br>"종은 명령을 전하는 도구가 아니었다. 골짜기 건너편에서 길을 잃은 이들에게 돌아오는 방향을 알려 주었다. 마지막 관측자는 폭풍이 멎을 때까지 이곳을 지켰다."<br>기록 회수: 최대 체력 +10 · 경험치 60 · 60G (한 번)':'기록을 안전하게 챙겼다. 폭풍이 와도 돌아갈 방향을 잊지 않을 것이다.<br>관측소의 가호: 최대 체력 +10 (적용 중).';
+ document.getElementById('dlg-text').innerHTML=d.id==='board'?`<b>바람을 멀리 보내는 이에게</b><br>입구 왼쪽의 종을 <b>3m 이상 떨어져</b> 바람칼날(G/버튼)로 울리면 문이 열린다. K에서 1P로 배운다. 근접공격과 회전베기로는 종을 울릴 수 없다.<br>안쪽 보초 둘은 근접 공격과 독침을 함께 쓴다. 낮은 돌벽으로 독침을 막고, 정리한 뒤 벽을 돌아 안쪽 종을 울리자. 마지막 기록함은 북쪽에 있다.<br><b>현재: ${observatoryStatus()}</b><br>단계마다 저장. 사망·멀리 이탈하면 미완료 전투만 다시 시작한다. 보초는 전리품을 주지 않으며 최종 기록 보상은 한 번뿐이다.`:n<3?`기록함이 잠겨 있다.<br>${observatoryStatus()}<br>보초를 정리하고 안쪽 종에 바람칼날을 보내자.`:n===3?'안쪽에 구름과 바람의 방향을 그린 장부가 남았다.<br>"종은 명령을 전하는 도구가 아니었다. 골짜기 건너편에서 길을 잃은 이들에게 돌아오는 방향을 알려 주었다. 마지막 관측자는 폭풍이 멎을 때까지 이곳을 지켰다."<br>기록 회수: 최대 체력 +10 · 경험치 60 · 60G (한 번)':'기록을 안전하게 챙겼다. 폭풍이 와도 돌아갈 방향을 잊지 않을 것이다.<br>관측소의 가호: 최대 체력 +10 (적용 중).<br>돌봄 인장 해금 · 장로 곁 스킬 창에서 장착.';
  if(d.id==='board'&&n<4)add('관측소 목표 추적',()=>{state.observatorySeen=true;state.tracked='observatory';saveGame();closeDialog()});
  if(d.id==='record'&&n===3)add('관측 기록 회수',()=>{if(state.observatory!==3)return;state.observatory=4;state.gold+=60;applyProgression();gainXp(60);if(state.tracked==='observatory')state.tracked='auto';updateObservatoryVisuals();saveGame();closeDialog();sfx('reward',1);toast('관측 기록 회수! 최대 체력 +10 · 경험치 60 · 60G')});
  add('닫기',closeDialog);dlgEl().style.display='block';document.getElementById('dlgback').style.display='block';
@@ -2685,7 +2713,7 @@ function startCourierFight(){if(state.quest.idx<10||state.courier||state.courier
 }
 function openCourier(d){state.dlgFocus=d.root.position;
  if(d.id==='box'){if(state.courier===1){journeyDialog('지켜 낸 봉인함','봉인함에는 다음 마을로 이어지는 대피 경로가 담겨 있다. 화살에 찢기지 않은 기록을 가져가자.',[['봉인함 회수',()=>{if(state.courier!==1||nearbyCourier()?.id!=='box')return;state.courier=2;saveGame();closeDialog();sfx('reward',.7);toast('봉인함 회수 · 전령길 안내판으로 돌아가 기록 인계');}]]);}else journeyDialog(d.name,state.courier>=2?'봉인함의 기록은 이미 회수했다.':'궁수의 사격이 닿는 길이다. 안내판에서 전령길을 확보한 뒤 회수하자.');return;}
- if(state.courier===3){journeyDialog('북서 전령 기록','엄폐물 사이의 길을 다시 열고 대피 경로를 돌려주었다.<br>기록: <b>바람길 전령</b> · 보상은 이미 받았다.');return;}
+ if(state.courier===3){journeyDialog('북서 전령 기록','엄폐물 사이의 길을 다시 열고 대피 경로를 돌려주었다.<br>기록: <b>바람길 전령</b> · 보상은 이미 받았다.<br>발걸음 인장 해금 · 장로 곁 스킬 창에서 장착.');return;}
  if(state.courier===2){journeyDialog('전령 기록 인계','봉인함의 경로를 마을에 전한다. 기록 <b>바람길 전령</b>과 한 번만 <b>180XP · 120G</b>를 받는다.',[['전령 기록 인계',()=>{if(state.courier!==2||nearbyCourier()?.id!=='board')return;state.courier=3;state.gold+=120;gainXp(180);if(state.tracked==='courier')state.tracked='auto';saveGame();closeDialog();sfx('reward',1);toast('바람길 전령 · 180XP · 120G');}]]);return;}
  const text='기록을 나르던 전령이 북서 길에서 봉인함을 남기고 돌아왔다. 세 궁수가 길을 막고 있다.<br><br><b>메인 의뢰 10개 완료 후 시작</b><br>궁수는 마지막으로 본 방향에 <b>세 갈래 붉은 사격 예고</b>를 남긴 뒤 화살을 쏜다. 옆으로 피하거나 <b>기둥 뒤</b>에 숨자. 화살과 바람칼날 모두 기둥에 막힌다.<br>바람칼날·근접 적중으로 사격 준비를 끊을 수 있다. 발사 후 잠깐의 빈틈에 접근하자. 가까이 붙으면 근접 공격도 한다.<br><br>궁수 3명을 처치한 뒤 안쪽 봉인함을 회수해 이 안내판에 인계한다. 궁수별 전리품은 없다. <b>도전료 없음</b>. 사망·중앙에서20m 이탈·재접속은 이번 전투만 초기화하며 기존 진행은 보존한다. 전투 승리와 봉인함 회수는 각각 저장된다.<br>최종 1회180XP·120G.';
  journeyDialog('북서 전령길',courierStatus()+'<br><br>'+text,state.quest.idx>=10&&!state.courier&&!state.courierFight?[["전령길 확보 시작",()=>{if(nearbyCourier()?.id==='board')startCourierFight();}]]:[]);
@@ -2714,7 +2742,7 @@ function nearbyCart(){return state.ready&&!state.dead&&state.cartModel&&Math.hyp
 function clearCartRun(){const f=state.cartRun;if(!f)return;for(const e of f.raiders){e.dead=true;e.despawned=true;e.mode='dead';if(e.tele)scene.remove(e.tele);scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1)}state.cartRun=null;const p=cartPoint();state.cartModel.root.position.set(p.x,0,p.z);}
 function startCartRun(){if(state.observatory!==4||state.cartStage>=2||state.cartRun)return;const p=cartPoint();state.cartModel.root.position.set(p.x,0,p.z);state.cartRun={hp:100,raiders:[],wave:0,moved:0,total:Math.hypot(CART_ROUTE[(state.cartStage||0)+1].x-p.x,CART_ROUTE[(state.cartStage||0)+1].z-p.z)};state.tracked='cart';closeDialog();toast('수레 5m 안에서 함께 이동 · 습격자는 수레를 공격한다!');}
 function openCart(){const ready=state.observatory===4,f=state.cartRun;state.dlgFocus=state.cartModel.root.position;
- if(state.cartStage===3){journeyDialog('안전하게 돌아온 기록','관측소의 바람 기록을 마을 앞 인계소에 전했다. 기록은 다음 여행자의 안전한 길을 찾는 데 쓰일 것이다.<br>기록: <b>기록 운반자</b> · 보상은 이미 받았다.');return;}
+ if(state.cartStage===3){journeyDialog('안전하게 돌아온 기록','관측소의 바람 기록을 마을 앞 인계소에 전했다. 기록은 다음 여행자의 안전한 길을 찾는 데 쓰일 것이다.<br>기록: <b>기록 운반자</b> · 보상은 이미 받았다.<br>수호 인장 해금 · 장로 곁 스킬 창에서 장착.');return;}
  if(state.cartStage===2){journeyDialog('기록 인계소','봉인된 관측 기록이 모두 무사하다. 한 번만 <b>150XP · 100G</b>와 기록 운반자 기록을 받는다.',[['관측 기록 인계',()=>{if(state.cartStage!==2||!nearbyCart())return;state.cartStage=3;state.gold+=100;gainXp(150);if(state.tracked==='cart')state.tracked='auto';saveGame();closeDialog();sfx('reward',1);toast('기록 운반자 · 150XP · 100G');}]]);return;}
  const text='<b>관측소 기록 회수 후 시작</b><br>수레를 마을 앞 인계소(18, 5)까지 호위한다. 수레의 <b>5m 안</b>에서만 움직이며 멀어지면 기다린다.<br>습격자는 플레이어가 아니라 <b>수레를 공격</b>한다. 나타나면 공격·강공격·스킬로 먼저 막자. 습격자가 남아 있으면 수레는 멈춘다.<br><br>내구도100 · 붕괴/플레이어 사망/수레20m 이탈/재접속 시 <b>현재 구간만 재시도</b>. 중간 쉼터(34, 1) 도착은 저장되고 다음 구간은 내구도100으로 출발한다.<br>물약은 수레를 수리하지 않는다. 도전료는 없고 재시도 때 기존 진행·골드·스킬을 잃지 않는다. 습격자 전리품은 없으며 최종 보상은1회150XP·100G.';
  journeyDialog('관측 기록 운반',cartStatus()+'<br><br>'+text,ready&&!f?[[state.cartStage===1?'쉼터에서 다음 구간 출발':'기록 운반 출발',()=>{if(nearbyCart())startCartRun()}]]:[]);
