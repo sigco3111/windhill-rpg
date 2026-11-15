@@ -531,6 +531,7 @@ document.head.appendChild(skillTreeStyle);
 const combatHudStyle=document.createElement('style');
 combatHudStyle.textContent='#bp-name{line-height:1.35;word-break:keep-all;overflow-wrap:normal}#bp-cue{font-size:13px;line-height:1.4;color:#f5eddb}#bp-cue span{display:block;white-space:nowrap}#bossplate[data-warning="true"]{border-color:#ff8a75}#bossplate[data-warning="true"] #bp-cue{color:#ffb39c}@media(max-width:559px),(max-height:500px){#bossplate{padding:6px 8px!important;font-size:12px!important}#bp-cue{font-size:11px}}';
 combatHudStyle.textContent+='@media(min-width:560px) and (max-height:500px){#quest{left:176px;right:150px;top:44px;max-width:none;box-sizing:border-box;text-align:center;font-size:10px;line-height:1.4;padding:4px 6px;word-break:keep-all}}';
+combatHudStyle.textContent+='@media(min-width:560px) and (max-height:500px){#minimap{width:96px;height:96px}}@media(min-width:560px) and (max-height:400px){#minimap{width:72px;height:72px}#skill,#inv,#pot,#dodge,#windshot,#whirl{width:42px;height:42px;font-size:9px}#skill{right:74px;bottom:192px}#inv{right:16px;bottom:192px}#windshot{right:74px;bottom:140px}#pot{bottom:140px}#whirl{right:74px;bottom:88px}#dodge{bottom:88px}#atk{bottom:20px}}';
 document.head.appendChild(combatHudStyle);
 function combatCue(e,now){
  const at=[e.archerAt,e.mistAt,e.bellAt,e.pulseAt,e.stormAt,e.spitAt].filter(t=>t>now);
