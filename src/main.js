@@ -528,8 +528,12 @@ function updateBossPlate() {
   // 좁은 화면(모바일)에서는 오른쪽 공격/회피 버튼 열과 겹치지 않도록 위로 올리고 폭을 줄임
   const narrow = window.innerWidth < 560;
   bossPlate.style.bottom = narrow ? '160px' : '150px'; // 하단 대화 프롬프트(40px~)와 겹치지 않도록 올림
+  bossPlate.style.left = narrow ? '10px' : '50%';
+  bossPlate.style.transform = narrow ? 'none' : 'translateX(-50%)';
+  bossPlate.style.boxSizing = 'border-box';
+  bossPlate.style.width = narrow ? 'calc(100vw - 190px)' : '';
   bossPlate.style.maxWidth = narrow ? '200px' : '72vw';
-  bossPlate.style.minWidth = narrow ? '160px' : '220px';
+  bossPlate.style.minWidth = narrow ? '120px' : '220px';
   bossPlate.style.display = 'block';
   const echoShield=t.stats.echoBoss&&state.echoFight?.shield;
   const pulse = echoShield ? ' - 보호막 · 봉인석 해제' : t.stats.ruinWarden ? (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '') : '';
