@@ -4420,7 +4420,9 @@ function tick() {
     if (jt) lines.push(`${state.tracked === 'journey' ? '▸ ' : ''}탐험 · 순례길 기록 ${Math.min(3,state.journey-1)}/3 · ${jt.label} ${distTo(jt)}`);
     if (lines.length) {
       qEl.style.display = 'block';
-      qEl.innerHTML = lines.join('<br>') + '<br><span style="opacity:.65;font-size:.85em">탭·N: 추적 전환</span>';
+      const compactTargets=window.innerWidth>=560&&window.innerHeight<=500;
+      const shown=compactTargets?[lines.find(line=>line.startsWith('▸ '))||lines[0]]:lines;
+      qEl.innerHTML = shown.join('<br>') + `<br><span style="opacity:.65;font-size:.85em">${compactTargets&&lines.length>1?`다른 목표 ${lines.length-1}개 · `:''}탭·N: 추적 전환</span>`;
     } else if (!qd) {
       qEl.style.display = 'block';
       qEl.textContent = '모든 의뢰 완료';
