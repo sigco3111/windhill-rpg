@@ -359,7 +359,7 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   windCdUntil: 0, windshot: null, mastery: null, masteryChain: null, skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0, poisonUntil: 0, poisonTickAt: 0,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
-  level: 1, xp: 0, echo: 0, cartStage: 0, courier: 0, insignia: null, estuary: {stage:0,rescued:0,bossWon:false}, bell:{stage:0,clues:0,input:0}, windTune:null,
+  level: 1, xp: 0, echo: 0, cartStage: 0, courier: 0, insignia: null, estuary: {stage:0,rescued:0,bossWon:false}, bell:{stage:0,clues:0,input:0}, windTune:null, mist:{stage:0,lamps:0},
   bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
@@ -546,7 +546,7 @@ function updateBossPlate() {
   bossPlate.style.minWidth = narrow ? '120px' : '220px';
   bossPlate.style.display = 'block';
   const echoShield=t.stats.echoBoss&&state.echoFight?.shield;
-  const pulse = echoShield ? ' - 보호막 · 봉인석 해제' : t.stats.ruinWarden ? (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '') : '';
+  const pulse = t.stats.mistHunter ? (t.mistAt ? ' - 붉은 원! 회피' : mistLit(t) ? ' - 빛 안 · 공격 가능' : ' - 안개 · 등불로 유인') : echoShield ? ' - 보호막 · 봉인석 해제' : t.stats.ruinWarden ? (t.pulseAt ? ' - 지면파! 원 밖으로' : t.pulseRecover && clock.elapsedTime < t.pulseRecover ? ' - 반격 기회' : '') : '';
   const stag = t.staggerUntil && clock.elapsedTime < t.staggerUntil;
   document.getElementById('bp-name').textContent = (stag ? '💫 ' : t.stats.guard ? '🛡 ' : '') + t.stats.label + (stag ? ' (경직)' : '') + pulse + (t.stats.stormWasp ? (t.stormAt ? ' - 돌진! 옆으로 회피' : t.stormRun ? ' - 돌진 중' : t.stormRecover > clock.elapsedTime ? ' - 반격 기회' : '') : '') + (t.stats.rangedSpit ? (t.spitAt ? ' - 독침! 옆으로 회피' : t.spitLeft>0 ? ' - 독침 비행' : t.spitRecover>clock.elapsedTime ? ' - 반격 기회' : ' - 거리 유지') : '') + (t.stats.archer ? (t.archerAt ? ' - 세 갈래 사격! 엄폐/옆으로 회피' : t.archerRecover>clock.elapsedTime ? ' - 사격 후 빈틈' : ' - 궁수') : '');
   document.getElementById('bp-hp').style.width = Math.max(0, Math.min(100, (t.hp / t.stats.hp) * 100)) + '%';
@@ -1355,6 +1355,7 @@ async function build() {
 
   buildEstuary();
   buildBellSites();
+  buildMist();
   state.ready = true;
   window.__gameReady = true;
   const lo = document.getElementById('loading');
@@ -1380,6 +1381,7 @@ async function build() {
     beaconInfo(){return{...state.beacon,status:beaconStatus(),target:beaconTarget(),fight:state.beaconFight?{step:state.beaconFight.step,enemies:state.beaconFight.enemies.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),guard:e.stats.guard,label:e.stats.label}))}:null}},
     insigniaInfo(){return{selected:state.insignia,active:insigniaName(),safe:insigniaSafe(),unlocked:INSIGNIAS.filter(d=>d.unlocked()).map(d=>d.id),hp:state.hp,maxHp:state.maxHp,potionHeal:activeInsignia('care')?85:60,dodgeRemaining:Math.max(0,state.dodgeCdUntil-clock.elapsedTime),dodgeCooldown:(hasSkill('haste')?1.6:2.5)-(activeInsignia('stride')?.25:0)}},
     windTuneInfo(){return{selected:state.windTune,active:windTuneName(),safe:windTuneSafe(),unlocked:state.bell?.stage===5&&hasSkill('windshot'),practice:(state.windPractice||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,hits:e.windPracticeHits,pos:e.root.position.toArray()})),lastHits:state.lastWindHits||0}},
+    mistInfo(){const f=state.mistFight,e=f?.enemy;return{...state.mist,status:mistStatus(),target:mistTarget(),sites:(state.mistProps||[]).map(d=>({id:d.id,x:d.x,z:d.z,bit:d.bit})),fight:f?{active:f.active,left:Math.max(0,f.next-clock.elapsedTime),swaps:f.swaps,blocks:f.blocks,i:state.enemies.indexOf(e),hp:e.hp,pos:e.root.position.toArray(),lit:mistLit(e),at:e.mistAt,next:e.mistNext,hits:e.mistHits,dodges:e.mistDodges,strikes:e.mistStrikes}:null}},
     bellInfo(){const e=state.bellEnemy;return{...state.bell,status:bellStatus(),target:bellTarget(),enemy:e?{i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),at:e.bellAt||0,next:e.bellNext||0,outer:!!e.bellOuter,exposed:Math.max(0,(e.bellExposed||0)-clock.elapsedTime),cracks:e.bellCracks,breaks:e.bellBreaks,hits:e.bellHits,dodges:e.bellDodges,pulses:e.bellPulses}:null}},
     estuaryInfo(){return{...state.estuary,status:estuaryStatus(),inside:inEstuary(),target:estuaryTarget(),channel:state.estuaryChannel?{...state.estuaryChannel,left:Math.max(0,3-(clock.elapsedTime-state.estuaryChannel.start))}:null,tides:(state.estuaryTides||[]).map(t=>({id:t.id,at:t.at,next:t.next,hits:t.hits,blocks:t.blocks,saves:t.saves})),fight:(state.estuaryFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,boss:!!e.stats.estuaryBoss,pos:e.root.position.toArray()}))}},
     courierInfo(){return{stage:state.courier||0,status:courierStatus(),target:courierTarget(),fight:state.courierFight?state.courierFight.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),aim:e.archerAt||0,next:e.archerNext||0,recover:e.archerRecover||0,fired:e.archerFired||0,walls:e.archerWalls||0,hits:e.archerHits||0,dodges:e.archerDodges||0,interrupts:e.archerInterrupts||0,result:e.archerResult||null,lines:(e.archerLines||[]).filter(m=>m.visible).length,arrows:(e.arrows||[]).map(a=>({left:a.left,pos:a.root.position.toArray(),visible:a.root.visible,dir:a.dir.toArray()}))})):null}},
@@ -1549,7 +1551,7 @@ function openCampaignJournal(){
   html+=`<br>원풍 조율: <b>${windTuneName()}</b> · 종 탐험 완료 뒤 장로 곁 스킬 창에서 무료 교체.`;
   html+=`<br>여행 인장: <b>${insigniaName()}</b> · 해금 ${INSIGNIAS.filter(d=>d.unlocked()).length}/3 · 장로 곁 스킬 창에서 한 개 장착. 관측소·수레·전령길 완료 기록으로 열린다.`;
   html+='<br><br><b>선택 탐험</b> · 메인 의뢰와 별도<br>';
-  const optional=[['수문 아래의 종',bellStatus()],['회색 여울',estuaryStatus()],['북서 전령길',courierStatus()],['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
+  const optional=[['안개의 항로',mistStatus()],['수문 아래의 종',bellStatus()],['회색 여울',estuaryStatus()],['북서 전령길',courierStatus()],['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
   html+=optional.map(([k,v])=>`<div style="padding:6px 0;border-top:1px solid #445"><b>${k}</b><br>${v}</div>`).join('');
   html+='<br><small>이 일지는 기존 의뢰와 탐험의 진행 안내다. 장 수는 새 콘텐츠 분량이나 권장 플레이 시간을 뜻하지 않는다.</small>';
   const buttons=[];
@@ -1636,6 +1638,7 @@ function tryInteract() {
   if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { state.dlgFocus = state.npc.pos; openDialog(); return; }
   if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); return; }
   if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); return; }
+  const mist=nearbyMist();if(mist){openMist(mist);return;}
   const bell=nearbyBell();if(bell){openBell(bell);return;}
   const est=nearbyEstuary();if(est){openEstuary(est);return;}
   const courier=nearbyCourier();if(courier){openCourier(courier);return;}
@@ -1974,6 +1977,7 @@ function drawMinimap() {
   if (state.swampPos) dot(state.swampPos.x, state.swampPos.z, '#8aa24f', 4); // 독 늪지대
   if (state.ruinsPos) dot(state.ruinsPos.x, state.ruinsPos.z, state.ruinsFound ? '#d8cba8' : '#b8b2a6', 4); // 잊힌 유적: 미발견 회색 → 발견 후 모래색
   for (const d of state.journeySites || []) dot(d.x,d.z,state.journey>d.step?'#8aa2a2':'#8be1e5',3);
+  if(mistReady())for(const d of MIST_LAMPS)dot(d.x,d.z,'#ffedaf',4);
   if(bellReady())for(const d of BELL_SITES)dot(d.x,d.z,'#ffda78',3);
   if(estuaryReady()){dot(70,-12,'#98e2ed',4);mctx.strokeStyle='rgba(110,200,210,.8)';mctx.beginPath();mctx.arc(px(150),pz(0),32/MMAP_RANGE*W/2,0,Math.PI*2);mctx.stroke();for(const d of ESTUARY_SITES.slice(1))dot(d.x,d.z,'#98e2ed',3);}
   if(state.courier!==3)dot(-47,-14,'#f2ce81',4);
@@ -2122,7 +2126,7 @@ function saveGame() {
       bounty: state.bounty, tracked: state.tracked || 'auto', mastery: state.mastery || null, skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       observatory: state.observatory || 0, observatorySeen: !!state.observatorySeen,
       beacon: {step:state.beacon?.step||0,supply:state.beacon?.supply||null},
-      cartStage: state.cartStage || 0, courier: state.courier || 0, insignia: state.insignia || null, estuary:{stage:state.estuary.stage,rescued:state.estuary.rescued,bossWon:!!state.estuary.bossWon}, bell:{stage:state.bell.stage,clues:state.bell.clues,input:state.bell.input}, windTune:piercingWind()?'pierce':null,
+      cartStage: state.cartStage || 0, courier: state.courier || 0, insignia: state.insignia || null, estuary:{stage:state.estuary.stage,rescued:state.estuary.rescued,bossWon:!!state.estuary.bossWon}, bell:{stage:state.bell.stage,clues:state.bell.clues,input:state.bell.input}, windTune:piercingWind()?'pierce':null, mist:{stage:state.mist.stage,lamps:state.mist.lamps},
       echo: state.echo || 0,
       journey: state.journey || 0, journeyEnding: state.journeyEnding || null,
       sealSolved: !!state.sealSolved,
@@ -2167,6 +2171,7 @@ function loadGame() {
     state.cartModel.root.position.set(cartPoint().x,0,cartPoint().z);
     const es=s.estuary;state.estuary={stage:Number.isInteger(es?.stage)?Math.max(0,Math.min(5,es.stage)):0,rescued:Number.isInteger(es?.rescued)?es.rescued&3:0,bossWon:!!es?.bossWon};if(state.estuary.stage<3)state.estuary.bossWon=false;if(state.estuary.stage<2)state.estuary.rescued=0;if(state.estuary.stage>=3)state.estuary.rescued=3;if(state.estuary.stage===2&&state.estuary.rescued===3)state.estuary.stage=3;
     const bsaved=s.bell;state.bell={stage:Number.isInteger(bsaved?.stage)?Math.max(0,Math.min(5,bsaved.stage)):0,clues:Number.isInteger(bsaved?.clues)?bsaved.clues&7:0,input:Number.isInteger(bsaved?.input)?Math.max(0,Math.min(3,bsaved.input)):0};if(!bellReady())state.bell={stage:0,clues:0,input:0};if(!state.bell.stage){state.bell.clues=0;state.bell.input=0;}if(state.bell.stage<2)state.bell.input=0;if(state.bell.stage===1&&state.bell.clues===7)state.bell.stage=2;if(state.bell.stage>=2)state.bell.clues=7;if(state.bell.stage===2&&state.bell.input===3)state.bell.stage=3;if(state.bell.stage>=3)state.bell.input=3;
+    const ms=s.mist;state.mist={stage:Number.isInteger(ms?.stage)?Math.max(0,Math.min(4,ms.stage)):0,lamps:Number.isInteger(ms?.lamps)?ms.lamps&3:0};if(!mistReady())state.mist={stage:0,lamps:0};if(!state.mist.stage)state.mist.lamps=0;if(state.mist.stage===1&&state.mist.lamps===3)state.mist.stage=2;if(state.mist.stage>=2)state.mist.lamps=3;
     state.echo=Number.isInteger(s.echo)?Math.max(0,Math.min(2,s.echo)):0;
     state.observatorySeen=!!s.observatorySeen || state.observatory>0;
     updateObservatoryVisuals();
@@ -2748,7 +2753,7 @@ function buildEstuary(){
 }
 function nearbyEstuary(){if(!state.ready||state.dead)return null;return state.estuaryProps?.find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.2)||null;}
 function clearEstuaryFight(){for(const e of state.estuaryFight||[]){cancelWardenPulse(e);cancelFrogSpit(e);cancelArcher(e);e.dead=true;e.despawned=true;if(e.tele)scene.remove(e.tele);scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1)}state.estuaryFight=null;state.estuaryChannel=null;for(const t of state.estuaryTides||[]){t.at=0;t.next=0;t.disc.visible=false;t.ring.visible=false;}}
-function estuaryTravel(east){clearWindPractice();clearBellFight();clearEstuaryFight();clearCourierFight();clearCartRun();clearEchoFight();clearObservatoryFight();clearBeaconFight();if(state.trial?.active)endTrial(false);cancelWindshot('travel');resetMasteryCombat();state.dodgeFrom=null;state.dodgeUntil=0;state.attackUntil=0;state.autoOn=false;document.getElementById('auto').textContent='자동 전투 OFF';document.getElementById('auto').classList.remove('on');state.player.position.set(east?126:70,0,east?0:-12);state.invUntil=Math.max(state.invUntil,clock.elapsedTime+1);state.tracked='estuary';closeDialog();saveGame();toast(east?'회색 여울 도착 · 지도부터 살펴보자.':'언덕 나루로 돌아왔다. 구조 기록은 보존된다.');}
+function estuaryTravel(east){clearMistFight();clearWindPractice();clearBellFight();clearEstuaryFight();clearCourierFight();clearCartRun();clearEchoFight();clearObservatoryFight();clearBeaconFight();if(state.trial?.active)endTrial(false);cancelWindshot('travel');resetMasteryCombat();state.dodgeFrom=null;state.dodgeUntil=0;state.attackUntil=0;state.autoOn=false;document.getElementById('auto').textContent='자동 전투 OFF';document.getElementById('auto').classList.remove('on');state.player.position.set(east?126:70,0,east?0:-12);state.invUntil=Math.max(state.invUntil,clock.elapsedTime+1);state.tracked='estuary';closeDialog();saveGame();toast(east?'회색 여울 도착 · 지도부터 살펴보자.':'언덕 나루로 돌아왔다. 구조 기록은 보존된다.');}
 function openEstuary(d){state.dlgFocus=d.root.position;const s=state.estuary;
  if(d.id==='ferry'){const buttons=[];let text=(bellReady()?'수문이 열리며 세 종의 유적이 드러났다. 여울 나루 곁 기록대에서 다음 이야기를 시작할 수 있다.<br><br>':'')+'전령이 지켜 낸 대피 지도는 동쪽 회색 여울로 이어진다. 돌아오지 못한 조사원 둘과 막힌 수문을 찾아보자.<br><br><b>'+estuaryStatus()+'</b><br>배편과 재도전은 무료. 지도·각 조사원·수문 단계는 저장된다. 사망하면 마을에서 부활하며 미완료 전투·구조만 초기화된다.<br>붉은 침수 예고 1.5초 뒤 물가 원에 피해16. 초록 테두리의 높은 돌은 안전하다. 침수 직후 조사원 곁에서 E/터치로 구조 시작, 3초 안에 피격·2m 이탈·회피·공격·메뉴를 열면 취소된다.<br>구조 둘 후 수문 철갑병과 싸우고 수문을 열어 귀환한다. 최종 한 번300XP·180G. 적은 전리품을 주지 않는다.';
   if(s.stage===4)buttons.push(['구조 기록 인계',()=>{if(state.estuary.stage!==4||nearbyEstuary()?.id!=='ferry')return;state.estuary.stage=5;state.gold+=180;gainXp(300);if(state.tracked==='estuary')state.tracked='auto';saveGame();closeDialog();sfx('reward',1);toast('회색 여울의 길잡이 · 300XP · 180G');}]);
@@ -2783,7 +2788,7 @@ function nearbyBell(){return state.ready&&!state.dead&&bellReady()?(state.bellPr
 function clearBellFight(){const e=state.bellEnemy;if(!e)return;if(e.bellDisc)scene.remove(e.bellDisc);if(e.bellRing)scene.remove(e.bellRing);if(e.tele)scene.remove(e.tele);e.dead=true;e.despawned=true;scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);state.bellEnemy=null;}
 function openBell(d){state.dlgFocus=d.root.position;const s=state.bell;
 if(d.id==='archive'){const buttons=[];let text='수문이 열리고 물 아래 잠겼던 비석과 종이 드러났다. 세 비석의 단서를 기록하고, 해의 길과 물의 흐름에 맞춰 종을 울리자.<br><br><b>'+bellStatus()+'</b><br>비석은 자유 순서로 조사. 기록 세 개를 모으면 종을 울릴 수 있다. 틀리면 종 순서만 0/3으로 돌아가며 비석 기록은 유지된다.<br><br>세 종 뒤 중앙 파수꾼이 깨어난다. <b>푸른 방어는 바람칼날 1회 또는 강공격/회전베기 2회</b>로 해제된다. 방어 중 피해는 없고, 풀린 뒤 5초 동안 공격할 수 있다. <b>붉은 원은 안쪽 4.5m, 붉은 고리는 3~8m</b>가 위험하다. 1.4초 예고를 보고 영역 밖으로 움직이거나 회피하자. 방어 파괴는 준비 중 파동도 취소한다.<br>사망·섬 이탈은 미완료 전투만 초기화한다. 비석·종 진행·승리는 저장된다. 무료 도전, 적 전리품 없음. 마지막 기록 인계 1회380XP·220G·스킬1P. 완료하면 원풍 조율 해금: 장로 곁 스킬 창의 원풍 조율에서 기존 바람칼날 또는 관통풍을 선택한다. 이 기록대에서 무료 세 표적 연습도 가능.';
-if(!s.stage)buttons.push(['잠긴 종 조사 시작',()=>{if(!bellReady()||s.stage||nearbyBell()?.id!=='archive')return;s.stage=1;state.tracked='bell';saveGame();closeDialog();toast('세 비석을 찾아 기록하자 · 순서 자유');}]);if(s.stage===5)buttons.push(['세 표적 연습 시작',startWindPractice]);if(state.windPractice)buttons.push(['표적 연습 마치기',()=>{clearWindPractice();closeDialog();}]);if(s.stage===4)buttons.push(['종의 기록 인계',()=>{if(s.stage!==4||nearbyBell()?.id!=='archive')return;s.stage=5;state.gold+=220;state.skillPts=(state.skillPts||0)+1;gainXp(380);if(state.tracked==='bell')state.tracked='auto';saveGame();closeDialog();sfx('reward',1);toast('여울의 조율자 · 380XP · 220G · 스킬1P');}]);journeyDialog(d.name,text,buttons);return;}
+if(!s.stage)buttons.push(['잠긴 종 조사 시작',()=>{if(!bellReady()||s.stage||nearbyBell()?.id!=='archive')return;s.stage=1;state.tracked='bell';saveGame();closeDialog();toast('세 비석을 찾아 기록하자 · 순서 자유');}]);if(s.stage===5)buttons.push(['세 표적 연습 시작',startWindPractice],['안개의 항로',()=>openMist()]);if(state.windPractice)buttons.push(['표적 연습 마치기',()=>{clearWindPractice();closeDialog();}]);if(s.stage===4)buttons.push(['종의 기록 인계',()=>{if(s.stage!==4||nearbyBell()?.id!=='archive')return;s.stage=5;state.gold+=220;state.skillPts=(state.skillPts||0)+1;gainXp(380);if(state.tracked==='bell')state.tracked='auto';saveGame();closeDialog();sfx('reward',1);toast('여울의 조율자 · 380XP · 220G · 스킬1P');}]);journeyDialog(d.name,text,buttons);return;}
 if(d.bit){const text=d.text+'<br><br>'+((s.clues&d.bit)?'이미 수첩에 기록했다.':s.stage===1?'이 비석의 단서를 수첩에 적자.':'먼저 나루 곁 기록대에서 조사를 시작하자.');journeyDialog(d.name,text,s.stage===1&&!(s.clues&d.bit)?[['비석 단서 기록',()=>{if(s.stage!==1||nearbyBell()?.id!==d.id||s.clues&d.bit)return;s.clues|=d.bit;if(s.clues===7)s.stage=2;saveGame();closeDialog();sfx('reward',.5);toast(s.stage===2?'단서 기록 완료 · 해의 길과 물의 흐름대로 종을 울리자':'비석 단서를 기록했다. 다른 비석을 찾아보자.');}]]:[]);return;}
 const clues=BELL_SITES.filter(d=>d.bit&&(s.clues&d.bit)).map(d=>d.text).join('<br>');journeyDialog(d.name,s.stage>=3?'세 종의 울림이 수문 아래로 이어졌다.':s.stage===2?`기록한 단서:<br>${clues}<br><br>지금까지 맞춘 울림 ${s.input}/3. 이 종을 울릴까?`:'먼저 세 비석의 단서를 모두 기록하자.',s.stage===2?[['이 종 울리기',()=>{if(s.stage!==2||nearbyBell()?.id!==d.id)return;if(d.tone===BELL_ORDER[s.input]){s.input++;skillFx(d.root.position,0xffd779,1.7,'ready');sfx('reward',.6);if(s.input===3){s.stage=3;toast('세 종의 울림 · 중앙의 파수꾼이 깨어난다.');}else toast(`올바른 울림 · ${s.input}/3`);}else{s.input=0;toast('어긋난 울림 · 단서는 유지, 종 순서만 처음부터');sfx('hurt',.3);}saveGame();closeDialog();}]]:[]);}
 function bellShieldHit(e,dmg,heavy,source){if(!e.stats.bellBoss||e.dead)return false;const now=clock.elapsedTime;if(now<(e.bellExposed||0))return false;if(source==='windshot')e.bellCracks=2;else if(heavy)e.bellCracks=(e.bellCracks||0)+1;if(e.bellCracks>=2){e.bellExposed=now+5;e.bellAt=0;e.bellNext=now+6.8;e.bellDisc.visible=e.bellRing.visible=false;e.bellCracks=0;e.bellBreaks++;skillFx(e.root.position,0xffd779,2,'break');toast('종 방어 해제! 5초 동안 접근 공격');sfx('reward',.8);}else{skillFx(e.root.position,0x8edcf5,1.6,'hit');toast(heavy?'방어 균열 1/2 · 강공격 한 번 더!':'푸른 방어! 바람칼날 1회 또는 강공격 2회');}return true;}
@@ -2794,6 +2799,27 @@ function updateBell(now){for(const d of state.bellProps||[]){d.root.visible=bell
 if(state.dead||!inEstuary()){clearBellFight();return;}if(!bellReady()||state.bell.stage!==3){if(state.bellEnemy&&state.bell.stage!==4)clearBellFight();return;}
 if(state.bellEnemy?.dead){state.bell.stage=4;clearBellFight();saveGame();toast('파수꾼의 울림이 잦아들었다 · 나루 곁 기록대로');return;}
 if(!state.bellEnemy&&!state.dialog&&!state.menuOpen&&Math.hypot(state.player.position.x-151,state.player.position.z-1)<13){const e=state.spawn(state.protos.skel,{...WARRIOR,hp:420,dmg:20,guard:false,combo:false,aggro:20,noElite:true,noRespawn:true,label:'수문 종의 파수꾼',bellBoss:true},151,1);e.expedition=true;e.trial=true;e.estuary=true;e.root.scale.multiplyScalar(1.25);if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=2.8;e.root.add(e.nameSprite);}e.bellShield=new THREE.Mesh(new THREE.CylinderGeometry(1.6,1.6,2.7,16,1,true),new THREE.MeshBasicMaterial({color:0x6edaff,transparent:true,opacity:.24,side:THREE.DoubleSide,depthWrite:false}));e.bellShield.position.y=1.4;e.root.add(e.bellShield);e.bellDisc=new THREE.Mesh(new THREE.CircleGeometry(4.5,48),new THREE.MeshBasicMaterial({color:0xff594f,transparent:true,opacity:.3,side:THREE.DoubleSide,depthWrite:false}));e.bellRing=new THREE.Mesh(new THREE.RingGeometry(3,8,64),e.bellDisc.material.clone());for(const m of[e.bellDisc,e.bellRing]){m.rotation.x=-Math.PI/2;m.position.set(151,.09,1);m.visible=false;scene.add(m);}e.bellCracks=e.bellBreaks=e.bellHits=e.bellDodges=e.bellPulses=0;e.bellOuter=true;e.bellNext=now+2;state.bellEnemy=e;toast('푸른 방어! 바람칼날 1회 또는 강공격/회전베기 2회');}}
+
+// ---------- 안개의 항로: 번갈아 켜지는 빛으로 추적자를 유인 ----------
+const MIST_LAMPS=[{id:'westlight',name:'서쪽 항로등',x:137,z:8,bit:1},{id:'eastlight',name:'동쪽 항로등',x:151,z:8,bit:2}];
+function mistReady(){return state.bell.stage===5;}
+function mistStatus(){const s=state.mist;return s.stage===4?'안개 항로 기록 인계 완료':s.stage===3?'나루 기록대에 돌아가 항로 기록 인계':s.stage===2?'켜진 등불 반경 4m로 추적자를 유인 · 8초마다 빛 교대':s.stage===1?`항로등 복구 ${Number(!!(s.lamps&1))+Number(!!(s.lamps&2))}/2`:mistReady()?'여울 기록대에서 안개의 항로 시작':'수문 아래의 종 기록 인계 후 시작';}
+function mistTarget(){const s=state.mist;if(!mistReady()||s.stage===4)return null;if(!inEstuary())return{...ESTUARY_SITES[0],label:'회색 여울 나루'};if(s.stage===1){const d=MIST_LAMPS.find(d=>!(s.lamps&d.bit));return{...d,label:d.name};}if(s.stage===2){const d=MIST_LAMPS[state.mistFight?.active||0];return{...d,label:'빛으로 추적자 유인 · '+d.name};}return{x:129,z:-5,label:'나루 기록대 · 안개의 항로'};}
+function buildMist(){state.mistProps=MIST_LAMPS.map(d=>{const root=new THREE.Group();root.position.set(d.x,0,d.z);const stone=new THREE.MeshLambertMaterial({color:0x657786}),bronze=new THREE.MeshLambertMaterial({color:0x9a7a42});const base=new THREE.Mesh(new THREE.CylinderGeometry(.55,.75,.4,8),stone);base.position.y=.2;root.add(base);const post=new THREE.Mesh(new THREE.CylinderGeometry(.12,.18,2.6,8),bronze);post.position.y=1.5;root.add(post);const cage=new THREE.Mesh(new THREE.CylinderGeometry(.5,.6,.7,8,1,true),new THREE.MeshLambertMaterial({color:0xe6bc69,transparent:true,opacity:.45,side:THREE.DoubleSide}));cage.position.y=2.8;root.add(cage);const cap=new THREE.Mesh(new THREE.ConeGeometry(.75,.55,8),bronze);cap.position.y=3.4;root.add(cap);const flame=new THREE.Mesh(new THREE.OctahedronGeometry(.35),new THREE.MeshBasicMaterial({color:0xffd577}));flame.position.y=2.8;root.add(flame);const label=makeNameSprite(d.name);label.position.y=4;root.add(label);const disc=new THREE.Mesh(new THREE.CircleGeometry(4,48),new THREE.MeshBasicMaterial({color:0xffd57b,transparent:true,opacity:.16,depthWrite:false,side:THREE.DoubleSide}));disc.rotation.x=-Math.PI/2;disc.position.y=.095;root.add(disc);const ring=new THREE.Mesh(new THREE.RingGeometry(3.9,4,48),new THREE.MeshBasicMaterial({color:0xffde91,side:THREE.DoubleSide,transparent:true,opacity:.8}));ring.rotation.x=-Math.PI/2;ring.position.y=.1;root.add(ring);scene.add(root);return{...d,root,flame,disc,ring};});}
+function nearbyMist(){return state.ready&&!state.dead&&mistReady()?(state.mistProps||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.2)||null:null;}
+function openMist(d=null){const s=state.mist;state.dlgFocus=d?d.root.position:state.player.position;const buttons=[];if(d){journeyDialog(d.name,(s.lamps&d.bit)?'항로등을 복구했다. 두 등불이 모두 켜지면 안개 속 추적자가 모습을 드러낸다.':s.stage===1?'떠내려온 기록에는 두 등불 사이로 돌아오라는 말이 남아 있다. 심지를 바로잡고 등불을 밝히자.':'먼저 나루 기록대에서 안개의 항로 조사를 시작하자.',s.stage===1&&!(s.lamps&d.bit)?[['항로등 밝히기',()=>{if(s.stage!==1||nearbyMist()?.id!==d.id||s.lamps&d.bit)return;s.lamps|=d.bit;if(s.lamps===3)s.stage=2;saveGame();closeDialog();skillFx(d.root.position,0xffd57b,2,'ready');toast(s.stage===2?'두 불빛 사이의 추적자 · 켜진 빛으로 유인하자.':'항로등 복구 · 반대쪽 등불을 찾아보자.');}]]:[]);return;}
+const text='<b>'+mistStatus()+'</b><br><br>종의 울림이 사라지자, 오래전 뱃사공이 남긴 항로등 두 개가 드러났다. 그는 안개를 베는 대신 불빛 안으로 이끌었다고 적었다.<br><br>남쪽의 <b>서쪽·동쪽 항로등</b>을 자유 순서로 밝히자. 두 등을 복구하면 추적자가 나타난다. <b>추적자 자신이 금빛 원(반경 4m) 안에 있어야</b> 근접과 원거리 공격 모두 피해를 준다. 내가 원 안에 있는 것만으로는 안 된다. 보랏빛 몸은 무피해, 금빛 몸은 공격 기회다.<br><br><b>빛은 8초마다 반대 등으로 교대</b>한다. 마지막 1.5초 동안 현재 원이 깜박이고 다음 원 테두리가 푸르게 빛난다. 적은 다가오다가 <b>붉은 원 1초 예고 뒤 2.4m 공격</b>을 한다. 준비 중에는 적이 멈추므로 영역 밖으로 움직이거나 Q/회피로 피하자. 공격·피격으로 예고가 취소되지는 않는다.<br><br>대화·메뉴는 공격 예고를 취소하고 빛 교대 시간을 멈춘다. 사망·섬 이탈·전투 중심에서 25m 이탈은 미완료 전투만 초기화한다. 복구한 등·승리 기록은 저장된다. 무료 도전, 적 전리품 없음. 기록 인계는 한 번 <b>420XP·260G</b>.';
+if(!s.stage&&mistReady())buttons.push(['안개 항로 조사 시작',()=>{if(!mistReady()||s.stage||nearbyBell()?.id!=='archive')return;clearWindPractice();s.stage=1;state.tracked='mist';saveGame();closeDialog();toast('남쪽 항로등 둘을 찾아 불을 밝히자.');}]);if(s.stage===3)buttons.push(['안개 항로 기록 인계',()=>{if(s.stage!==3||nearbyBell()?.id!=='archive')return;s.stage=4;state.gold+=260;gainXp(420);if(state.tracked==='mist')state.tracked='auto';saveGame();closeDialog();sfx('reward',1);toast('안개 항로의 길잡이 · 420XP · 260G');}]);journeyDialog('안개의 항로',text,buttons);}
+function mistLit(e){const f=state.mistFight;if(!f||f.enemy!==e)return false;const d=MIST_LAMPS[f.active];return Math.hypot(e.root.position.x-d.x,e.root.position.z-d.z)<=4;}
+function mistDamage(e){if(!e.stats.mistHunter||mistLit(e))return false;const f=state.mistFight;if(f)f.blocks++;skillFx(e.root.position,0xb0a4e8,1.3,'hit');if(!e.mistHint||clock.elapsedTime>e.mistHint){toast('안개를 통과했다 · 적을 켜진 금빛 원 안으로 유인!');e.mistHint=clock.elapsedTime+2;}return true;}
+function clearMistFight(){const f=state.mistFight;if(!f)return;const e=f.enemy;for(const m of[e.mistAura,e.mistAttack]){if(m){m.parent?.remove(m);m.geometry.dispose();m.material.dispose();}}if(e.tele)scene.remove(e.tele);e.dead=true;e.despawned=true;scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);state.mistFight=null;}
+function spawnMistFight(now){const e=state.spawn(state.protos.skel,{...WARRIOR,hp:540,dmg:22,guard:false,combo:false,aggro:30,noElite:true,noRespawn:true,label:'안개 추적자',mistHunter:true},144,11);e.expedition=e.trial=e.estuary=true;e.root.scale.multiplyScalar(1.15);e.mistNext=now+2;e.mistAt=0;e.mistHits=e.mistDodges=e.mistStrikes=0;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=3;e.root.add(e.nameSprite);}e.mistAura=new THREE.Mesh(new THREE.CylinderGeometry(1.25,1.6,2.5,12,1,true),new THREE.MeshBasicMaterial({color:0x9d87e5,transparent:true,opacity:.30,depthWrite:false,side:THREE.DoubleSide}));e.mistAura.position.y=1.3;e.root.add(e.mistAura);e.mistAttack=new THREE.Mesh(new THREE.CircleGeometry(2.4,40),new THREE.MeshBasicMaterial({color:0xff6257,transparent:true,opacity:.32,depthWrite:false,side:THREE.DoubleSide}));e.mistAttack.rotation.x=-Math.PI/2;e.mistAttack.visible=false;scene.add(e.mistAttack);state.mistFight={enemy:e,active:0,next:now+8,last:now,swaps:0,blocks:0};}
+function updateMistEnemy(e,dt,now){if(!e.stats.mistHunter)return false;const f=state.mistFight;if(!f)return true;e.anim.update(dt);if(state.dead||state.dialog||state.menuOpen){e.mistAt=0;e.mistNext=now+1.5;e.mistAttack.visible=false;return true;}const p=state.player.position,to=p.clone().sub(e.root.position);to.y=0;const d=to.length();e.root.rotation.y=Math.atan2(to.x,to.z);e.mistAura.material.color.setHex(mistLit(e)?0xffd477:0x9d87e5);e.mistAura.material.opacity=mistLit(e)?.20:.32;
+if(e.mistAt){e.mistAttack.visible=true;e.mistAttack.position.set(e.root.position.x,.12,e.root.position.z);e.mistAttack.material.opacity=.2+.22*Math.sin(now*12)**2;if(now>=e.mistAt){if(d<2.4){if(now<state.invUntil){e.mistDodges++;registerDodgeBlock(now);}else{e.mistHits++;state.hp=Math.max(0,state.hp-Math.max(1,22-GEAR_DEF[state.gear.armor]));hitFlash(state.player);sfx('hurt',.8);if(!state.hp)playerDie('안개 추적자');}}e.mistStrikes++;e.mistAt=0;e.mistNext=now+1.8;e.mistAttack.visible=false;}return true;}
+if(now<e.mistNext){e.anim.play('idle');return true;}if(d<2.2){e.mistAt=now+1;e.mistAttack.visible=true;e.mistAttack.position.set(e.root.position.x,.12,e.root.position.z);e.anim.playOnce('unarmed_melee_attack_punch','attack');return true;}if(d>.05){const step=to.normalize().multiplyScalar(Math.min(d,2.9*enemyMoveScale(e,now)*dt));e.root.position.add(step);for(const c of colliders){const dx=e.root.position.x-c.x,dz=e.root.position.z-c.z,cd=Math.hypot(dx,dz),r=c.r+.55;if(cd<r&&cd>.001){e.root.position.x=c.x+dx*r/cd;e.root.position.z=c.z+dz*r/cd;}}clampWorld(e.root.position);e.anim.play('running','run','walking','walk');}return true;}
+function updateMist(dt,now){const s=state.mist,p=state.player.position;let f=state.mistFight;if(f&&f.enemy.dead){s.stage=3;clearMistFight();saveGame();toast('항로 등불 아래 남은 이름을 찾았다 · 나루 기록대로');f=null;}if(state.dead||state.windPractice||!inEstuary()||Math.hypot(p.x-144,p.z-8)>25){clearMistFight();f=null;}else if(mistReady()&&s.stage===2&&!f&&!state.dialog&&!state.menuOpen&&Math.hypot(p.x-144,p.z-8)<16){spawnMistFight(now);f=state.mistFight;}
+if(f){const elapsed=now-f.last;f.last=now;if(state.dialog||state.menuOpen)f.next+=elapsed;else if(now>=f.next){f.active=1-f.active;f.next=now+8;f.swaps++;sfx('reward',.3);toast(MIST_LAMPS[f.active].name+' 점등 · 적을 이 빛으로 유인!');}}
+for(const d of state.mistProps||[]){d.root.visible=mistReady();const lit=!!(s.lamps&d.bit),active=!!f&&MIST_LAMPS[f.active].id===d.id,warn=!!f&&f.next-now<=1.5;d.flame.visible=lit&&(!f||active);d.flame.rotation.y=now;d.flame.scale.setScalar(.9+.12*Math.sin(now*5));d.disc.visible=s.stage>=2&&(active||s.stage>=3);d.ring.visible=lit;d.disc.material.opacity=warn&&active?.08+.18*Math.sin(now*12)**2:.16;d.ring.material.color.setHex(active||s.stage>=3?0xffde91:warn?0x81e5ff:0x687b91);}}
 
 function courierStatus(){if(state.courier===3)return '북서 전령 기록 인계 완료';if(state.courier===2)return '전령길 안내판에 기록 인계';if(state.courier===1)return '길 안쪽 봉인함 회수';if(state.courierFight)return `전령길 궁수 ${(state.courierFight||[]).filter(e=>!e.dead).length}명 · 엄폐/사격 예고 끊기`;return state.quest.idx>=10?'북서 전령길 안내판에서 시작':'메인 의뢰 10개 완료 후 도전';}
 function courierTarget(){if(state.courier===3||state.quest.idx<10)return null;const d=state.courier===1?COURIER_BOX:state.courierFight?COURIER_CENTER:COURIER_BOARD;return{x:d.x,z:d.z,label:state.courierFight?'전령길 엄폐 전투':d.name};}
@@ -3440,6 +3466,7 @@ function objectiveTarget() {
   if (!state.npc) return null;
   const mode = state.tracked || 'auto';
   if (mode === 'none') return null;
+  if (mode === 'mist') return mistTarget() || autoObjective();
   if (mode === 'bell') return bellTarget() || autoObjective();
   if (mode === 'estuary') return estuaryTarget() || autoObjective();
   if (mode === 'courier') return courierTarget() || autoObjective();
@@ -3466,6 +3493,7 @@ function cycleTrack() {
   if (beaconTarget()) opts.push('beacon');
   if (observatoryTarget()) opts.push('observatory');
   if (echoTarget()) opts.push('echo');
+  if(mistTarget())opts.push('mist');
   if(bellTarget())opts.push('bell');
   if(estuaryReady()&&state.estuary.stage<5)opts.push('estuary');
   if (courierTarget()) opts.push('courier');
@@ -3650,6 +3678,7 @@ function killEnemy(e) {
 // heavy = 강공격·회전베기 (가드 파괴 가능). 가드 중인 적은 일반 공격을 30%만 받음
 function damageEnemy(e, dmg, heavy, source='melee') {
   if(e.stats.windPractice){e.windPracticeHits++;e.hp=Math.max(1,e.hp-dmg);e.nameSprite.material.map.dispose();e.nameSprite.material.dispose();e.root.remove(e.nameSprite);e.nameSprite=makeNameSprite(`표적${e.windPracticeIndex} · ${e.windPracticeHits}회 · ${dmg}`);e.nameSprite.position.y=2.8;e.root.add(e.nameSprite);hitFlash(e.root);return;}
+  if(mistDamage(e))return;
   if(bellShieldHit(e,dmg,heavy,source))return;
   if(echoDamage(e,dmg))return;
   const now = clock.elapsedTime;
@@ -3672,7 +3701,7 @@ function damageEnemy(e, dmg, heavy, source='melee') {
   window.__dbgDmg = (window.__dbgDmg || 0) + 1;
   hitFlash(e.root);
   sfx(Math.random() < 0.5 ? 'hit1' : 'hit2', 0.9);
-  if (heavy && state.attackStrong && !e.stats.bellBoss) {
+  if (heavy && state.attackStrong && !e.stats.bellBoss && !e.stats.mistHunter) {
     // 강공격 넉백
     const push = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
     e.root.position.addScaledVector(push, 1.4);
@@ -3995,6 +4024,7 @@ function updateEnemy(e, dt, now) {
     return;
   }
   if(e.stats.windPractice){e.anim.update(dt);return;}
+  if (updateMistEnemy(e,dt,now))return;
   if (updateBellEnemy(e,dt,now))return;
   if (updateArcher(e,dt,now))return;
   if (updateCartRaider(e,dt,now))return;
@@ -4254,6 +4284,7 @@ function tick() {
     updateCourier();
     updateEstuary(now);
     updateBell(now);
+    updateMist(dt,now);
     updateWindPractice();
     checkAch();
     updateWeather(dt, now);
@@ -4272,6 +4303,7 @@ function tick() {
     }
     const trialNear = state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8 && !state.dead;
     const promptEl = document.getElementById('prompt');
+    const mistNear=nearbyMist();
     const bellNear=nearbyBell();
     const estNear=nearbyEstuary();
     const courierNear=nearbyCourier();
@@ -4281,8 +4313,8 @@ function tick() {
     const sealNear = nearbySeal();
     const journeyNear = nearbyJourneySite();
     const beaconNear = nearbyBeacon();
-    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : bellNear ? `E · ${bellNear.name}` : estNear ? `E · ${estNear.name}` : courierNear ? `E · ${courierNear.name}` : cartNear ? 'E · 기록 운반 수레' : echoNear ? `E · ${echoNear.name}` : obsNear ? `E · ${obsNear.name}` : sealNear ? `E · ${sealNear.name}` : beaconNear ? `E · ${beaconNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
-    promptEl.style.display = (npcNear || trialNear || sealNear || journeyNear || beaconNear || obsNear || echoNear || cartNear || courierNear || estNear || bellNear) && !state.dialog ? 'block' : 'none';
+    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : mistNear ? `E · ${mistNear.name}` : bellNear ? `E · ${bellNear.name}` : estNear ? `E · ${estNear.name}` : courierNear ? `E · ${courierNear.name}` : cartNear ? 'E · 기록 운반 수레' : echoNear ? `E · ${echoNear.name}` : obsNear ? `E · ${obsNear.name}` : sealNear ? `E · ${sealNear.name}` : beaconNear ? `E · ${beaconNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
+    promptEl.style.display = (npcNear || trialNear || sealNear || journeyNear || beaconNear || obsNear || echoNear || cartNear || courierNear || estNear || bellNear || mistNear) && !state.dialog ? 'block' : 'none';
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
@@ -4310,6 +4342,7 @@ function tick() {
       lines.push(`${resolved === 'bounty' ? '▸ ' : ''}반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : b.kind === 'mats' ? b.mat + ' 납품' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
     }
     const bt=beaconTarget();if(bt)lines.push(`${state.tracked==='beacon'?'▸ ':''}원정 · ${bt.label} ${distTo(bt)}<br><span style="font-size:.85em">${beaconStatus()}</span>`);
+    const mistNav=mistTarget();if(mistNav)lines.push(`${state.tracked==='mist'?'▸ ':''}항로 · ${mistStatus()} ${distTo(mistNav)}`);
     const bellNav=bellTarget();if(bellNav)lines.push(`${state.tracked==='bell'?'▸ ':''}종 · ${bellStatus()} ${distTo(bellNav)}`);
     const est=estuaryTarget();if(est&&estuaryReady()&&state.estuary.stage<5)lines.push(`${state.tracked==='estuary'?'▸ ':''}여울 · ${state.estuaryChannel?`구조 중 ${Math.max(0,3-(now-state.estuaryChannel.start)).toFixed(1)}초`:estuaryStatus()} ${distTo(est)}`);
     const crt=courierTarget();if(crt)lines.push(`${state.tracked==='courier'?'▸ ':''}전령길 · ${courierStatus()} ${distTo(crt)}`);
