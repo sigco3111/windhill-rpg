@@ -1,4 +1,15 @@
+import {EQUIP_CAP,EQUIP_KEYS,equipName,migrateEquipment,gearTiers,equipmentStats,enhanceCost,addEquipment,equipItem,enhanceItem,salvageItem,equipmentDrop,questEquipment,questEquipmentName} from './equipment.js';
+import {BLUE_SOURCE,SURVEY_TARGETS,surveyRays,surveyMatch,surveyRecord} from './relay-survey.js';
+import {observatoryCyclePlan} from './cycle-observatory.js';
+import {readDisplay,writeDisplay,displayProfile} from './display-settings.js';
+import {createGameClock} from './game-clock.js';
+import {archiveCyclePlan} from './cycle-archive.js';
+import {validateGameSave} from './save-schema.js';
 import * as THREE from 'three';
+import {readCycles,commitCycleSave,startNextCycle,switchCycle} from './cycle-store.js';
+import {echoPattern,echoDanger,echoEligible,echoStep} from './cycle-echo.js';
+import {beaconCyclePlan,menderStep,menderHeal} from './cycle-beacon.js';
+import {RELAY_MIRRORS,RELAY_RECEIVERS,normalizeRelay,traceRelay} from './light-relay.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
@@ -7,9 +18,12 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 // ---------- 기본 씬 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+let selectedDisplay;
+try{selectedDisplay=readDisplay(localStorage)}catch{selectedDisplay='standard'}
+function applyDisplay(){const p=displayProfile(selectedDisplay,window.devicePixelRatio);renderer.shadowMap.enabled=p.shadows;renderer.setPixelRatio(p.pixelRatio);renderer.setSize(innerWidth,innerHeight);}
+applyDisplay();
 renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
+// Shadow and pixel ratio follow the explicit device-local display choice.
 document.getElementById('app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -359,6 +373,8 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   windCdUntil: 0, windshot: null, mastery: null, masteryChain: null, skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0, poisonUntil: 0, poisonTickAt: 0,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
+  canal:{stage:0,water:'low',west:0,east:0,input:0,north:0,claimed:false},
+  highland:{stage:0,west:0,east:0,relay:0,north:0,route:null},
   level: 1, xp: 0, echo: 0, cartStage: 0, courier: 0, insignia: null, estuary: {stage:0,rescued:0,bossWon:false}, bell:{stage:0,clues:0,input:0}, windTune:null, mist:{stage:0,lamps:0}, archive:{stage:0,read:false,input:0,shelf:false,valves:0,wave:0,ending:null},
   bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
@@ -366,20 +382,11 @@ const state = {
   watch: null, watchFound: false, watchCleared: false, // 버려진 망루: 발견(30m 접근) + 수호대장 격파(1회성)
   golden: null, // 황금 쥐: { nextAt, active, until }
   rings: null, ringsPassed: [], // 바람의 고리: 5곳 통과 탐험 요소
-  gear: { sword: 0, armor: 0, boots: 0 }, // 장비 등급 0~2
+  gear: { sword: 0, armor: 0, boots: 0 }, // 장착 등급 0~3 호환 기록. 보유품/강화는 equipment에 저장
   ach: {}, // 달성한 업적 id → true
   quest: { idx: 0, state: 'none', startKills: 0 }, // idx: QUESTS 순번, state: none → active → done
   playTime: 0, menuOpen: false, // playTime: dt상한 누적 시뮬레이션 초 (실제 경과 아님) / menuOpen: 메뉴 대시보드 표시 중
 };
-// 장비 효과표 (등급 0=없음)
-const GEAR_ATK = [0, 4, 9, 15];        // 검: 공격력 추가
-const GEAR_DEF = [0, 2, 4, 6];         // 갑옷: 받는 피해 감소(최소 1)
-const GEAR_SPD = [1, 1.12, 1.25, 1.4]; // 부츠: 이동속도 배율
-const GEAR_SHOP = [
-  { key: 'sword', names: ['강철 검', '기사의 검', '폭풍의 검'], prices: [80, 200, 300], desc: ['공격력 +4', '공격력 +9', '공격력 +15'], mats: [null, null, [['투구 파편', 3]]] },
-  { key: 'armor', names: ['가죽 갑옷', '철 갑옷', '뼈 갑옷'], prices: [60, 150, 250], desc: ['받는 피해 -2', '받는 피해 -4', '받는 피해 -6'], mats: [null, null, [['뼈 조각', 5]]] },
-  { key: 'boots', names: ['바람 부츠', '폭풍 부츠', '천둥 부츠'], prices: [100, 220, 280], desc: ['이동속도 +12%', '이동속도 +25%', '이동속도 +40%'], mats: [null, null, [['거미줄', 4]]] },
-];
 // ---------- 스킬 트리 (기본 8노드 각1P + 기록원 보법 2택1 각2P) ----------
 const SKILLS = [
   { id:'windshot',branch:'원풍',name:'바람칼날',desc:'바라보는 방향으로 직선 바람탄 · 첫 적 1명에 1.2배 피해 · 사거리10m · G키/쿨5초 · 벽에 막힘/가드 파괴 불가',req:null },
@@ -393,12 +400,22 @@ const SKILLS = [
   {id:'shortstep',branch:'보법 연마 · 2택1',name:'짧은 발걸음',cost:2,group:'footwork',req:'haste',desc:'2.5m를 0.28초에 이동 · 무적0.38초 · 잔상 적용 쿨0.9초(발걸음 인장0.65초). 빠른 반격 대신 긴 예고에서 벗어날 거리가 짧다.'},
   {id:'longstep',branch:'보법 연마 · 2택1',name:'긴 발걸음',cost:2,group:'footwork',req:'haste',desc:'6m를 0.6초에 이동 · 무적0.55초 · 잔상 적용 쿨2.3초(발걸음 인장2.05초). 넓은 예고를 벗어나지만 끝부분은 무적이 아니며 다음 회피가 늦다.'},
 ];
+SKILLS.push({id:'whirlfocus',branch:'선풍 연마 · 2택1',name:'응축 회전',cost:3,group:'whirlform',req:'storm',desc:'1.9m / 2.6배 / 쿨4.5초 / 가드 파괴'},{id:'whirlsweep',branch:'선풍 연마 · 2택1',name:'넓은 회전',cost:3,group:'whirlform',req:'storm',desc:'4.4m / 1.3배 / 쿨7초 / 가드 파괴 불가'});
 const hasSkill = (id) => !!state.skills[id];
 function footworkUnlocked(){return state.level>=10&&state.archive?.stage===4;}
 function footworkId(){return footworkUnlocked()&&hasSkill('haste')?(hasSkill('shortstep')?'shortstep':hasSkill('longstep')?'longstep':null):null;}
 function dodgeProfile(){const id=footworkId(),short=id==='shortstep',long=id==='longstep';return{id,name:short?'짧은 발걸음':long?'긴 발걸음':'기본 회피',distance:short?2.5:long?6:4,duration:short?.28:long?.6:.45,inv:short?.38:.55,cooldown:(short?(hasSkill('haste')?.9:1.5):long?(hasSkill('haste')?2.3:3.2):(hasSkill('haste')?1.6:2.5))-(activeInsignia('stride')?.25:0)};}
 function footworkSafe(){return footworkUnlocked()&&insigniaSafe();}
 function refundFootwork(){if(!state.dialog||!footworkSafe())return;const ids=SKILLS.filter(s=>s.group==='footwork'&&hasSkill(s.id));if(!ids.length)return;const points=ids.reduce((n,s)=>n+(s.cost||1),0);for(const s of ids)delete state.skills[s.id];state.skillPts+=points;saveGame();sfx('reward',.6);toast(`보법 연마 해제 · ${points}P 반환 · 현재 체력/쿨 유지`);}
+
+// 수로 기록 이후 선풍 연마: 기존 스킬 포인트로 2택1, 기존 숙련과 독립.
+function whirlStudyUnlocked(){return state.level>=14&&state.canal?.stage===5;}
+function whirlStudySafe(){return whirlStudyUnlocked()&&insigniaSafe();}
+function whirlStudyId(){return whirlStudyUnlocked()&&hasSkill('storm')?(hasSkill('whirlfocus')?'whirlfocus':hasSkill('whirlsweep')?'whirlsweep':null):null;}
+function whirlProfile(){const id=whirlStudyId(),storm=hasSkill('storm');return id==='whirlfocus'?{id,name:'응축 회전',radius:1.9,multiplier:storm?2.6:2,cooldown:storm?4.5:6,heavy:true,color:0xffc074}:id==='whirlsweep'?{id,name:'넓은 회전',radius:4.4,multiplier:storm?1.3:.9,cooldown:storm?7:9,heavy:false,color:0x9affda}:{id:null,name:'회전베기',radius:2.8,multiplier:storm?2:1.4,cooldown:storm?6:8,heavy:true,color:0x91dbff};}
+function learnWhirlStudy(id){const s=SKILLS.find(s=>s.id===id&&s.group==='whirlform');if(!state.dialog||!dlgEl().classList.contains('whirl-study')||!s||!whirlStudySafe()||!hasSkill('storm')||hasSkill(s.id)||SKILLS.some(k=>k.group==='whirlform'&&hasSkill(k.id))||(state.skillPts||0)<s.cost)return false;state.skillPts-=s.cost;state.skills[s.id]=true;saveGame();skillFx(state.player.position,whirlProfile().color,1.4,'ready');toast(`${s.name} 습득 · ${s.cost}P · 현재 체력/쿨 유지`);return true;}
+function refundWhirlStudy(){if(!state.dialog||!dlgEl().classList.contains('whirl-study')||!whirlStudySafe())return false;const ids=SKILLS.filter(s=>s.group==='whirlform'&&hasSkill(s.id));if(!ids.length)return false;const points=ids.reduce((n,s)=>n+s.cost,0);for(const s of ids)delete state.skills[s.id];state.skillPts+=points;saveGame();toast(`선풍 연마 해제 · ${points}P 반환 · 현재 체력/쿨 유지`);return true;}
+function openWhirlStudy(){closeDialog();const p=whirlProfile(),safe=whirlStudySafe(),owned=SKILLS.some(s=>s.group==='whirlform'&&hasSkill(s.id)),choices=[];for(const s of SKILLS.filter(s=>s.group==='whirlform'))if(!owned&&safe&&hasSkill('storm'))choices.push([`${s.name} 습득 (3P)`,()=>{if(learnWhirlStudy(s.id))openWhirlStudy();}]);if(owned&&safe)choices.push(['선풍 연마 해제 (+3P)',()=>{if(refundWhirlStudy())openWhirlStudy();}]);journeyDialog('선풍 연마',`현재 <b>${p.name}</b> · 반경${p.radius}m · 피해${p.multiplier}배 · 재사용${p.cooldown}초<br><br><b>응축 회전</b> · 1.9m의 좁은 범위, 폭풍 습득 기준2.6배·4.5초. 가드를 깨지만 가까이 붙어야 한다.<br><br><b>넓은 회전</b> · 4.4m의 넓은 범위, 폭풍 습득 기준1.3배·7초. <b>가드/푸른 방어를 깨지 못하며</b> 가드에는 감소 피해만 준다. 벽 너머에는 닿지 않는다.<br><br>기존 돌풍 숙련의 일반 적 감속은 두 연마에서도 유지된다. 수로/고원 경비·보스·다른 원정 적은 기존처럼 감속하지 않는다.<br><br>해금: Lv.14 + 별빛 수로 기록 인계 + 폭풍. 각3P·2택1. 장로 곁2.6m·주변12m 적 없음에서만 배우거나 해제. 해제는 이 연마에 쓴3P만 반환하고 기본 회전베기로 돌아간다. 현재 체력·기존 기술·포인트·남은 재사용 시간은 유지한다.<br><br>${safe?(hasSkill('storm')?`안전한 연마 가능 · 보유 ${state.skillPts}P`:'먼저 회전베기 → 폭풍을 배워야 한다.'):'지금은 연마할 수 없다. 수로 기록과 레벨을 확인하고 안전한 장로 곁으로 돌아가자.'}`,choices);dlgEl().classList.add('whirl-study');if(state.skillPts<3)for(const b of document.querySelectorAll('#dlg-btns button'))if(b.textContent.includes('습득'))b.disabled=true;}
 
 // 전투 숙련: 기존 스킬과 별도. 선택만 저장하고 연격/감속은 전투 중에만 유지한다.
 const MASTERIES = [
@@ -414,7 +431,7 @@ function masterySafe() {
 function resetMasteryCombat() {
   state.masteryChain = null;
   state.pursuit = null;
-  for (const e of state.enemies) e.galeUntil = 0;
+  for (const e of state.enemies){e.galeUntil=0;clearWindDraw(e);}
 }
 function chainStrike(e, now) {
   if (!activeMastery('chain')) return false;
@@ -451,9 +468,13 @@ function bindInsignias(list,rerender){
 
 // 종 원정 뒤 원풍 조율: 단일 화력 또는 세 대상 관통. 기본 바람칼날은 그대로 유지.
 function piercingWind(){return state.windTune==='pierce'&&state.bell?.stage===5&&hasSkill('windshot');}
-function windTuneName(){return piercingWind()?'관통풍':'바람칼날';}
+function drawingWind(){return state.windTune==='draw'&&state.highland?.stage===5&&state.bell?.stage===5&&hasSkill('windshot');}
+function returningWind(){return state.windTune==='return'&&state.lightRelay?.stage===3&&state.bell?.stage===5&&hasSkill('windshot');}
+function fanningWind(){return state.windTune==='fan'&&state.lightRelay?.surveyClaimed===true&&state.bell?.stage===5&&hasSkill('windshot');}
+function windTuneName(){return fanningWind()?'확산풍':returningWind()?'회귀풍':drawingWind()?'견인풍':piercingWind()?'관통풍':'바람칼날';}
 function windTuneSafe(){return insigniaSafe()&&state.bell?.stage===5&&hasSkill('windshot');}
-function openWindTune(){closeDialog();const can=windTuneSafe();journeyDialog('원풍 조율',`현재: <b>${windTuneName()}</b><br><br><b>바람칼날</b> · 첫 적 1명에게 공격력1.2배. 기존 방식.<br><b>관통풍</b> · 일렬 최대3명에게 각각 공격력0.9배. 같은 적은 한 발에 한 번만 맞는다. 첫 적에 대한 화력은 낮지만 줄 세운 적을 꿰뚫는다.<br><br>둘 다 사거리10m·재사용5초·G/같은 원거리 버튼. 벽·가드·보호막에서 멈추며, 가드는 기존 감소 피해만 준다. 종 파수꾼의 푸른 방어는 해제해도 그 자리에서 멈춘다.<br>추격 숙련은 마지막으로 실제 피해를 받은 생존 적 한 명에게 표식이 남는다.<br><br>해금: 수문 아래의 종 기록 완료 + 바람칼날 습득.<br>장로 곁2.6m·주변12m 적 없음일 때 무료 교체. 스킬·포인트·룬·숙련·인장은 그대로, 체력과 재사용 시간도 초기화하지 않는다.<br>여울 나루 곁 기록대의 무료 표적 연습으로 줄 세운 세 대상을 시험할 수 있다.<br><b>${can?'지금 무료 교체 가능':'지금은 교체할 수 없다. 해금과 장로 곁 안전 조건을 확인하자.'}</b>`,can?[[piercingWind()?'바람칼날로 조율':'관통풍으로 조율',()=>{if(!windTuneSafe())return;state.windTune=piercingWind()?null:'pierce';cancelWindshot('tune');saveGame();sfx('reward',.7);toast(`원풍 조율: ${windTuneName()} · 무료 교체`);openWindTune();}]]:[]);}
+function selectWindTune(id){if(!state.dialog||!dlgEl().classList.contains('wind-tune')||!windTuneSafe()||!['blade','pierce','draw','return','fan'].includes(id)||(id==='fan'&&!state.lightRelay.surveyClaimed)||(id==='draw'&&state.highland.stage!==5)||(id==='return'&&state.lightRelay.stage!==3))return;state.windTune=id==='blade'?null:id;cancelWindshot('tune');saveGame();sfx('reward',.7);toast(`원풍 조율: ${windTuneName()} · 현재 체력/쿨 유지`);openWindTune();}
+function openWindTune(){closeDialog();const can=windTuneSafe(),draw=state.highland.stage===5;const choices=can?[['바람칼날로 조율',()=>selectWindTune('blade')],['관통풍으로 조율',()=>selectWindTune('pierce')]]:[];if(can&&draw)choices.push(['견인풍으로 조율',()=>selectWindTune('draw')]);if(can&&state.lightRelay.stage===3)choices.push(['회귀풍으로 조율',()=>selectWindTune('return')]);if(can&&state.lightRelay.surveyClaimed)choices.push(['확산풍으로 조율',()=>selectWindTune('fan')]);journeyDialog('원풍 조율',`현재: <b>${windTuneName()}</b><br><br><b>바람칼날</b> · 첫 적 1명에게 공격력1.2배.<br><b>관통풍</b> · 일렬 최대3명에게 각각 공격력0.9배. 한 발에 같은 적은 한 번만 맞는다.<br><b>견인풍</b> · 첫 적 1명에게 공격력0.75배. 피해를 받은 생존 일반 적을 최대2.8m, 0.35초 동안 끌어온다. 자신과 1.8m 거리를 남기며 벽이나 장애물 앞에서 멈춘다. 고원·수로의 일반 경비도 끌 수 있지만 보스·엘리트·그 밖의 원정/시련 적·연습 표적·가드/보호막 중인 적은 끌 수 없다. 끌리는 동안 공격 준비를 멈춘다. ${draw?'고원 기록으로 해금 완료':'잠김: 고원 피난처 지도 인계'}<br><br>기존 세 조율은 사거리10m·재사용5초. <b>회귀풍</b>은 전방8m까지 나갔다가 시전 지점으로 같은 길을 되돌아온다. 편도 최대2명·각 공격력0.65배, 같은 적도 돌아오는 길에 한 번 더 맞을 수 있다. 재사용6초. 돌아오는 끝점은 움직인 플레이어가 아니라 처음 시전한 자리이며 적을 추적하지 않는다. 벽이나 가드에 닿으면 왕복 전체가 끝난다. 빛의 중계소 세 기록 인계로 해금. ${state.lightRelay.stage===3?'해금 완료':'아직 잠겨 있다.'}<br><br><b>확산풍</b> · 정면과 좌우 약18도에 세 발. 사거리7m·재사용7초·각 공격력0.55배. 한 시전에서 같은 적은 한 번만 피해를 받는다. 각 탄은 첫 적/벽/가드에 닿으면 멈추고 다른 탄은 계속 간다. 밀집한 한 적에게 중첩할 수 없고 일렬 관통도 못 한다. 추격 표식은 마지막으로 피해를 받은 생존 적 한 명에게만 남는다. 공동 관측 세 기록 인계 후 해금.<br>모든 조율은 G/같은 원거리 버튼. 벽·가드·보호막에서 멈추며 가드에는 감소 피해만 준다. 종 파수꾼의 푸른 방어는 해제해도 그 자리에서 멈춘다.<br>추격 숙련은 실제 피해를 받은 생존 적 한 명에게 표식이 남는다. 견인풍 뒤 일반 근접 타격이나 회전베기로 이어갈 수 있다.<br><br>해금: 수문 아래의 종 기록 완료 + 바람칼날 습득. 견인풍은 추가로 고원 기록, 회귀풍은 빛의 중계소 인계가 필요하다.<br>장로 곁2.6m·주변12m 적 없음일 때 무료 교체. 스킬·포인트·룬·숙련·인장·현재 체력과 재사용 시간은 유지한다.<br>나루 기록대의 무료 표적 연습은 조율별 피해와 관통을 비교한다. 회귀풍은 편도 두 표적까지만 피해를 준다. 고정 표적은 이동하지 않는다.<br><b>${can?'지금 무료 교체 가능':'지금은 안전한 교체 조건이 아니다.'}</b>`,choices);dlgEl().classList.add('wind-tune');}
 function clearWindPractice(){for(const e of state.windPractice||[]){e.dead=true;e.despawned=true;if(e.tele)scene.remove(e.tele);scene.remove(e.root);e.root.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];for(const m of ms){if(m.map)m.map.dispose();m.dispose();}});const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);}state.windPractice=null;}
 function startWindPractice(){if(state.bell.stage!==5||nearbyBell()?.id!=='archive'||!state.protos.skel)return;clearWindPractice();cancelWindshot('practice');state.windPractice=[143,146,149].map((x,i)=>{const e=state.spawn(state.protos.skel,{...ENEMY,hp:99999,dmg:0,guard:false,speed:0,range:0,aggro:0,noElite:true,noRespawn:true,label:`조율 표적 ${i+1}`,windPractice:true},x,-3);e.expedition=true;e.trial=true;e.windPracticeIndex=i+1;e.windPracticeHits=0;e.root.visible=false;const root=new THREE.Group();root.position.set(x,0,-3);const wood=new THREE.MeshLambertMaterial({color:0xb39253}),cloth=new THREE.MeshLambertMaterial({color:0xc1a475});for(const[w,h,d,y]of[[.18,2.4,.18,1.2],[1.5,.15,.15,1.5],[.8,1.1,.45,1.3]]){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),w===.8?cloth:wood);m.position.y=y;root.add(m);}const head=new THREE.Mesh(new THREE.SphereGeometry(.34,10,8),cloth);head.position.y=2.15;root.add(head);const ring=new THREE.Mesh(new THREE.TorusGeometry(.3,.045,5,20),new THREE.MeshBasicMaterial({color:0xffd87a}));ring.position.set(0,1.4,-.25);root.add(ring);const name=makeNameSprite(e.stats.label);name.position.y=2.8;root.add(name);scene.remove(e.root);e.root=root;e.home.set(x,0,-3);e.nameSprite=name;scene.add(root);return e;});closeDialog();toast('표적 연습 · 서쪽에서 동쪽으로 세 표적을 줄 세워 쏘자. 보상·전리품·사망 위험 없음');}
 function updateWindPractice(){if(state.windPractice&&(state.dead||!inEstuary()||state.player.position.distanceTo(new THREE.Vector3(146,0,-3))>28))clearWindPractice();}
@@ -505,10 +526,13 @@ function toast(msg) {
   } else {
     el.style.top = '';
   }
+  positionNarrowToast(true);
   el.style.opacity = '1';
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.style.opacity = '0'; }, 1500);
 }
+
+function positionNarrowToast(force=false){const el=document.getElementById('toast');if(!force&&el.style.opacity!=='1')return;const q=document.getElementById('quest'),m=document.getElementById('minimap'),t=document.getElementById('tut');const bottom=e=>e&&getComputedStyle(e).display!=='none'?e.getBoundingClientRect().bottom:0;const top=innerWidth<560?Math.max(bottom(q)+8,bottom(m)+8,bottom(t)+8,82)+'px':bottom(t)?(bottom(t)+8)+'px':'';if(el.style.top!==top)el.style.top=top;}
 
 // ---------- 보스 정보 플레이트 (이름+체력 HUD): 3D 이름표는 튜토리얼/벽에 가려질 수 있어 HUD로 보장 ----------
 const bossPlate = document.createElement('div');
@@ -535,18 +559,26 @@ document.head.appendChild(windStyle);
 const skillTreeStyle = document.createElement('style');
 skillTreeStyle.textContent = '#dlg.journey-dialog #dlg-text { max-height:min(38vh,260px);overflow-y:auto;scrollbar-width:thin; } #dlg.journey-dialog .btns { flex-wrap:wrap; } #dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
 skillTreeStyle.textContent+='#dlg.skilltree{display:flex!important;flex-direction:column;gap:4px;top:50%;bottom:auto;transform:translate(-50%,-50%);width:min(474px,calc(100vw - 20px));height:min(660px,calc(100dvh - 24px));max-height:none;box-sizing:border-box;overflow:hidden}#dlg.skilltree h3,#dlg.skilltree .btns{flex-shrink:0}#dlg.skilltree #dlg-text{flex:0 0 auto;max-height:25vh;overflow-y:auto;scrollbar-width:thin}#dlg.skilltree #dlg-list{flex:1 1 auto;min-height:60px;max-height:none;overflow-y:auto}#dlg.skilltree .btns{margin-top:4px;flex-wrap:wrap}#dlg.skilltree button:disabled{opacity:.45;cursor:default}';
+skillTreeStyle.textContent+='#dlg:is(.wind-tune,.canal-panel,.whirl-study,.cycle-panel,.archive-panel,.equipment-panel){display:flex!important;flex-direction:column;gap:4px;top:50%;bottom:auto;transform:translate(-50%,-50%);width:min(474px,calc(100vw - 20px));height:min(660px,calc(100dvh - 24px));max-height:none;box-sizing:border-box;overflow:hidden}#dlg:is(.wind-tune,.canal-panel,.whirl-study,.cycle-panel,.archive-panel,.equipment-panel) h3,#dlg:is(.wind-tune,.canal-panel,.whirl-study,.cycle-panel,.archive-panel,.equipment-panel) .btns{flex-shrink:0}#dlg:is(.wind-tune,.canal-panel,.whirl-study,.cycle-panel,.archive-panel,.equipment-panel) #dlg-text{flex:1 1 auto;min-height:40px;max-height:none;overflow-y:auto;scrollbar-width:thin}#dlg:is(.wind-tune,.canal-panel,.whirl-study,.cycle-panel,.archive-panel,.equipment-panel) .btns{margin-top:4px;flex-wrap:wrap}';
+skillTreeStyle.textContent+='#dlg.equipment-panel #dlg-text{word-break:normal;overflow-wrap:anywhere}';
+skillTreeStyle.textContent+='#dlg:is(.cycle-panel,.equipment-panel) .btns{max-height:45dvh;overflow-y:auto;min-height:38px;flex:0 0 auto}';
 document.head.appendChild(skillTreeStyle);
 // 이름과 대응 지시를 분리한다. HUD 대상만 바뀌며 실제 공격/자동전투 대상은 그대로다.
 const combatHudStyle=document.createElement('style');
 combatHudStyle.textContent='#bp-name{line-height:1.35;word-break:keep-all;overflow-wrap:normal}#bp-cue{font-size:13px;line-height:1.4;color:#f5eddb}#bp-cue span{display:block;white-space:nowrap}#bossplate[data-warning="true"]{border-color:#ff8a75}#bossplate[data-warning="true"] #bp-cue{color:#ffb39c}@media(max-width:559px),(max-height:500px){#bossplate{padding:6px 8px!important;font-size:12px!important}#bp-cue{font-size:11px}}';
 combatHudStyle.textContent+='@media(min-width:560px) and (max-height:500px){#quest{left:176px;right:150px;top:44px;max-width:none;box-sizing:border-box;text-align:center;font-size:10px;line-height:1.4;padding:4px 6px;word-break:keep-all}}';
 combatHudStyle.textContent+='@media(min-width:560px) and (max-height:500px){#minimap{width:96px;height:96px}}@media(min-width:560px) and (max-height:400px){#minimap{width:72px;height:72px}#skill,#inv,#pot,#dodge,#windshot,#whirl{width:42px;height:42px;font-size:9px}#skill{right:74px;bottom:192px}#inv{right:16px;bottom:192px}#windshot{right:74px;bottom:140px}#pot{bottom:140px}#whirl{right:74px;bottom:88px}#dodge{bottom:88px}#atk{bottom:20px}}';
+combatHudStyle.textContent+='@media(min-width:560px) and (max-height:500px){#toast{left:220px;right:150px;max-width:none;transform:none;box-sizing:border-box;text-align:center;white-space:normal;overflow-wrap:anywhere;line-height:1.45;font-size:12px;padding:6px 8px;background:rgba(20,24,32,.88);border:1px solid #8c8060;border-radius:6px}}';
+combatHudStyle.textContent+='@media(max-width:559px){#toast{left:10px;right:10px;transform:none;box-sizing:border-box;text-align:center;white-space:normal;overflow-wrap:anywhere;font-size:12px;line-height:1.45;padding:6px 8px;background:rgba(20,24,32,.9);border:1px solid #8c8060;border-radius:6px}}';
 document.head.appendChild(combatHudStyle);
 function combatCue(e,now){
- const at=[e.archerAt,e.mistAt,e.bellAt,e.pulseAt,e.stormAt,e.spitAt].filter(t=>t>now);
+ const at=[e.mendAt,e.lanceAt,e.echoAt,e.archerAt,e.mistAt,e.bellAt,e.pulseAt,e.stormAt,e.spitAt].filter(t=>t>now);
  const deadline=at.length?Math.min(...at):0;
  let lines=[];
  if(e.staggerUntil>now)lines=['경직 · 반격'];
+ else if(e.stats.beaconMender)lines=e.mendAt?['회복 시전 · 16회복','회복사를 때려 중단']:['동료 회복사','회복사 먼저 · 시전 끊기'];
+ else if(e.stats.lancer)lines=e.lanceAt?['창 찌르기 예고','붉은 띠의 옆으로']:e.lanceDash?['창 돌진 중','옆으로 이동']:['창병 · 찌른 뒤 반격'];
+ else if(e.cycleEcho)lines=e.echoAt?(e.cycleEcho.id==='ring'?['금빛 고리 예고','1.6m 안·4.4m 밖']:['붉은 원 예고','2.8m 밖으로']):e.echoPhase?.recover>now?['잔향 뒤 빈틈 · 반격']:[e.cycleEcho.name];
  else if(e.stats.mistHunter)lines=e.mistAt?['붉은 원 예고','원 밖 · 회피']:mistLit(e)?['빛 안 · 공격 가능']:['안개 · 피해 차단','등불로 유인'];
  else if(e.stats.bellBoss)lines=e.bellAt?(e.bellOuter?['고리 예고','3m 안 · 8m 밖']:['원형 예고','4.5m 밖으로']):e.bellExposed>now?['방어 해제 · 공격']:['푸른 방어','원거리 · 강공격'];
  else if(e.stats.echoBoss&&state.echoFight?.shield)lines=['보호막','봉인석 해제'];
@@ -578,8 +610,9 @@ function updateBossPlate() {
   bossPlate.style.maxWidth = narrow ? '200px' : '72vw';
   bossPlate.style.minWidth = narrow ? '120px' : '220px';
   bossPlate.style.display = 'block';
+  if(innerWidth>=560&&innerHeight<=330){const m=document.getElementById('minimap'),mb=m&&getComputedStyle(m).display!=='none'?m.getBoundingClientRect().bottom:10;bossPlate.style.bottom='auto';bossPlate.style.top=Math.max(88,mb+8)+'px';}else{bossPlate.style.top='';}
   const cue=combatCue(t,now),stag=t.staggerUntil>now;
-  document.getElementById('bp-name').textContent=(stag?'💫 ':t.stats.guard?'🛡 ':'')+t.stats.label;
+  document.getElementById('bp-name').textContent=(stag?'💫 ':t.stats.guard?'🛡 ':'')+(t.cycleLabel||t.stats.label);
   const cueEl=document.getElementById('bp-cue');
   const cueKey=cue.lines.join('|');
   if(cueEl.dataset.key!==cueKey){cueEl.replaceChildren(...cue.lines.map(text=>{const line=document.createElement('span');line.textContent=text;return line;}));cueEl.dataset.key=cueKey;}
@@ -820,15 +853,20 @@ function renderMenu() {
   document.querySelectorAll('#menutabs button[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === menuTab));
   if (menuTab === 'set') {
     menuBody.innerHTML = `
+      <div class="mrow"><div>화면 품질 <small>${selectedDisplay==='light'?'가볍게 · 그림자 끔 / 해상도 제한':'기본 · 그림자 켬'}</small></div><button class="act" id="m-display">${selectedDisplay==='light'?'기본으로':'가볍게'}</button></div>
+      <div id="display-help"><p>느리면 가볍게를 선택하세요.</p><p>전투 예고, 스킬 효과, 진행 기록은 유지됩니다.</p><p>이 브라우저에만 저장됩니다.</p></div>
       <div class="mrow"><div>소리 <small>${audio.muted ? '꺼짐' : '켜짐'}</small></div><button class="act" id="m-snd">${audio.muted ? '소리 켜기' : '소리 끄기'}</button></div>
       <div class="mrow"><div>자동 전투 <small>${state.autoOn ? 'ON' : 'OFF'}</small></div><button class="act" id="m-auto">${state.autoOn ? '끄기' : '켜기'}</button></div>
       <div class="mrow"><div>모험 일지 <small>장별 진행 · L키</small></div><button class="act" id="m-campaign">열기</button></div>
       <div class="mrow"><div>여행 수첩 <small>끊어진 순례길 · J키</small></div><button class="act" id="m-journey">열기</button></div>
+      <div class="mrow"><div>회차 기록과 계승 <small>이전 여정 보존 · 새 회차</small></div><button class="act" id="m-cycle">열기</button></div>
       <div class="mrow"><div>튜토리얼 <small>${state.tutDone ? '완료' : '진행 중'}</small></div><button class="act" id="m-tut">다시 보기</button></div>`;
+    menuBody.querySelector('#m-display').onclick=()=>{selectedDisplay=selectedDisplay==='light'?'standard':'light';applyDisplay();let saved=false;try{saved=writeDisplay(localStorage,selectedDisplay)}catch{}renderMenu();if(!saved)toast('화면 품질은 이번 접속에만 적용됩니다. 설정을 저장할 수 없습니다.');};
     menuBody.querySelector('#m-snd').onclick = () => { initAudio(); audio.muted = !audio.muted; if (audio.master) audio.master.gain.value = audio.muted ? 0 : 0.8; syncSndBtn(); renderMenu(); };
     menuBody.querySelector('#m-auto').onclick = () => { toggleAuto(); renderMenu(); };
     menuBody.querySelector('#m-campaign').onclick = () => { closeMenu(); openCampaignJournal(); };
     menuBody.querySelector('#m-journey').onclick = () => { closeMenu(); openJourneyJournal(); };
+    menuBody.querySelector('#m-cycle').onclick=()=>{closeMenu();openCycleLedger();};
     menuBody.querySelector('#m-tut').onclick = () => { state.tutDone = false; toast('도움말이 다시 표시됩니다'); renderMenu(); };
   } else if (menuTab === 'rec') {
     const pt = Math.floor(state.playTime || 0);
@@ -867,7 +905,7 @@ function renderMenu() {
     const inp = menuBody.querySelector('#m-reset-in');
     const btn = menuBody.querySelector('#m-reset');
     inp.oninput = () => { btn.disabled = inp.value.trim() !== '초기화'; };
-    btn.onclick = () => { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} location.reload(); };
+    btn.onclick = () => {if(localStorage.getItem('windhill-cycles-v1')!==null){toast('회차 저장 보호 중 · 회차 기록에서 다른 여정을 선택하세요.');return;}try {localStorage.removeItem(SAVE_KEY);}catch(e){return;}location.reload();};
   }
 }
 
@@ -882,6 +920,7 @@ function autoTarget() {
 }
 
 function hitFlash(root) {
+  if(root===state.player&&state.highlandChannel){state.highlandChannel=null;toast('피격으로 다리 고정 중단');}
   if(root===state.player&&state.archiveChannel){state.archiveChannel=null;toast('피격으로 수로 조절 중단');}
   if(root===state.player&&state.estuaryChannel){state.estuaryChannel=null;toast('피격으로 구조 중단 · 다시 시도할 수 있다.');}
   root.traverse((o) => {
@@ -902,6 +941,7 @@ function hitFlash(root) {
 }
 
 function respawnEnemy(e) {
+  cancelCycleEcho(e);
   const a = Math.random() * Math.PI * 2;
   e.root.position.copy(e.home).add(new THREE.Vector3(Math.cos(a) * 4, 0, Math.sin(a) * 4));
   cancelFrogSpit(e); e.spitNext = 0; e.galeUntil = 0;
@@ -956,6 +996,7 @@ async function build() {
     const e = { root, anim, angle: Math.atan2(x, z), stats: st, home: new THREE.Vector3(x, 0, z), hp: st.hp, mode: 'wander', dead: false, atkUntil: 0, cdUntil: 0, respawnAt: 0 };
     if ((st.guard || st.ruinWarden || st.stormWasp || st.rangedSpit || st.archer) && !e.nameSprite) { e.nameSprite = makeNameSprite(st.label); e.nameSprite.position.y = (st.teleH ?? 1.3) + 0.7; e.root.add(e.nameSprite); } // 가드 미니보스 이름표: 보스플레이트 HUD 연동
     state.enemies.push(e);
+    decorateCycleEnemy(e);
     return e;
   };
   for (let i = 0; i < 3; i++) {
@@ -1395,13 +1436,17 @@ async function build() {
   buildBellSites();
   buildMist();
   await buildArchive();
+  buildHighland();
+  buildCanal();
+  buildRelay();
   state.ready = true;
   window.__gameReady = true;
   const lo = document.getElementById('loading');
   if (lo) lo.style.display = 'none';
-  if (params.get('reset') === '1') localStorage.removeItem(SAVE_KEY);
+  if (params.get('reset') === '1'&&localStorage.getItem('windhill-cycles-v1')===null) localStorage.removeItem(SAVE_KEY);
   spawnRings();
   loadGame();
+  for(const e of state.enemies)decorateCycleEnemy(e);
   window.__animNames = state.anim.names;
   window.__game = {
     teleportNearEnemy() {
@@ -1417,17 +1462,20 @@ async function build() {
       state.heading = Math.atan2(to.x, to.z);
       state.player.rotation.y = state.heading;
     },
+    beaconCycleInfo(){const f=state.beaconFight;return{lines:scene.children.filter(o=>o.userData.beaconMend).length,cycle:cycleSession?.active||1,plan:beaconCyclePlan(cycleSession?.active||1,state.beacon?.step,state.beacon?.supply),enemies:(f?.enemies||[]).map(e=>({i:state.enemies.indexOf(e),label:e.stats.label,hp:e.hp,max:e.stats.hp,guard:!!e.stats.guard,lancer:!!e.stats.lancer,archer:!!e.stats.archer,mender:!!e.stats.beaconMender,dead:e.dead,at:e.mendAt||0,next:e.mendPhase?.next||0,casts:e.mendCasts||0,total:e.mendTotal||0,cancels:e.mendCancels||0,line:!!e.mendLine?.visible,pos:e.root.position.toArray()}))};},
     beaconInfo(){return{...state.beacon,status:beaconStatus(),target:beaconTarget(),fight:state.beaconFight?{step:state.beaconFight.step,enemies:state.beaconFight.enemies.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),guard:e.stats.guard,label:e.stats.label}))}:null}},
     insigniaInfo(){return{selected:state.insignia,active:insigniaName(),safe:insigniaSafe(),unlocked:INSIGNIAS.filter(d=>d.unlocked()).map(d=>d.id),hp:state.hp,maxHp:state.maxHp,potionHeal:activeInsignia('care')?85:60,dodgeRemaining:Math.max(0,state.dodgeCdUntil-clock.elapsedTime),dodgeCooldown:dodgeProfile().cooldown}},
-    windTuneInfo(){return{selected:state.windTune,active:windTuneName(),safe:windTuneSafe(),unlocked:state.bell?.stage===5&&hasSkill('windshot'),practice:(state.windPractice||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,hits:e.windPracticeHits,pos:e.root.position.toArray()})),lastHits:state.lastWindHits||0}},
-    archiveInfo(){return{...state.archive,inside:inArchive(),status:archiveStatus(),target:archiveTarget(),gate:!state.archiveGate.mesh.visible,channel:state.archiveChannel?{...state.archiveChannel,left:Math.max(0,2.5-(clock.elapsedTime-state.archiveChannel.start))}:null,streams:state.archiveStreams.map(t=>({z:t.z,at:t.at,next:t.next,hits:t.hits,dodges:t.dodges})),fight:(state.archiveFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),archer:!!e.stats.archer,aim:e.archerAt||0}))}},
+    windTuneInfo(){return{selected:state.windTune,active:windTuneName(),safe:windTuneSafe(),unlocked:state.bell?.stage===5&&hasSkill('windshot'),practice:(state.windPractice||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,hits:e.windPracticeHits,pos:e.root.position.toArray()})),lastHits:state.lastWindHits||0,drawUnlocked:state.highland.stage===5,returnUnlocked:state.lightRelay.stage===3,fanUnlocked:!!state.lightRelay.surveyClaimed,fanVisuals:fanVisuals.filter(v=>v.visible).length,activeDraws:state.enemies.filter(e=>e.windDraw).length,drawLines:scene.children.filter(o=>o.userData?.windDrawLine).length,lastDraw:state.lastWindDraw||null}},
+    canalInfo(){return{...state.canal,inside:inCanal(),status:canalStatus(),pos:state.player.position.toArray(),closedGates:state.canalGates.map(b=>b.mesh.visible),fight:state.canalFight?{kind:state.canalFight.kind,step:state.canalFight.step,enemies:state.canalFight.enemies.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,lancer:!!e.stats.lancer,archer:!!e.stats.archer,pos:e.root.position.toArray(),at:e.lanceAt||0,next:e.lanceNext||0,dir:e.lanceDir?.toArray(),tele:!!e.lanceTele?.visible,dash:e.lanceDash?{moved:e.lanceDash.moved,hit:e.lanceDash.hit}:null,hits:e.lanceHits||0,dodges:e.lanceDodges||0,walls:e.lanceWalls||0,starts:e.lanceStarts||0}))}:null,lanceTeles:scene.children.filter(o=>o.userData?.lanceTele).length,flood:state.canalFlood.mesh.visible,blocked:canalBlocked(state.player.position),sites:CANAL_SITES};},
+    highlandInfo(){return{...state.highland,status:highlandStatus(),target:highlandTarget(),inside:inHighland(),channel:state.highlandChannel||null,props:state.highlandProps.map(d=>({id:d.id,x:d.x,z:d.z})),gusts:state.highlandGusts.map(t=>({x:t.x,z:t.z,at:t.at,next:t.next,hits:t.hits,blocks:t.blocks,saves:t.saves})),fight:state.highlandFight?{kind:state.highlandFight.kind,step:state.highlandFight.step,enemies:state.highlandFight.enemies.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),archer:!!e.stats.archer}))}:null};},
+    archiveInfo(){return{...state.archive,inside:inArchive(),lanceMeshes:scene.children.filter(o=>o.userData?.lanceTele).length,status:archiveStatus(),target:archiveTarget(),gate:!state.archiveGate.mesh.visible,channel:state.archiveChannel?{...state.archiveChannel,left:Math.max(0,2.5-(clock.elapsedTime-state.archiveChannel.start))}:null,streams:state.archiveStreams.map(t=>({z:t.z,at:t.at,next:t.next,hits:t.hits,dodges:t.dodges})),fight:(state.archiveFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),archer:!!e.stats.archer,lancer:!!e.stats.lancer,guard:!!e.stats.guard,lanceAt:e.lanceAt||0,lanceNext:e.lanceNext||0,lanceTele:!!e.lanceTele?.visible,lanceDash:!!e.lanceDash,lanceStarts:e.lanceStarts||0,aim:e.archerAt||0}))}},
     mistInfo(){const f=state.mistFight,e=f?.enemy;return{...state.mist,status:mistStatus(),target:mistTarget(),sites:(state.mistProps||[]).map(d=>({id:d.id,x:d.x,z:d.z,bit:d.bit})),fight:f?{active:f.active,left:Math.max(0,f.next-clock.elapsedTime),swaps:f.swaps,blocks:f.blocks,i:state.enemies.indexOf(e),hp:e.hp,pos:e.root.position.toArray(),lit:mistLit(e),at:e.mistAt,next:e.mistNext,hits:e.mistHits,dodges:e.mistDodges,strikes:e.mistStrikes}:null}},
     bellInfo(){const e=state.bellEnemy;return{...state.bell,status:bellStatus(),target:bellTarget(),enemy:e?{i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),at:e.bellAt||0,next:e.bellNext||0,outer:!!e.bellOuter,exposed:Math.max(0,(e.bellExposed||0)-clock.elapsedTime),cracks:e.bellCracks,breaks:e.bellBreaks,hits:e.bellHits,dodges:e.bellDodges,pulses:e.bellPulses}:null}},
     estuaryInfo(){return{...state.estuary,status:estuaryStatus(),inside:inEstuary(),target:estuaryTarget(),channel:state.estuaryChannel?{...state.estuaryChannel,left:Math.max(0,3-(clock.elapsedTime-state.estuaryChannel.start))}:null,tides:(state.estuaryTides||[]).map(t=>({id:t.id,at:t.at,next:t.next,hits:t.hits,blocks:t.blocks,saves:t.saves})),fight:(state.estuaryFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,boss:!!e.stats.estuaryBoss,pos:e.root.position.toArray()}))}},
     courierInfo(){return{stage:state.courier||0,status:courierStatus(),target:courierTarget(),fight:state.courierFight?state.courierFight.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),aim:e.archerAt||0,next:e.archerNext||0,recover:e.archerRecover||0,fired:e.archerFired||0,walls:e.archerWalls||0,hits:e.archerHits||0,dodges:e.archerDodges||0,interrupts:e.archerInterrupts||0,result:e.archerResult||null,lines:(e.archerLines||[]).filter(m=>m.visible).length,arrows:(e.arrows||[]).map(a=>({left:a.left,pos:a.root.position.toArray(),visible:a.root.visible,dir:a.dir.toArray()}))})):null}},
     cartInfo(){const f=state.cartRun;return{stage:state.cartStage||0,status:cartStatus(),pos:state.cartModel.root.position.toArray(),run:f?{hp:f.hp,wave:f.wave,moved:f.moved,total:f.total,raiders:f.raiders.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray()}))}:null}},
     echoInfo(){const f=state.echoFight;return{done:state.echo||0,status:echoStatus(),target:echoTarget(),fight:f?{phase:f.phase,sequence:f.sequence,shield:f.shield,hp:f.boss.hp,i:state.enemies.indexOf(f.boss),pos:f.boss.root.position.toArray(),dead:f.boss.dead,pulseAt:f.boss.pulseAt||0}:null}},
-    observatoryInfo(){return{step:state.observatory||0,status:observatoryStatus(),target:observatoryTarget(),doors:colliders.filter(c=>c.observatoryDoor).length,enemies:(state.observatoryFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),label:e.stats.label}))}},
+    observatoryInfo(){return{step:state.observatory||0,status:observatoryStatus(),target:observatoryTarget(),doors:colliders.filter(c=>c.observatoryDoor).length,enemies:(state.observatoryFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),label:e.stats.label,lancer:!!e.stats.lancer,aim:e.lanceAt||0,dashing:!!e.lanceDash,tele:!!e.lanceTele?.visible,walls:e.lanceWalls||0,starts:e.lanceStarts||0}))}},
     campaignInfo,
     frogSpit() { return state.enemies.filter(e=>e.stats.rangedSpit).map(e=>({i:state.enemies.indexOf(e),dead:e.dead,hp:e.hp,pos:e.root.position.toArray(),mode:e.mode,at:e.spitAt||0,left:e.spitLeft||0,recover:e.spitRecover||0,next:e.spitNext||0,dir:e.spitDir?.toArray(),orb:e.spitOrb?.position.toArray(),visible:!!e.spitOrb?.visible,line:!!e.spitLine?.visible,result:e.spitResult||null,now:clock.elapsedTime})); },
     stormCharge() { const e=state.enemies.find(e=>e.stats.stormWasp); return e ? {dead:e.dead,hp:e.hp,guard:e.stats.guard,mode:e.mode,at:e.stormAt||0,run:e.stormRun||0,recover:e.stormRecover||0,from:e.stormFrom?.toArray(),to:e.stormTo?.toArray(),pos:e.root.position.toArray(),line:!!e.stormLine?.visible,result:e.stormResult||null,now:clock.elapsedTime} : null; },
@@ -1438,7 +1486,14 @@ async function build() {
     addVariantKills(label, n) { state.dex[label] = (state.dex[label] || 0) + n; },
     setBounty(kind, active) { state.bounty.kind = kind; state.bounty.active = !!active; if (kind === 'variants') state.bounty.startVariants = variantKillCount(); if (kind === 'kills') state.bounty.startKills = state.kills; if (kind === 'flowers') state.bounty.startFlowers = state.flowerCount; if (kind === 'elite') state.bounty.startElites = state.eliteKills || 0; if (kind === 'mats') { if (!state.bounty.mat) state.bounty.mat = BOUNTY_MATS[(state.bounty.count || 0) % BOUNTY_MATS.length]; state.bounty.startMats = state.mats[state.bounty.mat] || 0; } },
     setCounters(k, sk, w) { state.kills = k; state.skKills = sk; state.wKills = w; },
-    save() { saveGame(); },
+    save() { return saveGame(); },
+    relayInfo(){return{...relayState(),inside:inRelay(),ray:traceRelay(relayState().mirrors),sites:relaySites(),target:relayTarget(),pos:state.player.position.toArray(),beams:state.relayBeam?.children.length||0};},
+    surveyInfo(){const s=relayState();return{stage:s.stage,mask:s.survey||0,claimed:!!s.surveyClaimed,match:surveyMatch(s.mirrors),rays:surveyRays(s.mirrors),beams:state.relayBeam?.children.length,blueVisible:!!state.relayBlueSource?.visible};},
+    equipmentInfo(){return{...JSON.parse(JSON.stringify(ensureEquipment())),stats:currentEquipmentStats(),safe:equipmentSafe(),gold:state.gold};},
+    timeInfo(){return{game:clock.elapsedTime,discarded:clock.discardedSeconds,hidden:document.hidden};},
+    displayInfo(){return{...displayProfile(selectedDisplay,window.devicePixelRatio),width:renderer.domElement.width,height:renderer.domElement.height};},
+    cycleInfo(){return cycleInfo();},
+    cycleEchoInfo(){return state.enemies.filter(e=>e.cycleEcho).map(e=>({i:state.enemies.indexOf(e),label:e.cycleLabel,baseLabel:e.stats.label,pattern:e.cycleEcho.id,hp:e.hp,max:e.stats.hp,dead:e.dead,phase:e.echoPhase,at:e.echoAt||0,origin:e.echoOrigin?.toArray(),pos:e.root.position.toArray(),tele:!!e.echoTele?.visible,hits:e.echoHits||0,blocks:e.echoBlocks||0,starts:e.echoStarts||0}));},
     teleport(x, z) { state.player.position.set(x, 0, z); },
     face(x, z) { const pp = state.player.position; state.heading = Math.atan2(x - pp.x, z - pp.z); state.player.rotation.y = state.heading; },
     invuln(sec) { state.invUntil = clock.elapsedTime + sec; },
@@ -1455,13 +1510,14 @@ async function build() {
     setMapFrags(n) { state.mapFrags = n; if (n >= 3 && !state.treasureDone) spawnTreasure(); },
     spawnGolden(x, z) { if (!state.protos || !state.protos.Rat) return false; if (!state.golden) state.golden = { nextAt: 0, active: null, until: 0 }; const e = state.spawn(state.protos.Rat, GOLDEN, x, z); e.home.set(x, 0, z); state.golden.active = e; state.golden.until = clock.elapsedTime + 60; return true; },
     setDialog(v) { state.dialog = !!v; },
+    whirlStudyInfo(){return{...whirlProfile(),unlocked:whirlStudyUnlocked(),safe:whirlStudySafe(),owned:SKILLS.filter(s=>s.group==='whirlform'&&hasSkill(s.id)).map(s=>s.id),points:state.skillPts,hp:state.hp,gold:state.gold,cd:Math.max(0,state.whirlCdUntil-clock.elapsedTime)};},
     footworkInfo(){return{...dodgeProfile(),unlocked:footworkUnlocked(),safe:footworkSafe(),points:state.skillPts,owned:SKILLS.filter(s=>s.group==='footwork'&&hasSkill(s.id)).map(s=>s.id),cast:state.dodgeFormAtCast||null,invLeft:Math.max(0,state.invUntil-clock.elapsedTime),dodgeLeft:Math.max(0,state.dodgeUntil-clock.elapsedTime),cooldownLeft:Math.max(0,state.dodgeCdUntil-clock.elapsedTime)};},
     givePts(n) { state.skillPts = (state.skillPts || 0) + n; },
     questInfo() { return { ...state.quest, progress: questProgress() }; },
     probeAt(i) { const x = state.enemies[i]; return x ? { label: x.stats.label, hp: x.hp, guard: !!x.stats.guard, staggered: !!(x.staggerUntil && clock.elapsedTime < x.staggerUntil), dead: x.dead } : null; },
     listEnemies() { return state.enemies.map((e, i) => ({ i, label: e.stats.label, hp: e.hp, guard: !!e.stats.guard, dead: e.dead, x: +e.root.position.x.toFixed(1), z: +e.root.position.z.toFixed(1) })); },
     learnAll() { for (const s of SKILLS) state.skills[s.id] = true; updateWhirlBtn(); },
-    skillInfo() { return { pts: state.skillPts || 0, mastery: state.mastery, pursuit: state.pursuit&&pursuitReady(state.pursuit.target,clock.elapsedTime)?{label:state.pursuit.target.stats.label,i:state.enemies.indexOf(state.pursuit.target),left:+(state.pursuit.until-clock.elapsedTime).toFixed(2)}:null, pursuitHits:window.__dbgPursuit||0, chain: state.masteryChain && clock.elapsedTime <= state.masteryChain.until && !state.masteryChain.target.dead ? {count:state.masteryChain.count,left:+(state.masteryChain.until-clock.elapsedTime).toFixed(2),label:state.masteryChain.target.stats.label} : null, slowed:state.enemies.filter(e=>!e.dead&&enemyMoveScale(e,clock.elapsedTime)<1).length, skills: { ...state.skills }, windCd:+Math.max(0,state.windCdUntil-clock.elapsedTime).toFixed(2), windshot:state.windshot?{left:state.windshot.left,pos:state.windshot.pos.toArray(),dir:state.windshot.dir.toArray()}:null, windResult:state.windResult||null, fx:skillFxPool.filter(f=>f.root.visible).map(f=>({kind:f.kind,position:f.root.position.toArray(),age:+(clock.elapsedTime-f.start).toFixed(2)})), whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2), riposteLeft: +Math.max(0, (state.riposteUntil || 0) - clock.elapsedTime).toFixed(2), riposteDodge: state.riposteDodge || 0 }; },
+    skillInfo() { return { pts: state.skillPts || 0, mastery: state.mastery, pursuit: state.pursuit&&pursuitReady(state.pursuit.target,clock.elapsedTime)?{label:state.pursuit.target.stats.label,i:state.enemies.indexOf(state.pursuit.target),left:+(state.pursuit.until-clock.elapsedTime).toFixed(2)}:null, pursuitHits:window.__dbgPursuit||0, chain: state.masteryChain && clock.elapsedTime <= state.masteryChain.until && !state.masteryChain.target.dead ? {count:state.masteryChain.count,left:+(state.masteryChain.until-clock.elapsedTime).toFixed(2),label:state.masteryChain.target.stats.label} : null, slowed:state.enemies.filter(e=>!e.dead&&enemyMoveScale(e,clock.elapsedTime)<1).length, skills: { ...state.skills }, windCd:+Math.max(0,state.windCdUntil-clock.elapsedTime).toFixed(2), windshot:state.windshot?{returning:!!state.windshot.returning,returnLeg:!!state.windshot.returnLeg,hits:state.windshot.totalHits,left:state.windshot.left,pos:state.windshot.pos.toArray(),dir:state.windshot.dir.toArray(),fan:!!state.windshot.fan,rays:state.windshot.rays?.map(r=>({pos:r.pos.toArray(),active:r.active,left:r.left}))}:null, windResult:state.windResult||null, fx:skillFxPool.filter(f=>f.root.visible).map(f=>({kind:f.kind,position:f.root.position.toArray(),age:+(clock.elapsedTime-f.start).toFixed(2)})), whirlCd: +Math.max(0, state.whirlCdUntil - clock.elapsedTime).toFixed(2), bladeLeft: +Math.max(0, state.bladeUntil - clock.elapsedTime).toFixed(2), riposteLeft: +Math.max(0, (state.riposteUntil || 0) - clock.elapsedTime).toFixed(2), riposteDodge: state.riposteDodge || 0 }; },
     enemyProbe() { let e = null, bd = 1e9; for (const x of state.enemies) { if (x.dead) continue; const d = x.root.position.distanceTo(state.player.position); if (d < bd) { bd = d; e = x; } } return e ? { label: e.stats.label, hp: e.hp, maxHp: e.stats.hp, guard: !!e.stats.guard, staggered: !!(e.staggerUntil && clock.elapsedTime < e.staggerUntil), dist: +bd.toFixed(2) } : null; },
     fadeDebug(cx, cz, r) { let f = 0, n = 0; for (const t of treeFades) { if (cx !== undefined && Math.hypot(t.x - cx, t.z - cz) > r) continue; n++; if (t.op < 0.5) f++; } return { faded: f, total: n }; },
     playerOpacity() { return +playerFade.op.toFixed(2); },
@@ -1589,10 +1645,10 @@ function openCampaignJournal(){
     html+=`<details style="padding:7px 0;border-top:1px solid #445"><summary>${cidx+1}장 · ${c.name} · ${p.done}/${p.total}${p.done===p.total?' 완료':''}</summary>${names.length?names.join('<br>'):'아직 완료한 의뢰가 없다.'}</details>`;
   }
   html+=`<br><b>성장 선택</b><br>Lv.${state.level} · 스킬 포인트 ${state.skillPts||0}P · 기본 스킬 ${SKILLS.filter(k=>!k.group&&state.skills[k.id]).length}/8 · 보법 ${footworkId()?'선택':'미선택'}<br>포인트가 있어도 스킬은 자동으로 배우지 않는다. 스킬 창에서 설명과 선행 조건을 확인하자.`;
-  html+=`<br>원풍 조율: <b>${windTuneName()}</b> · 종 탐험 완료 뒤 장로 곁 스킬 창에서 무료 교체.`;
+  html+=`<br>원풍 조율: <b>${windTuneName()}</b> · 종 탐험 뒤 관통풍, 고원 기록 뒤 견인풍, 빛의 중계소 인계 뒤 회귀풍. 장로 곁 스킬 창에서 무료 교체.`;
   html+=`<br>여행 인장: <b>${insigniaName()}</b> · 해금 ${INSIGNIAS.filter(d=>d.unlocked()).length}/3 · 장로 곁 스킬 창에서 한 개 장착. 관측소·수레·전령길 완료 기록으로 열린다.`;
   html+='<br><br><b>선택 탐험</b> · 메인 의뢰와 별도<br>';
-  const optional=[['침묵의 기록원',archiveStatus()],['안개의 항로',mistStatus()],['수문 아래의 종',bellStatus()],['회색 여울',estuaryStatus()],['북서 전령길',courierStatus()],['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
+  const optional=[['빛의 중계소',state.canal.stage===5?relayStatus():'수로 지도 인계 후 하항에서 출발'],['별빛 수로',canalReady()?canalStatus():'고원 피난처 지도 인계 후 개방'],['갈라진 고원',highlandReady()?highlandStatus():'기록원 원본 인계 후 개방'],['침묵의 기록원',archiveStatus()],['안개의 항로',mistStatus()],['수문 아래의 종',bellStatus()],['회색 여울',estuaryStatus()],['북서 전령길',courierStatus()],['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
   html+=optional.map(([k,v])=>`<div style="padding:6px 0;border-top:1px solid #445"><b>${k}</b><br>${v}</div>`).join('');
   html+='<br><small>이 일지는 기존 의뢰와 탐험의 진행 안내다. 장 수는 새 콘텐츠 분량이나 권장 플레이 시간을 뜻하지 않는다.</small>';
   const buttons=[];
@@ -1675,10 +1731,13 @@ function gainXp(n) {
 const dlgEl = () => document.getElementById('dlg');
 function questProgress() { const d = QUESTS[state.quest.idx]; return d ? Math.min(questCounter(state.quest) - (d.abs ? 0 : state.quest.startKills), d.goal) : 0; } // abs: 1회성 보스 의뢰는 수락 전 선처치도 진행 인정
 function tryInteract() {
-  if (!state.ready || state.dead || state.dialog) return;
+  if (!state.ready || state.dead || state.dialog || state.canalFight) return;
   if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { state.dlgFocus = state.npc.pos; openDialog(); return; }
   if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); return; }
   if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); return; }
+  const light=nearbyRelay();if(light){openRelay(light);return;}
+  const cn=nearbyCanal();if(cn){openCanal(cn);return;}
+  const high=nearbyHighland();if(high){openHighland(high);return;}
   const arc=nearbyArchive();if(arc){openArchive(arc);return;}
   const mist=nearbyMist();if(mist){openMist(mist);return;}
   const bell=nearbyBell();if(bell){openBell(bell);return;}
@@ -1762,9 +1821,11 @@ function openDialog() {
     mk('수락한다', '', () => { q.state = 'active'; q.startKills = questCounter(q); closeDialog(); saveGame(); });
     mk('나중에', 'sub', closeDialog);
   } else if (q.state === 'active' && questProgress() >= d.goal) {
-    text.innerHTML = d.done;
+    text.innerHTML = d.done+(questEquipmentName(q.idx)?`<br>장비 보상: <b>${questEquipmentName(q.idx)}</b> · 가방에 보관`:'');
     mk('사례를 받는다', '', () => {
       const claimed = q.idx;
+      if(q.state!=='active'||questProgress()<d.goal)return;
+      notifyEquipment(questEquipment(ensureEquipment(),claimed),'의뢰 장비');
       q.idx++; q.state = 'none'; q.startKills = 0;
       applyProgression(); state.hp = state.maxHp;
       // 의뢰별 추가 사례 (골드/물약은 수령 시 1회 지급, 세이브에 저장됨)
@@ -1816,7 +1877,7 @@ function openShop() {
     info.innerHTML = infoHtml;
     const b = document.createElement('button');
     b.addEventListener('click', () => { if (b.disabled) return; onBuy(); });
-    b._label = btnLabel;
+    b._label = btnLabel;b.textContent=btnLabel;
     row.appendChild(info); row.appendChild(b);
     list.appendChild(row);
     rows.push({ b, info });
@@ -1831,41 +1892,13 @@ function openShop() {
     saveGame();
     render();
   });
-  const gearBtns = GEAR_SHOP.map((g) => mkRow('', '', () => {
-    const lvl = state.gear[g.key];
-    if (lvl >= g.names.length || state.gold < g.prices[lvl]) return;
-    const req = g.mats && g.mats[lvl];
-    if (req && !req.every(([mn, n]) => (state.mats[mn] || 0) >= n)) return;
-    state.gold -= g.prices[lvl];
-    if (req) for (const [mn, n] of req) state.mats[mn] -= n;
-    state.gear[g.key] = lvl + 1;
-    sfx('reward', 1);
-    toast(`${g.names[lvl]}을(를) 장착했습니다`);
-    saveGame();
-    render();
-  }));
+  mkRow('<b>장비 보관과 강화</b><small>몬스터 드롭 · 의뢰 보상 · 게임 골드 강화</small>','가방 열기',()=>{closeDialog();openInv();});
   const render = () => {
-    const owned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? g.names[state.gear[g.key] - 1] : null).filter(Boolean);
-    text.innerHTML = `보유 골드: <b>${state.gold}G</b> · 장비: ${owned.length ? owned.join(', ') : '없음'}`;
+    text.innerHTML = `보유 골드: <b>${state.gold}G</b><br>장비는 대상 적 처치 누적8마리마다 일반 적에게서, 엘리트·일회성 적·보스와 일부 메인 의뢰에서 획득합니다. 원정/시련/연습 적은 제외합니다. 강화와 장착은 안전한 장로 곁에서 가방을 여세요.`;
     rows[0].info.innerHTML = `체력 물약 <small>회복 ${SHOP.potionHeal} · 보유 ${state.potions}/${SHOP.potionMax}개</small>`;
     potionBtn.textContent = state.potions >= SHOP.potionMax ? '가득 참' : `${SHOP.potionPrice}G`;
     potionBtn.disabled = state.potions >= SHOP.potionMax || state.gold < SHOP.potionPrice;
-    GEAR_SHOP.forEach((g, i) => {
-      const lvl = state.gear[g.key];
-      const b = gearBtns[i];
-      if (lvl >= g.names.length) {
-        rows[i + 1].info.innerHTML = `${g.names[lvl - 1]} <small>최고 등급 보유 중</small>`;
-        b.textContent = '보유';
-        b.disabled = true;
-        return;
-      }
-      const ownedPrev = lvl > 0 ? ` <small>(보유: ${g.names[lvl - 1]})</small>` : '';
-      const req = g.mats && g.mats[lvl];
-      const reqStr = req ? ` · 재료: ${req.map(([mn, n]) => `${mn}×${n}(보유 ${state.mats[mn] || 0})`).join(', ')}` : '';
-      rows[i + 1].info.innerHTML = `${g.names[lvl]} <small>${g.desc[lvl]}${reqStr}</small>${ownedPrev}`;
-      b.textContent = `${g.prices[lvl]}G${req ? ' + 재료' : ''}`;
-      b.disabled = state.gold < g.prices[lvl] || (req && !req.every(([mn, n]) => (state.mats[mn] || 0) >= n));
-    });
+
   };
   const back = document.createElement('button');
   back.textContent = '돌아가기';
@@ -1886,22 +1919,23 @@ function openInv() {
   state.dialog = true;
   sfx('dialog', 0.5);
   document.getElementById('dlg-name').textContent = '인벤토리';
+  dlgEl().classList.add('skilltree');
   const list = document.getElementById('dlg-list');
   const btns = document.getElementById('dlg-btns');
   btns.innerHTML = '';
   const renderInv = () => {
     document.getElementById('dlg-text').innerHTML =
-      `레벨 <b>${state.level || 1}</b> (경험치 ${state.xp || 0}/${xpNeed(state.level || 1)}) · 공격력 <b>${PLAYER.dmg + GEAR_ATK[state.gear.sword]}</b> · 받는 피해 감소 <b>${GEAR_DEF[state.gear.armor]}</b> · 이동속도 <b>×${+(GEAR_SPD[state.gear.boots] * ((state.runes || []).includes('gale') ? 1.08 : 1)).toFixed(2)}</b> · 룬 <b>${(state.runes || []).length ? (state.runes || []).map((id) => (RUNES.find((r) => r.id === id) || {}).name).filter(Boolean).join(', ') : '없음'}</b><br>` +
+      `레벨 <b>${state.level || 1}</b> (경험치 ${state.xp || 0}/${xpNeed(state.level || 1)}) · 공격력 <b>${PLAYER.dmg + currentEquipmentStats().attack}</b> · 받는 피해 감소 <b>${currentEquipmentStats().defense}</b> · 이동속도 <b>×${+(currentEquipmentStats().speed * ((state.runes || []).includes('gale') ? 1.08 : 1)).toFixed(2)}</b> · 룬 <b>${(state.runes || []).length ? (state.runes || []).map((id) => (RUNES.find((r) => r.id === id) || {}).name).filter(Boolean).join(', ') : '없음'}</b><br>` +
       `골드 <b>${state.gold}G</b> · 물약 <b>${state.potions}/${SHOP.potionMax}</b> · 바람꽃 <b>${state.flowerCount}송이(판매 가능 ${(state.flowerCount || 0) - (state.flowersSold || 0)})</b> · 보물 상자 <b>${(state.chestsOpened || []).length}개</b> · 재료 <b>${Object.entries(state.mats || {}).filter(([, n]) => n > 0).map(([mn, c]) => `${mn}×${c}`).join(' ') || '없음'}</b>`;
-    const gearOwned = GEAR_SHOP.map((g) => state.gear[g.key] > 0 ? `${g.names[state.gear[g.key] - 1]}(${g.key === 'sword' ? '검' : g.key === 'armor' ? '갑옷' : '부츠'})` : null).filter(Boolean);
     list.innerHTML =
-      `<div class="shoprow"><div class="info">장비 <small>${gearOwned.length ? gearOwned.join(', ') : '없음'}</small></div></div>` +
+      equipmentInventoryHtml() +
       `<div class="shoprow"><div class="info"><b>몬스터 도감 ${Object.keys(state.dex).length}종</b></div></div>` +
       (Object.keys(state.dex).length
         ? Object.entries(state.dex).sort((a, b) => b[1] - a[1]).map(([label, n]) => `<div class="shoprow"><div class="info">${label} <small>${n}마리 처치</small></div></div>`).join('')
         : '<div class="shoprow"><div class="info"><small>아직 처치한 몬스터가 없습니다</small></div></div>') +
       `<div class="shoprow"><div class="info"><b>업적 ${Object.keys(state.ach).length}/${ACH.length}</b></div></div>` +
       ACH.map((a) => `<div class="shoprow"><div class="info">${state.ach[a.id] ? '<b style="color:#8fd68f">[달성]</b>' : '<small>[미달성]</small>'} ${a.name}</div></div>`).join('');
+    list.querySelectorAll('[data-equip-detail]').forEach(b=>b.onclick=()=>openEquipmentDetail(Number(b.dataset.equipDetail)));
   };
   const close = document.createElement('button');
   close.textContent = '닫기';
@@ -1911,12 +1945,7 @@ function openInv() {
   renderInv();
   dlgEl().style.display = 'block';
   document.getElementById('dlgback').style.display = 'block';
-  // 패널이 열려 있는 동안 골드·물약 등 변화를 따라가게 갱신
   clearInterval(window.__invIv);
-  window.__invIv = setInterval(() => {
-    if (document.getElementById('dlg-name').textContent !== '인벤토리' || dlgEl().style.display === 'none') { clearInterval(window.__invIv); return; }
-    renderInv();
-  }, 500);
 }
 function toggleInv() {
   const invOpen = dlgEl().style.display !== 'none' && document.getElementById('dlg-name').textContent === '인벤토리';
@@ -1924,6 +1953,17 @@ function toggleInv() {
   if (state.dialog) return; // 다른 대화·상점이 열려 있으면 열지 않음
   openInv();
 }
+
+function ensureEquipment(){if(!state.equipment){state.equipment=migrateEquipment(null,state.gear);for(const q of[3,7,10,14,17,19])if((state.quest?.idx||0)>q)questEquipment(state.equipment,q);}return state.equipment;}
+function syncEquipment(){state.gear=gearTiers(ensureEquipment());}
+function currentEquipmentStats(){return equipmentStats(ensureEquipment());}
+function equipmentSafe(){return insigniaSafe()&&!cycleWriteBlocked&&!cycleSwitchPending;}
+function notifyEquipment(r,source){if(!r)return;if(r.overflowGold){state.gold+=r.overflowGold;toast(`${source}: 가방이 가득 차 자동 분해 +${r.overflowGold}G`);}else toast(`${source}: ${equipName(r.item)} · 가방에 보관`);}
+function equipmentInventoryHtml(){const e=ensureEquipment(),safe=equipmentSafe();return `<div class="shoprow"><div class="info"><b>장비 보관함 ${e.items.length}/${EQUIP_CAP}</b><small>검·갑옷·부츠 각1개 장착. 장비는 자동 장착되지 않습니다.<br>대상 처치 누적8마리마다 일반 적 장비 지급. 엘리트·일회성 적·보스는 확정 드롭. 원정·시련·연습 제외.<br>장로 곁2.6m·주변12m 적 없음에서 장착·강화·분해 가능.<br>+5까지 확정 강화, 실패·파괴 없음. 게임 골드만 소모.<br>가방이 가득 차면 새 장비만 등급별10/20/30G로 자동 분해.<br>${safe?'안전한 장로 곁 · 관리 가능':'지금은 보기만 가능 · 안전한 장로 곁으로 돌아가세요.'}</small></div></div>`+(e.items.length?e.items.map(i=>`<div class="shoprow"><div class="info"><b>${equipName(i)}${e.equipped[i.key]===i.id?' [장착]':''}</b><small>#${i.id} · ${equipmentEffect(i)}</small></div><button data-equip-detail="${i.id}">상세</button></div>`).join(''):'<div class="shoprow"><div class="info"><small>아직 장비가 없습니다. 일반 몬스터 8마리를 처치하거나 메인 의뢰를 진행하세요.</small></div></div>');}
+function equipmentEffect(i){return i.key==='sword'?`공격력 +${[0,4,9,15][i.tier]+i.plus*2}`:i.key==='armor'?`받는 피해 감소 ${[0,2,4,6][i.tier]+i.plus}`:`이동속도 +${Math.round(([1,1.12,1.25,1.4][i.tier]+i.plus*.02-1)*100)}%`;}
+function equipmentActionAllowed(){return state.dialog&&document.getElementById('dlg-name').textContent.startsWith('장비 상세')&&equipmentSafe();}
+function openEquipmentDetail(id){closeDialog();const e=ensureEquipment(),i=e.items.find(i=>i.id===id);if(!i){openInv();return;}const safe=equipmentSafe(),worn=e.equipped[i.key]===id,cost=enhanceCost(i),buttons=[];if(!worn)buttons.push(['이 장비 장착',()=>{if(!equipmentActionAllowed())return;equipItem(e,id);syncEquipment();cancelWindshot('equipment');saveGame();openEquipmentDetail(id);}]);else buttons.push(['장착 해제',()=>{if(!equipmentActionAllowed())return;e.equipped[i.key]=null;syncEquipment();cancelWindshot('equipment');saveGame();openEquipmentDetail(id);}]);if(cost!==null)buttons.push([`+${i.plus+1} 강화 · ${cost}G`,()=>{if(!equipmentActionAllowed())return;const r=enhanceItem(e,id,state.gold);if(!r)return;state.gold=r.gold;syncEquipment();saveGame();sfx('reward',.7);openEquipmentDetail(id);}]);if(!worn)buttons.push(['분해 확인',()=>{if(!equipmentActionAllowed())return;journeyDialog('장비 상세 · 분해 확인',`${equipName(i)}를 분해하면 <b>${10*i.tier}G</b>를 받습니다.<br>장비와 강화 기록은 사라지고 강화에 쓴 골드는 돌려받지 못합니다. 되돌릴 수 없습니다.`,[['분해하고 골드 받기',()=>{if(!equipmentActionAllowed())return;const r=salvageItem(e,id);if(!r)return;state.gold+=r.gold;saveGame();openInv();}],['취소',()=>openEquipmentDetail(id)]]);dlgEl().classList.add('equipment-panel');}]);buttons.push(['가방으로',()=>{closeDialog();openInv();}]);journeyDialog(`장비 상세 · #${id}`,`<b>${equipName(i)}</b>${worn?' [장착 중]':''}<br>${equipmentEffect(i)}<br><br>보유 ${state.gold}G<br>${cost===null?'최대 강화 +5에 도달했습니다.':`다음 강화: <b>${cost}G</b> → ${equipmentEffect({...i,plus:i.plus+1})}<br>확정 성공 · 실패/파괴 없음 · 게임 골드만 사용`}<br><br>강화 비용은 등급 ×80×(다음 강화 단계)의 제곱입니다. +1~+5 누적 비용은 등급별 4,400 / 8,800 / 13,200G.<br>장착 변경/강화로 체력·스킬·남은 재사용 시간은 회복되지 않습니다.<br>${safe?'안전한 장로 곁입니다.':'현재는 보기만 가능합니다. 안전한 장로 곁으로 돌아가세요.'}`,buttons);dlgEl().classList.add('equipment-panel');for(const b of document.querySelectorAll('#dlg-btns button'))if(!['가방으로','닫기'].includes(b.textContent)&&(!safe||(b.textContent.includes('강화 ·')&&state.gold<cost)))b.disabled=true;}
+
 // ---------- 스킬 트리 (K 키 / 스킬 버튼) ----------
 function openSkillTree() {
   if (!state.ready || state.dead) return;
@@ -1936,7 +1976,7 @@ function openSkillTree() {
   const renderTree = () => {
     document.getElementById('dlg-text').innerHTML = `보유 스킬 포인트 <b>${state.skillPts || 0}</b> · 레벨업 시 +1<br><small>현재 ${dodgeProfile().name} · ${dodgeProfile().distance}m / 무적${dodgeProfile().inv}초 / 쿨${dodgeProfile().cooldown.toFixed(2)}초</small>`;
     list.innerHTML='';renderInsignias(list,renderTree);
-    list.innerHTML += SKILLS.map((s) => {
+    list.innerHTML += SKILLS.filter(s=>s.group!=='whirlform').map((s) => {
       const owned = hasSkill(s.id);
       const form=s.group==='footwork',other=form&&SKILLS.some(k=>k.group==='footwork'&&k.id!==s.id&&hasSkill(k.id));
       const locked = (s.req && !hasSkill(s.req)) || (form&&!footworkUnlocked());
@@ -1944,6 +1984,7 @@ function openSkillTree() {
       const reqName = locked ? (s.req&&!hasSkill(s.req)?SKILLS.find(x=>x.id===s.req).name:'Lv.10 + 기록원 원본 인계') : '';
       return `${s.id==='shortstep'?'<div class="shoprow"><div class="info"><b>보법 연마 · Lv.10 + 기록원 원본 인계 + 잔상</b><br><small>2택1 · 각2P. 장로 곁2.6m·주변12m 적 없음에서 습득·해제. 해제 시 이 보법의 2P만 반환. 기존 스킬/체력/쿨 유지.</small></div></div>':''}<div class="shoprow"><div class="info">${owned ? '<b style="color:#8fd68f">[습득]</b> ' : locked ? '<small>[잠김] </small>' : ''}<b>${s.branch} · ${s.name}</b><br><small>${s.desc}${locked ? ` (선행: ${reqName})` : ''}</small></div>${!owned && !locked ? `<button data-skill="${s.id}" ${can ? '' : 'disabled'}>습득 (${s.cost||1}P)</button>` : ''}</div>`;
     }).join('');
+    list.innerHTML+=`<div class="shoprow"><div class="info"><b>선풍 연마 · 수로지기 기록 + Lv.14</b><br><small>현재 ${whirlProfile().name} · 좁고 강한 회전 / 넓고 약한 회전 · 2택1 각3P</small></div><button data-whirl-study>연마 보기</button></div>`;
     const learnedForm=SKILLS.find(s=>s.group==='footwork'&&hasSkill(s.id));
     if(learnedForm)list.innerHTML+=`<div class="shoprow"><div class="info"><b>보법 연마 해제</b><br><small>${learnedForm.name}에 쓴 2P만 반환 · 기본 회피로 복귀</small></div><button data-footwork-refund ${footworkSafe()?'':'disabled'}>해제 (+2P)</button></div>`;
     const safe = masterySafe();
@@ -1953,6 +1994,7 @@ function openSkillTree() {
       return `<div class="shoprow"><div class="info"><b>${m.name}${owned ? ' [선택 중]' : ''}</b><br><small>${m.desc}${m.req && !hasSkill(m.req) ? ` (${SKILLS.find(s=>s.id===m.req)?.name||m.req} 습득 필요)` : ''}</small></div><button data-mastery="${m.id}" ${!can || owned ? 'disabled' : ''}>${owned?'선택 중':'무료 선택'}</button></div>`;
     }).join('');
     bindInsignias(list,renderTree);
+    list.querySelector('[data-whirl-study]')?.addEventListener('click',openWhirlStudy);
     list.querySelector('[data-footwork-refund]')?.addEventListener('click',()=>{refundFootwork();renderTree();});
     list.querySelectorAll('button[data-mastery]').forEach(b=>b.addEventListener('click',()=>{
       const m = MASTERIES.find(m=>m.id===b.dataset.mastery);
@@ -1962,6 +2004,7 @@ function openSkillTree() {
     list.querySelectorAll('button[data-skill]').forEach((b) => b.addEventListener('click', () => {
       const s = SKILLS.find((x) => x.id === b.dataset.skill);
       if (!s || hasSkill(s.id) || (state.skillPts || 0) < (s.cost||1) || (s.req && !hasSkill(s.req))) return;
+      if(s.group==='whirlform')return;
       if(s.group==='footwork'&&(!footworkSafe()||SKILLS.some(k=>k.group==='footwork'&&hasSkill(k.id))))return;
       state.skillPts-=s.cost||1; state.skills[s.id] = true;
       sfx('reward', 1);
@@ -1988,7 +2031,7 @@ function toggleSkillTree() {
 }
 function updateWhirlBtn() {
   const b = document.getElementById('whirl');
-  if (b) b.style.display = hasSkill('whirl') ? 'flex' : 'none';
+  if (b){b.style.display=hasSkill('whirl')?'flex':'none';b.title=whirlProfile().name;}
   windBtn.style.display = hasSkill('windshot') ? 'flex' : 'none';
 }
 
@@ -2010,6 +2053,8 @@ function drawMinimap() {
   const px = (x) => cx + ((x - p.x) / MMAP_RANGE) * (W / 2);
   const pz = (z) => cz + ((z - p.z) / MMAP_RANGE) * (H / 2);
   mctx.clearRect(0, 0, W, H);
+  if(inRelay()){mctx.fillStyle='#ffe373';for(const d of relaySites()){mctx.beginPath();mctx.arc(px(d.x),pz(d.z),2.5,0,Math.PI*2);mctx.fill();}}
+  if(inCanal()){mctx.fillStyle='#224b65';mctx.fillRect(px(592),pz(-58),16/MMAP_RANGE*(W/2),114/MMAP_RANGE*(H/2));mctx.fillStyle='#bba27b';for(const z of[40,5,-35])mctx.fillRect(px(590),pz(z-2.5),20/MMAP_RANGE*(W/2),5/MMAP_RANGE*(H/2));mctx.fillStyle='#ffd493';for(const d of CANAL_SITES){mctx.beginPath();mctx.arc(px(d.x),pz(d.z),2.4,0,Math.PI*2);mctx.fill();}}
   const dot = (x, z, color, r) => { mctx.fillStyle = color; mctx.beginPath(); mctx.arc(px(x), pz(z), r, 0, Math.PI * 2); mctx.fill(); };
   if (DUNGEON.half) {
     mctx.strokeStyle = 'rgba(150,120,255,.7)';
@@ -2024,6 +2069,7 @@ function drawMinimap() {
   if (state.swampPos) dot(state.swampPos.x, state.swampPos.z, '#8aa24f', 4); // 독 늪지대
   if (state.ruinsPos) dot(state.ruinsPos.x, state.ruinsPos.z, state.ruinsFound ? '#d8cba8' : '#b8b2a6', 4); // 잊힌 유적: 미발견 회색 → 발견 후 모래색
   for (const d of state.journeySites || []) dot(d.x,d.z,state.journey>d.step?'#8aa2a2':'#8be1e5',3);
+  if(highlandReady()){mctx.strokeStyle='#d0c79e';mctx.strokeRect(px(340),pz(-55),120/MMAP_RANGE*W/2,110/MMAP_RANGE*H/2);for(const d of HIGHLAND_SITES)dot(d.x,d.z,'#c5e7b1',3);}
   if(archiveReady()){mctx.strokeStyle='#b8c5dc';mctx.strokeRect(px(230),pz(-32),60/MMAP_RANGE*W/2,64/MMAP_RANGE*H/2);mctx.fillStyle='#738b9e';for(const c of colliders)if(c.archiveWall)mctx.fillRect(px(c.x)-1,pz(c.z)-1,2,2);for(const d of ARCHIVE_SITES)dot(d.x,d.z,'#c0d8ed',3);}
   if(mistReady())for(const d of MIST_LAMPS)dot(d.x,d.z,'#ffedaf',4);
   if(bellReady())for(const d of BELL_SITES)dot(d.x,d.z,'#ffda78',3);
@@ -2150,7 +2196,8 @@ function openCollectorDialog() {
   document.getElementById('dlgback').style.display = 'block';
 }
 function closeDialog() {
-  dlgEl().classList.remove('skilltree','journey-dialog');
+  cycleRestorePending=false;dlgEl().style.zIndex='';document.getElementById('dlgback').style.zIndex='';
+  dlgEl().classList.remove('skilltree','journey-dialog','wind-tune','canal-panel','whirl-study','cycle-panel','relay-panel','archive-panel','equipment-panel');
   state.dlgFocus = null;
   state.dialog = false;
   dlgEl().style.display = 'none';
@@ -2163,32 +2210,50 @@ document.getElementById('prompt').addEventListener('touchstart', (e) => { e.prev
 
 // ---------- 세이브 (localStorage) ----------
 const SAVE_KEY = 'windhill-save';
-function saveGame() {
-  if (!state.ready) return;
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({
+// 회차 전환은 명시 확인 뒤에만 실행. 이전 회차는 별도 슬롯으로 남긴다.
+let cycleSession=null,cycleWriteBlocked=false,cycleSwitchPending=false,cycleRestorePending=false;
+function cycleOptions(){return{expectedActive:cycleSession?.active||1,expectedRevision:cycleSession?.revision||0};}
+function cycleAccept(result){if(!result.ok){toast(result.error);return false;}cycleSession={active:result.envelope.active,revision:result.envelope.revision};if(result.warning)toast(result.warning);return true;}
+function cycleSaveLock(message){if(cycleWriteBlocked)return;cycleWriteBlocked=true;state.autoOn=false;state.dialog=true;const box=document.createElement('div');box.id='cycle-save-lock';Object.assign(box.style,{position:'fixed',inset:'0',zIndex:10000,background:'#101824f5',color:'#fff',display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center',padding:'24px',boxSizing:'border-box',textAlign:'center'});const title=document.createElement('h3');title.textContent='저장 보호를 위해 멈췄습니다';const body=document.createElement('p');body.textContent=message+' 기존 회차는 덮어쓰지 않았습니다. 다른 창을 닫거나 저장 공간을 확인한 뒤 다시 불러오세요.';const b=document.createElement('button');b.textContent='저장 다시 불러오기';b.onclick=()=>location.reload();const restore=document.createElement('button');restore.textContent='백업 파일에서 복원';restore.onclick=chooseCycleRestore;for(const button of[b,restore])Object.assign(button.style,{font:'inherit',fontSize:'14px',padding:'12px',margin:'4px',borderRadius:'8px'});box.append(title,body,b,restore);if(previousCycleBackup()){const undo=document.createElement('button');undo.textContent='교체 전 저장 되돌리기';undo.onclick=restorePreviousCycleBackup;Object.assign(undo.style,{font:'inherit',fontSize:'14px',padding:'12px',margin:'4px',borderRadius:'8px'});box.append(undo);}document.body.appendChild(box);}
+function cycleSafe(){return state.ready&&!state.dead&&!cycleWriteBlocked&&!cycleSwitchPending&&state.npc&&state.player.position.distanceTo(state.npc.pos)<=2.6&&!state.enemies.some(e=>!e.dead&&e.root.position.distanceTo(state.player.position)<12);}
+function cycleCanAdvance(){return state.quest.idx>=20&&state.journey===5&&state.canal.stage===5;}
+function cycleInfo(){const r=readCycles(localStorage);return{active:cycleSession?.active||1,revision:cycleSession?.revision||0,safe:!!cycleSafe(),unlocked:cycleCanAdvance(),blocked:cycleWriteBlocked,managed:!!cycleSession,slots:r.ok?Object.values(r.envelope.slots).map(s=>({id:s.id,parentId:s.parentId,inheritance:s.inheritance,level:s.save.level,quest:s.save.quest.idx,journey:s.save.journey||0,canal:s.save.canal?.stage||0})):[],error:r.ok?null:r.error};}
+function cycleReloadResult(result){if(!cycleAccept(result))return;cycleSwitchPending=true;state.autoOn=false;location.reload();}
+function openCycleLedger(){if(cycleWriteBlocked||cycleSwitchPending)return;closeDialog();const r=readCycles(localStorage),safe=cycleSafe(),can=cycleCanAdvance();let html=`현재 <b>${cycleSession?.active||1}회차</b> · 이전 회차와 다음 회차는 따로 저장된다.<br><br>다음 여정은 메인 의뢰20개·순례길 이야기·별빛 수로 기록을 마친 뒤에 열린다. 이것은 반복 의뢰와 다른 새 회차다. 새로운 이야기 진행과 보상을 다시 시작하지만 이전 회차로 돌아올 수 있다. 2회차부터 관측소 근접 보초가 돌진 창병으로 바뀐다. 종 퍼즐·단계·보상은 유지된다. 마을 밖 일반/서리 스켈레톤에게는 잔향 공격이 추가된다. 짝수 회차는 붉은 원2.8m 밖, 홀수 회차는 금빛 고리1.6m 안 또는4.4m 밖이 안전하다. 체력·기본 피해·보상은 그대로이며, 예고 뒤 반격할 빈틈이 있다. 엘리트/보스/원정 적은 이 변형 대상이 아니다.<br><br>현재 저장은 이 기기·이 브라우저에 있다. 브라우저 데이터를 지우면 회차 저장도 사라진다. 최대8회차이며 오래된 회차를 자동 삭제하지 않는다.<br><br><b>모든 계승에서 초기화</b>: 메인/탐험 이야기·문/관측·처치/의뢰·룬/인장·재료/상자·경험치 잔량. 레벨은 유지하지만 의뢰 보상 공격력/체력은 새 진행에 맞춰 다시 얻는다. 보법과 선풍 연마는 해금 기록이 초기화되므로 해제된다.<br><br><b>전투 계승</b>: 기본8기술·보유 장비와 강화·숙련·남은P 유지. 장비 드롭 누적과 의뢰 장비 지급 기록은 새로 시작한다. 해제된 보법/선풍의 비용2P/3P는 돌려받는다. 골드는0, 물약3개로 시작.<br><b>여정 계승</b>: 기술/장비/숙련을 새로 선택한다. 레벨당 기본P를 다시 배분하고 골드 최대500G·물약3개로 시작. 기록 보상 추가P는 계승하지 않는다.<br><br>${safe?'장로 곁에서 회차 관리 가능':'회차 시작/전환은 안전한 장로 곁에서만 가능'}<br>`;const buttons=[['회차 백업 파일 받기',downloadCycleBackup],['백업 파일에서 복원',chooseCycleRestore]];if(previousCycleBackup())buttons.push(['교체 전 저장 되돌리기',restorePreviousCycleBackup]);if(safe&&can)buttons.push(['전투 계승 살펴보기',()=>openCycleConfirm('battle')],['여정 계승 살펴보기',()=>openCycleConfirm('journey')]);if(r.ok){html+='<br><b>저장된 회차</b><br>'+Object.values(r.envelope.slots).map(s=>`${s.id}회차 · Lv.${s.save.level} · 메인${s.save.quest.idx}/20 · ${s.inheritance==='battle'?'전투 계승':s.inheritance==='journey'?'여정 계승':'원래 여정'}${s.id===(cycleSession?.active||1)?' [현재]':''}`).join('<br>');if(safe)for(const s of Object.values(r.envelope.slots))if(s.id!==(cycleSession?.active||1))buttons.push([`${s.id}회차 이어 하기`,()=>openCycleSwitchConfirm(s.id)]);}else if(localStorage.getItem('windhill-cycles-v1')!==null){cycleSaveLock(r.error);return;}journeyDialog('회차 기록과 계승',html,buttons);dlgEl().classList.add('cycle-panel');}
+function openCycleConfirm(inheritance){if(!state.dialog||!dlgEl().classList.contains('cycle-panel')||!cycleSafe()||!cycleCanAdvance())return;const active=cycleSession?.active||1;journeyDialog('다음 여정을 시작할까요?',`<b>${inheritance==='battle'?'전투':'여정'} 계승</b>을 선택했다.<br><br>현재 ${active}회차의 진행은 별도 슬롯에 보존하고 새로운 회차를 만든다. 새 회차에서는 이야기·문·기록·일회 보상이 처음부터 시작된다. 계승하지 않는 항목은 회차 기록 화면의 설명과 같다.<br><br>원래 회차는 장로 곁의 회차 기록에서 다시 이어 할 수 있다. 이 버튼을 누르기 전에는 아무것도 초기화되지 않는다.`,[['이전 회차 보존하고 새 회차 시작',()=>{if(!state.dialog||!dlgEl().classList.contains('cycle-panel')||!cycleSafe()||!cycleCanAdvance())return;cycleReloadResult(startNextCycle(localStorage,captureSave(),inheritance,cycleOptions()));}],['계승 설명으로 돌아가기',openCycleLedger]]);dlgEl().classList.add('cycle-panel');}
+function openCycleSwitchConfirm(id){if(!state.dialog||!cycleSafe())return;journeyDialog('이전 회차를 이어 할까요?',`현재 회차를 저장하고 <b>${id}회차</b>의 마지막 저장 위치로 돌아간다. 지금 회차도 나중에 이어 할 수 있다.`,[['현재 회차 보존하고 이어 하기',()=>{if(!state.dialog||!dlgEl().classList.contains('cycle-panel')||!cycleSafe())return;cycleReloadResult(switchCycle(localStorage,captureSave(),id,cycleOptions()));}],['회차 목록으로 돌아가기',openCycleLedger]]);dlgEl().classList.add('cycle-panel');}
+addEventListener('storage',e=>{if((e.key==='windhill-cycles-v1'||e.key===null)&&(cycleSession||e.newValue))cycleSaveLock('다른 창에서 회차 저장이 바뀌었습니다.');});
+
+function previousCycleBackup(){try{const b=JSON.parse(localStorage.getItem('windhill-cycles-before-restore-v1'));if(!b)return null;const r=readCycles({getItem:k=>k==='windhill-cycles-v1'?b.canonical:k===SAVE_KEY?b.legacy:null});return r.ok?r.envelope:null;}catch{return null;}}
+function restorePreviousCycleBackup(){const e=previousCycleBackup();if(e)confirmCycleRestore(e,localStorage.getItem('windhill-cycles-v1'),localStorage.getItem(SAVE_KEY));else toast('교체 전 저장 사본을 읽을 수 없습니다.');}
+// Local backup includes the complete cycle envelope, not credentials or remote data.
+function downloadCycleBackup(){setTimeout(()=>{for(const b of document.querySelectorAll('#dlg-btns button'))if(b.textContent.includes('백업 파일 받기'))b.disabled=false;},0);try{const r=readCycles(localStorage);if(!r.ok){toast(r.error);return false;}const blob=new Blob([JSON.stringify(r.envelope,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='windhill-cycles-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);toast('회차 백업 다운로드를 요청했습니다. 파일이 저장됐는지 확인하세요.');return true;}catch{toast('백업 파일을 만들 수 없습니다. 브라우저 다운로드 설정을 확인하세요.');return false;}}
+function chooseCycleRestore(){if(cycleSwitchPending)return;setTimeout(()=>{for(const b of document.querySelectorAll('#dlg-btns button'))if(b.textContent==='백업 파일에서 복원')b.disabled=false;},0);const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.onchange=async()=>{const file=input.files?.[0];if(!file)return;if(file.size>2000000){toast('2MB 이하 회차 백업 파일을 선택하세요.');return;}try{const text=await file.text(),r=readCycles({getItem:k=>k==='windhill-cycles-v1'?text:null});if(!r.ok){toast('유효한 회차 백업이 아닙니다. 현재 저장은 바꾸지 않았습니다.');return;}confirmCycleRestore(r.envelope,localStorage.getItem('windhill-cycles-v1'),localStorage.getItem(SAVE_KEY));}catch{toast('백업 파일을 읽을 수 없습니다. 현재 저장은 바꾸지 않았습니다.');}};input.click();}
+function confirmCycleRestore(envelope,expected,legacy){cycleRestorePending=true;const slots=Object.values(envelope.slots);journeyDialog('백업으로 복원할까요?',`선택한 파일: <b>${slots.length}개 회차</b> · 활성 ${envelope.active}회차 · Lv.${envelope.slots[envelope.active].save.level}<br><br>이 브라우저의 회차 목록 전체를 선택한 파일로 교체한다. 병합하지 않는다. 파일에 없는 진행은 복원된 목록에 나타나지 않는다.<br><br>현재 저장의 교체 전 사본을 기기에 한 번 더 보관한다. 그래도 먼저 현재 회차의 백업 파일을 내려받아 별도로 보관하는 것을 권한다. 복원 후 자동으로 다시 불러온다.`,[['현재 기록 백업 파일 받기',downloadCycleBackup],['목록 전체를 선택한 백업으로 복원',()=>{if(!state.dialog||!dlgEl().classList.contains('cycle-panel')||cycleSwitchPending)return;try{if(localStorage.getItem('windhill-cycles-v1')!==expected||localStorage.getItem(SAVE_KEY)!==legacy){toast('복원 확인 중 다른 저장이 바뀌었습니다. 파일을 다시 선택하세요.');return;}localStorage.setItem('windhill-cycles-before-restore-v1',JSON.stringify({canonical:expected,legacy}));
+// The backup has already passed readCycles. The canonical replacement is one write.
+localStorage.setItem('windhill-cycles-v1',JSON.stringify({...envelope,revision:Math.max(envelope.revision,cycleSession?.revision||0)+1}));cycleSwitchPending=true;state.autoOn=false;location.reload();}catch{toast('저장 공간에 복원할 수 없습니다. 현재 회차 목록은 바꾸지 않았습니다.');}}],['취소',()=>{if(cycleWriteBlocked){closeDialog();return;}openCycleLedger();}]]);dlgEl().classList.add('cycle-panel');dlgEl().style.zIndex='10001';document.getElementById('dlgback').style.zIndex='10000';}
+
+function captureSave(){syncEquipment();return{
       x: state.player.position.x, z: state.player.position.z,
       hp: state.hp, maxHp: state.maxHp, kills: state.kills, skKills: state.skKills || 0, wKills: state.wKills || 0,
       heading: state.heading, quest: state.quest, tutDone: state.tutDone, snakeKills: state.snakeKills || 0, kingSnakeKills: state.kingSnakeKills || 0, vials: state.vials || 0, waspKills: state.waspKills || 0, queenWaspKills: state.queenWaspKills || 0, bogSpiderKills: state.bogSpiderKills || 0, bogLordKills: state.bogLordKills || 0, bloodRatKills: state.bloodRatKills || 0, stormWaspKills: state.stormWaspKills || 0, rockSpiderKills: state.rockSpiderKills || 0, ruinSkelKills: state.ruinSkelKills || 0, ruinWarKills: state.ruinWarKills || 0, ruinWardenKills: state.ruinWardenKills || 0, ruinsFound: !!state.ruinsFound,
       gold: state.gold, potions: state.potions, bossKills: state.bossKills || 0, eliteKills: state.eliteKills || 0, flowerCount: state.flowerCount || 0, flowersSold: state.flowersSold || 0, dex: state.dex, mats: state.mats, level: state.level || 1, xp: state.xp || 0,
-      bounty: state.bounty, tracked: state.tracked || 'auto', mastery: state.mastery || null, skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
+      bounty: state.bounty, tracked: state.tracked || 'auto', mastery: state.mastery || null, skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear,equipment:JSON.parse(JSON.stringify(ensureEquipment())), ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       observatory: state.observatory || 0, observatorySeen: !!state.observatorySeen,
       beacon: {step:state.beacon?.step||0,supply:state.beacon?.supply||null},
-      cartStage: state.cartStage || 0, courier: state.courier || 0, insignia: state.insignia || null, estuary:{stage:state.estuary.stage,rescued:state.estuary.rescued,bossWon:!!state.estuary.bossWon}, bell:{stage:state.bell.stage,clues:state.bell.clues,input:state.bell.input}, windTune:piercingWind()?'pierce':null, mist:{stage:state.mist.stage,lamps:state.mist.lamps}, archive:{...state.archive},
+      cartStage: state.cartStage || 0, courier: state.courier || 0, insignia: state.insignia || null, estuary:{stage:state.estuary.stage,rescued:state.estuary.rescued,bossWon:!!state.estuary.bossWon}, bell:{stage:state.bell.stage,clues:state.bell.clues,input:state.bell.input}, windTune:fanningWind()?'fan':returningWind()?'return':drawingWind()?'draw':piercingWind()?'pierce':null, mist:{stage:state.mist.stage,lamps:state.mist.lamps}, archive:{...state.archive}, highland:{...state.highland}, canal:{...state.canal},
       echo: state.echo || 0,
       journey: state.journey || 0, journeyEnding: state.journeyEnding || null,
       sealSolved: !!state.sealSolved,
       runes: state.runes || [],
       mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, densCleared: state.densCleared || [], ringsPassed: state.ringsPassed || [], watchFound: !!state.watchFound, watchCleared: !!state.watchCleared,
+      lightRelay:{...relayState(),mirrors:[...relayState().mirrors]},
       playTime: Math.floor(state.playTime || 0),
-    }));
-  } catch (e) { console.warn('save fail', e); }
-}
+    };}
+function saveGame(){if(!state.ready||cycleWriteBlocked||cycleSwitchPending||cycleRestorePending)return false;try{const save=captureSave();if(!validateGameSave(save)){cycleSaveLock('현재 저장 형식이 올바르지 않습니다.');return false;}if(cycleSession){const r=commitCycleSave(localStorage,save,cycleOptions());if(!r.ok){cycleSaveLock(r.error);return false;}cycleAccept(r);}else if(localStorage.getItem('windhill-cycles-v1')!==null){cycleSaveLock('다른 회차의 저장을 발견했습니다.');return false;}else localStorage.setItem(SAVE_KEY,JSON.stringify(save));return true;}catch(e){cycleSaveLock('저장할 공간이 부족합니다.');return false;}}
 function loadGame() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return;
-    const s = JSON.parse(raw);
+    let s;if(localStorage.getItem('windhill-cycles-v1')!==null){const r=readCycles(localStorage);if(!r.ok){cycleSaveLock(r.error);return;}cycleSession={active:r.envelope.active,revision:r.envelope.revision};s=r.envelope.slots[r.envelope.active].save;}else{const raw=localStorage.getItem(SAVE_KEY);if(!raw)return;s=JSON.parse(raw);if(!validateGameSave(s,{legacy:true})){cycleSaveLock('기존 저장 형식이 올바르지 않습니다.');return;}}
     state.player.position.set(s.x ?? 0, 0, s.z ?? 8); // 기본 스폰은 마을 남쪽 빈터(시장 노점 북쪽 8m)
     state.heading = s.heading || 0;
     state.player.rotation.y = state.heading;
@@ -2221,10 +2286,13 @@ function loadGame() {
     const bsaved=s.bell;state.bell={stage:Number.isInteger(bsaved?.stage)?Math.max(0,Math.min(5,bsaved.stage)):0,clues:Number.isInteger(bsaved?.clues)?bsaved.clues&7:0,input:Number.isInteger(bsaved?.input)?Math.max(0,Math.min(3,bsaved.input)):0};if(!bellReady())state.bell={stage:0,clues:0,input:0};if(!state.bell.stage){state.bell.clues=0;state.bell.input=0;}if(state.bell.stage<2)state.bell.input=0;if(state.bell.stage===1&&state.bell.clues===7)state.bell.stage=2;if(state.bell.stage>=2)state.bell.clues=7;if(state.bell.stage===2&&state.bell.input===3)state.bell.stage=3;if(state.bell.stage>=3)state.bell.input=3;
     const ms=s.mist;state.mist={stage:Number.isInteger(ms?.stage)?Math.max(0,Math.min(4,ms.stage)):0,lamps:Number.isInteger(ms?.lamps)?ms.lamps&3:0};if(!mistReady())state.mist={stage:0,lamps:0};if(!state.mist.stage)state.mist.lamps=0;if(state.mist.stage===1&&state.mist.lamps===3)state.mist.stage=2;if(state.mist.stage>=2)state.mist.lamps=3;
     const ar=s.archive;state.archive={stage:Number.isInteger(ar?.stage)?Math.max(0,Math.min(4,ar.stage)):0,read:!!ar?.read,input:Number.isInteger(ar?.input)?Math.max(0,Math.min(3,ar.input)):0,shelf:!!ar?.shelf,valves:Number.isInteger(ar?.valves)?ar.valves&3:0,wave:Number.isInteger(ar?.wave)?Math.max(0,Math.min(2,ar.wave)):0,ending:['keep','share'].includes(ar?.ending)?ar.ending:null};if(!archiveReady()||!state.archive.stage)state.archive={stage:0,read:false,input:0,shelf:false,valves:0,wave:0,ending:null};else{const a=state.archive;if(a.input===3)a.shelf=true;if(a.shelf){a.read=true;a.input=3;}if(!a.read)a.input=0;if(!a.shelf||a.valves!==3)a.wave=0;if(a.stage>=2||a.wave===2){a.stage=Math.max(2,a.stage);a.read=a.shelf=true;a.input=3;a.valves=3;a.wave=2;}if(a.stage!==4)a.ending=null;}if(inArchive()&&!state.archive.stage)state.player.position.set(129,0,-5);
+    state.highland=normalizeHighland(s.highland);setHighlandBarrier(state.highlandGates.path,state.highland.stage<2);setHighlandBarrier(state.highlandGates.north,state.highland.stage<3);state.highlandBridges.forEach((b,i)=>setHighlandBarrier(b.gate,state.highland.west<=i));if(inHighland()){if(!state.highland.stage)state.player.position.set(260,0,24);else if(colliders.some(c=>c.highlandWall&&Math.hypot(state.player.position.x-c.x,state.player.position.z-c.z)<c.r+.45))state.player.position.set(400,0,46);}
+    state.canal=normalizeCanal(s.canal);applyCanalGeometry();canalSafePosition();
+    state.lightRelay=normalizeRelay(s.lightRelay,state.canal.stage===5);if(inRelay()&&!state.lightRelay.stage)state.player.position.set(600,0,60);updateRelayVisual();
     state.echo=Number.isInteger(s.echo)?Math.max(0,Math.min(2,s.echo)):0;
     state.observatorySeen=!!s.observatorySeen || state.observatory>0;
     updateObservatoryVisuals();
-    if((!state.observatory&&observatoryInside(state.player.position))||colliders.some(c=>c.observatoryWall&&Math.hypot(state.player.position.x-c.x,state.player.position.z-c.z)<c.r+.8))state.player.position.set(60,0,-4);
+    if((!state.observatory&&observatoryInside(state.player.position))||colliders.some(c=>c.observatoryWall&&!c.highlandWall&&!c.canalWall&&Math.hypot(state.player.position.x-c.x,state.player.position.z-c.z)<c.r+.8))state.player.position.set(60,0,-4);
     state.sealSolved = s.sealSolved === true;
     state.sealInput = [];
     updateSealVisuals();
@@ -2246,7 +2314,7 @@ function loadGame() {
     state.bounty = s.bounty || { active: false, startKills: 0, count: 0 };
     state.tracked = s.tracked || 'auto';
     state.skills = s.skills || {};
-    state.windTune=s.windTune==='pierce'&&state.bell.stage===5&&hasSkill('windshot')?'pierce':null;
+    state.windTune=state.bell.stage===5&&hasSkill('windshot')?(s.windTune==='fan'&&state.lightRelay.surveyClaimed?'fan':s.windTune==='return'&&state.lightRelay.stage===3?'return':s.windTune==='draw'&&state.highland.stage===5?'draw':s.windTune==='pierce'?'pierce':null):null;
     state.mastery = MASTERIES.some(m=>m.id===s.mastery) ? s.mastery : null;
     resetMasteryCombat();
     // 구 세이브 소급: (레벨-1) - 이미 습득에 쓴 포인트 - 보유 포인트 만큼만 지급 (중복 지급 방지, 감액 없음)
@@ -2261,6 +2329,7 @@ function loadGame() {
     state.trialDone = s.trialDone || 0;
     if (state.shrines) state.shrines.forEach((r, i) => { r.prayed = state.shrinesPrayed.includes(i); r.beam.visible = !r.prayed; });
     if (s.gear) state.gear = { sword: s.gear.sword || 0, armor: s.gear.armor || 0, boots: s.gear.boots || 0 };
+    state.equipment=s.equipment?migrateEquipment(s.equipment,state.gear):null;
     if (s.ach) state.ach = s.ach;
     if (state.chests) state.chests.forEach((c, i) => { c.opened = state.chestsOpened.includes(i); c.beam.visible = !c.opened; });
     // 지도 조각: 구버전 세이브는 이미 연 조각 상자 수로 소급 산정
@@ -2294,8 +2363,9 @@ function loadGame() {
         state.quest = s.quest;
       }
     }
+    syncEquipment();
     applyProgression();
-  } catch (e) { console.warn('load fail', e); }
+  } catch (e) { console.warn('load fail', e);cycleSaveLock('저장 내용을 읽을 수 없습니다.'); }
 }
 setInterval(() => { if (state.ready && !state.dead) saveGame(); }, 4000);
 
@@ -2677,6 +2747,14 @@ async function buildWatchtower() {
 }
 // ---------- 꺼진 봉화길: 보급 선택과 두 전투 지점을 잇는 1회성 원정 ----------
 const BEACON_SITES=[{id:'start',x:10,z:10,name:'봉화길 출발석'},{id:'fork',x:0,z:28,name:'원정 보급함'},{id:'forest',x:-20,z:18,name:'서쪽 우회길'},{id:'ridge',x:18,z:40,name:'동쪽 능선길'},{id:'fire',x:8,z:60,name:'꺼진 봉화'}];
+function cycleBeacon(){return (cycleSession?.active||1)>=2;}
+function cycleBeaconText(){return cycleBeacon()?'<br><br><b>계승 회차의 새 전술</b><br>서쪽 붕대 길: 방패병과 회복사. 회복사가 다친 동료에게 1.5초 동안 녹색 선을 잇고 체력16을 회복한다. 회복사를 때려 시전을 끊거나 먼저 처치하자. 자기 회복·부활은 없다.<br>동쪽 화약 길: 창병과 세 갈래 사수. 고정된 붉은 직선의 옆으로 피하면서 사수를 끊거나 엄폐한다.<br>마지막 봉화: 보초와 회복사가 함께 나온다. 화약은 이전처럼 마지막 보초 가드를 없앤다. 붕대의 중간30회복도 그대로다. 전투 중 회복은 반복될 수 있지만 모든 원정 전리품은 없다.':'';}
+function cancelMender(e,now=clock.elapsedTime){if(!e.stats.beaconMender)return;e.mendPhase=menderStep(e.mendPhase,now,{blocked:true}).phase;e.mendAt=0;if(e.mendLine)e.mendLine.visible=false;}
+function menderTargetValid(e,t){return !!t&&!t.dead&&t!==e&&t.hp>0&&t.hp<t.stats.hp&&e.root.position.distanceTo(t.root.position)<=10&&!observatoryBlocked(e.root.position,t.root.position)&&state.beaconFight?.enemies.includes(t);}
+function updateMender(e,dt,now){if(!e.stats.beaconMender)return false;const group=state.beaconFight?.enemies||[],blocked=e.dead||state.dead||state.dialog||state.menuOpen||now<(e.hitUntil||0)||now<(e.staggerUntil||0)||!group.includes(e),target=e.mendPhase?.at?state.enemies[e.mendPhase.target]:group.find(t=>menderTargetValid(e,t)),idx=target?state.enemies.indexOf(target):null,result=menderStep(e.mendPhase,now,{blocked,target:idx,valid:menderTargetValid(e,target)});e.mendPhase=result.phase;e.mendAt=result.phase.at||0;if(!['start','channel'].includes(result.event)&&e.mendLine)e.mendLine.visible=false;if(result.event==='cancel')e.mendCancels=(e.mendCancels||0)+1;if(blocked){e.pendingHit=0;e.combo2=0;if(e.tele)e.tele.visible=false;e.anim.update(dt);return true;}if(result.event==='start'||result.event==='channel'){e.pendingHit=0;e.combo2=0;if(e.tele)e.tele.visible=false;if(!e.mendLine){e.mendLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),new THREE.LineBasicMaterial({color:0x95ffcc,depthTest:false}));e.mendLine.userData.beaconMend=true;e.mendLine.renderOrder=10;scene.add(e.mendLine);}const a=e.mendLine.geometry.attributes.position;a.setXYZ(0,e.root.position.x,1.5,e.root.position.z);a.setXYZ(1,target.root.position.x,1.5,target.root.position.z);a.needsUpdate=true;e.mendLine.visible=true;e.root.rotation.y=Math.atan2(target.root.position.x-e.root.position.x,target.root.position.z-e.root.position.z);e.mode='menderChannel';e.anim.play('idle');e.anim.update(dt);return true;}if(result.event==='heal'){const before=target.hp;target.hp=menderHeal(target.hp,target.stats.hp);e.mendTotal=(e.mendTotal||0)+target.hp-before;e.mendCasts=(e.mendCasts||0)+1;skillFx(target.root.position,0x95ffcc,1.6,'ready');e.anim.update(dt);return true;}if(group.some(t=>t!==e&&!t.dead)){const away=e.root.position.clone().sub(state.player.position);away.y=0;if(away.length()<4.5&&away.length()>.01){const next=e.root.position.clone().addScaledVector(away.normalize(),e.stats.speed*dt);if(next.distanceTo(e.home)<8&&!colliders.some(c=>Math.hypot(c.x-next.x,c.z-next.z)<c.r+.55))e.root.position.copy(next);}e.anim.play('idle');e.anim.update(dt);return true;}return false;}
+function spawnCycleBeacon(stage,target){const plan=beaconCyclePlan(cycleSession?.active||1,stage,state.beacon.supply);if(!plan||!state.protos.skel)return false;const enemies=plan.map(d=>{const stats={...(d.role==='guard'||d.role==='lancer'?WARRIOR:ENEMY),hp:d.hp,dmg:d.dmg,speed:d.role==='mender'?2:2.3,combo:false,guard:!!d.guard,lancer:d.role==='lancer',archer:d.role==='archer',beaconMender:d.role==='mender',label:d.label,noRespawn:true,noElite:true,aggro:18};const e=state.spawn(state.protos.skel,stats,target.x+d.dx,target.z+d.dz);e.expedition=e.trial=true;e.lanceNext=clock.elapsedTime+2;e.archerNext=clock.elapsedTime+2.7;e.mendPhase={next:clock.elapsedTime+2};if(!e.nameSprite){e.nameSprite=makeNameSprite(d.label);e.nameSprite.position.y=2.6;e.root.add(e.nameSprite);}if(stats.lancer){const spear=new THREE.Mesh(new THREE.CylinderGeometry(.045,.045,3.6,5),new THREE.MeshLambertMaterial({color:0xc7b28c}));spear.rotation.x=Math.PI/2;spear.position.set(.48,1,1);e.root.add(spear);}if(stats.beaconMender){const plus=new THREE.Group(),mat=new THREE.MeshBasicMaterial({color:0x95ffcc});for(const[w,h]of[[.7,.16],[.16,.7]]){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,.12),mat);plus.add(m);}plus.position.y=3.1;e.root.add(plus);}return e;});state.beaconFight={step:stage,enemies,cycle:true};toast(state.beacon.supply==='medicine'?'방패병과 회복사 · 녹색 선을 잇는 회복사를 끊자':'능선 혼합 경비 · 붉은 직선의 옆으로 회피');return true;}
+function removeCycleBeaconFx(e){cancelMender(e);cancelLancer(e);cancelArcher(e);clearWindDraw(e);if(e.mendLine){scene.remove(e.mendLine);e.mendLine.geometry.dispose();e.mendLine.material.dispose();e.mendLine=null;}if(e.lanceTele){scene.remove(e.lanceTele);e.lanceTele.geometry.dispose();e.lanceTele.material.dispose();e.lanceTele=null;}for(const m of e.archerLines||[])scene.remove(m);for(const a of e.arrows||[])scene.remove(a.root);}
+
 function beaconStep(){return state.beacon?.step||0}
 function beaconSite(id){return BEACON_SITES.find(s=>s.id===id)}
 function beaconTarget(){const st=beaconStep();if(!st||st===5)return null;const id=st===1?'fork':st===2?(state.beacon.supply==='medicine'?'forest':'ridge'):st===3?'fire':'start';const d=beaconSite(id);return{x:d.x,z:d.z,label:st===4?'봉화길 귀환 보고':d.name}}
@@ -2694,28 +2772,30 @@ function buildBeaconTrail(){state.beaconProps=BEACON_SITES.map(d=>{const root=ne
  const label=makeNameSprite(d.name);label.position.y=3.1;root.add(label);let litLabel=null;if(d.id==='fire'){litLabel=makeNameSprite('밝힌 봉화');litLabel.position.y=3.1;litLabel.visible=false;root.add(litLabel)}scene.add(root);return{...d,root,gem,label,litLabel}})}
 function nearbyBeacon(){if(!state.ready||state.dead)return null;return(state.beaconProps||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.5)||null}
 function beaconAdvance(step){state.beacon.step=step;state.tracked=step<5?'beacon':'auto';saveGame();closeDialog()}
-function clearBeaconFight(){if(!state.beaconFight)return;for(const e of state.beaconFight.enemies){cancelFrogSpit(e);cancelStormCharge(e);cancelWardenPulse(e);if(e.tele)scene.remove(e.tele);scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1)}state.beaconFight=null}
+function clearBeaconFight(){if(!state.beaconFight)return;for(const e of state.beaconFight.enemies){removeCycleBeaconFx(e);cancelFrogSpit(e);cancelStormCharge(e);cancelWardenPulse(e);if(e.tele)scene.remove(e.tele);scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1)}state.beaconFight=null}
+function beaconDialog(title,text,buttons=[]){journeyDialog(title,text,buttons);if(cycleBeacon())dlgEl().classList.add('cycle-panel');}
 function openBeaconDialog(d){
  state.dlgFocus=d.root.position;const step=beaconStep(),near=()=>nearbyBeacon()?.id===d.id;
  if(d.id==='start'){
-  if(step===0){journeyDialog('꺼진 봉화길','남쪽 봉화가 꺼져 늦은 여행자들이 방향을 잃고 있다.<br>보급함에서 한 가지 물품을 골라 길을 열고, 봉화를 밝힌 뒤 돌아오자.<br><br>서쪽 우회길은 근접 보초 둘, 동쪽 능선길은 원거리 보초 둘이 지킨다. 마지막 봉화에는 갑옷 보초가 있다.<br>이름이 <b>원정</b>으로 시작하는 보초만 목표다. 일반 적은 지나쳐도 된다.<br>원정 적은 재화·경험치·일반 의뢰 처치에 포함되지 않는다. 사망·재접속·현장24m 이탈 시 현재 전투만 처음부터, 완료한 지점과 선택은 유지된다.<br>완료 기록: <b>봉화지기</b> · 능력치 보상 없음.'+(state.quest.idx<5?'<br><br>묘지의 왕 의뢰를 장로에게 보고한 뒤 시작할 수 있다.':''),state.quest.idx>=5?[[ '원정 시작',()=>{if(beaconStep()||!near())return;state.beacon={step:1,supply:null};beaconAdvance(1)}]]:[]);return}
-  if(step===4){journeyDialog('돌아온 봉화지기','먼 언덕에서 새 불빛이 보인다. 길 위의 누군가는 오늘 밤 그 불빛으로 돌아올 것이다.<br>출발석의 빈 칸에 이번 원정의 기록을 남기자.',[['원정 기록 남기기',()=>{if(beaconStep()!==4||!near())return;beaconAdvance(5);toast('원정 기록: 봉화지기');sfx('reward',.7)}]]);return}
-  journeyDialog('봉화길 출발석',step===5?'봉화지기 기록이 새겨져 있다. 꺼진 길에 불빛을 돌려놓았다.<br>이 원정은 완료되었으며 보상을 반복해서 받지 않는다.':'원정이 진행 중이다. 목표 표지를 따라 보급함과 선택한 길을 지나자.');return;
+  if(step===0){beaconDialog('꺼진 봉화길','남쪽 봉화가 꺼져 늦은 여행자들이 방향을 잃고 있다.<br>보급함에서 한 가지 물품을 골라 길을 열고, 봉화를 밝힌 뒤 돌아오자.<br><br>'+(cycleBeacon()?'이번 회차는 경비의 역할과 회복 지원이 달라졌다. 아래 새 전술을 확인하자.':'서쪽 우회길은 근접 보초 둘, 동쪽 능선길은 원거리 보초 둘이 지킨다. 마지막 봉화에는 갑옷 보초가 있다.')+'<br>이름이 <b>원정</b>으로 시작하는 보초만 목표다. 일반 적은 지나쳐도 된다.<br>원정 적은 재화·경험치·일반 의뢰 처치에 포함되지 않는다. 사망·재접속·현장24m 이탈 시 현재 전투만 처음부터, 완료한 지점과 선택은 유지된다.<br>완료 기록: <b>봉화지기</b> · 능력치 보상 없음.'+cycleBeaconText()+(state.quest.idx<5?'<br><br>묘지의 왕 의뢰를 장로에게 보고한 뒤 시작할 수 있다.':''),state.quest.idx>=5?[[ '원정 시작',()=>{if(beaconStep()||!near())return;state.beacon={step:1,supply:null};beaconAdvance(1)}]]:[]);return}
+  if(step===4){beaconDialog('돌아온 봉화지기','먼 언덕에서 새 불빛이 보인다. 길 위의 누군가는 오늘 밤 그 불빛으로 돌아올 것이다.<br>출발석의 빈 칸에 이번 원정의 기록을 남기자.',[['원정 기록 남기기',()=>{if(beaconStep()!==4||!near())return;beaconAdvance(5);toast('원정 기록: 봉화지기');sfx('reward',.7)}]]);return}
+  beaconDialog('봉화길 출발석',step===5?'봉화지기 기록이 새겨져 있다. 꺼진 길에 불빛을 돌려놓았다.<br>이 원정은 완료되었으며 보상을 반복해서 받지 않는다.':'원정이 진행 중이다. 목표 표지를 따라 보급함과 선택한 길을 지나자.');return;
  }
  if(step===1&&d.id==='fork'){
-  journeyDialog('한 가지만 가져갈 수 있다','<b>붕대 꾸러미</b>: 서쪽 우회길의 근접 보초 둘을 지나면 체력30 회복(한 번). 마지막 갑옷 보초는 그대로다.<br><br><b>봉화 화약</b>: 동쪽 능선길의 독침 보초 둘을 지난다. 마지막 보초는 갑옷이 깨져 체력65/가드 없음이 된다. 중간 회복은 없다.<br><br>선택은 이번 원정 동안 바꿀 수 없다. 보급은 무료이며 물약/골드를 쓰지 않는다.',[['붕대 · 서쪽 우회',()=>{if(beaconStep()!==1||!near())return;state.beacon.supply='medicine';beaconAdvance(2)}],['화약 · 동쪽 능선',()=>{if(beaconStep()!==1||!near())return;state.beacon.supply='flare';beaconAdvance(2)}]]);return;
+  beaconDialog('한 가지만 가져갈 수 있다',cycleBeaconText()+'<br><b>붕대 꾸러미</b>: '+(cycleBeacon()?'서쪽 방패병과 회복사':'서쪽 우회길의 근접 보초 둘')+'를 지나면 체력30 회복(한 번). 마지막 갑옷 보초는 그대로다.<br><br><b>봉화 화약</b>: '+(cycleBeacon()?'동쪽 능선길의 창병과 사수':'동쪽 능선길의 독침 보초 둘')+'를 지난다. 마지막 보초는 갑옷이 깨져 체력65/가드 없음이 된다. 중간 회복은 없다.<br><br>선택은 이번 원정 동안 바꿀 수 없다. 보급은 무료이며 물약/골드를 쓰지 않는다.',[['붕대 · 서쪽 우회',()=>{if(beaconStep()!==1||!near())return;state.beacon.supply='medicine';beaconAdvance(2)}],['화약 · 동쪽 능선',()=>{if(beaconStep()!==1||!near())return;state.beacon.supply='flare';beaconAdvance(2)}]]);return;
  }
- const target=beaconTarget();if(!target||target.x!==d.x||target.z!==d.z){journeyDialog(d.name,'지금 원정 목표는 다른 곳이다. 표지를 따라 먼저 보급과 앞선 길을 확인하자.');return}
+ const target=beaconTarget();if(!target||target.x!==d.x||target.z!==d.z){beaconDialog(d.name,'지금 원정 목표는 다른 곳이다. 표지를 따라 먼저 보급과 앞선 길을 확인하자.');return}
  if(step===2||step===3){
   const fight=state.beaconFight,won=fight&&fight.step===step&&fight.enemies.every(e=>e.dead);
-  journeyDialog(d.name,won?(step===2?'보초를 모두 넘었다. 다음은 남쪽 봉화다.'+(state.beacon.supply==='medicine'?'<br>붕대를 쓰면 체력30을 최대체력 안에서 한 번 회복한다.':'<br>화약은 마지막 갑옷을 깨뜨릴 때 쓴다.'):'마지막 보초를 쓰러뜨렸다. 마른 장작에 불을 붙일 수 있다.'):`${beaconStatus()}<br>이름이 '원정'으로 시작하는 보초만 상대하자. 일반 적은 지나쳐도 된다.<br>전투 현장 24m 밖으로 나가면 현재 전투가 초기화된다.`,won?[[step===2?'다음 지점으로': '봉화 점화',()=>{if(beaconStep()!==step||!near()||!state.beaconFight?.enemies.every(e=>e.dead))return;clearBeaconFight();if(step===2&&state.beacon.supply==='medicine')state.hp=Math.min(state.maxHp,state.hp+30);beaconAdvance(step+1);toast(step===3?'봉화를 밝혔다. 출발석으로 귀환하자.':'길이 열렸다. 다음은 남쪽 봉화.')}]]:[]);return;
+  beaconDialog(d.name,won?(step===2?'보초를 모두 넘었다. 다음은 남쪽 봉화다.'+(state.beacon.supply==='medicine'?'<br>붕대를 쓰면 체력30을 최대체력 안에서 한 번 회복한다.':'<br>화약은 마지막 갑옷을 깨뜨릴 때 쓴다.'):'마지막 보초를 쓰러뜨렸다. 마른 장작에 불을 붙일 수 있다.'):`${beaconStatus()}${cycleBeaconText()}<br>이름이 '원정'으로 시작하는 보초만 상대하자. 일반 적은 지나쳐도 된다.<br>전투 현장 24m 밖으로 나가면 현재 전투가 초기화된다.`,won?[[step===2?'다음 지점으로': '봉화 점화',()=>{if(beaconStep()!==step||!near()||!state.beaconFight?.enemies.every(e=>e.dead))return;clearBeaconFight();if(step===2&&state.beacon.supply==='medicine')state.hp=Math.min(state.maxHp,state.hp+30);beaconAdvance(step+1);toast(step===3?'봉화를 밝혔다. 출발석으로 귀환하자.':'길이 열렸다. 다음은 남쪽 봉화.')}]]:[]);return;
  }
- journeyDialog(d.name,'지금은 조사할 일이 없다. 출발석과 원정 목표를 확인하자.');
+ beaconDialog(d.name,'지금은 조사할 일이 없다. 출발석과 원정 목표를 확인하자.');
 }
 function updateBeaconTrail(){
  const st=beaconStep(),target=beaconTarget();for(const d of state.beaconProps||[])if(d.id==='fire'){d.gem.material.color.setHex(st>=4?0xff6a24:0x777c80);d.root.userData.fireHeart.visible=st>=4;d.label.visible=st<4;d.litLabel.visible=st>=4;d.name=st>=4?'밝힌 봉화':'꺼진 봉화';}
  if(state.dead){clearBeaconFight();return}if(state.beaconFight&&target&&Math.hypot(state.player.position.x-target.x,state.player.position.z-target.z)>24){clearBeaconFight();toast('원정 현장을 벗어났다. 돌아가면 현재 전투를 다시 시작한다.')}if(state.dialog||state.menuOpen||!target||![2,3].includes(st)||state.trial?.active)return;
  if(!state.beaconFight&&Math.hypot(state.player.position.x-target.x,state.player.position.z-target.z)<10){
+  if(spawnCycleBeacon(st,target))return;
   const ranged=st===2&&state.beacon.supply==='flare';const weakened=state.beacon.supply==='flare';
   const stats=st===3?{...WARRIOR,hp:weakened?65:100,dmg:10,guard:!weakened,label:weakened?'원정 약화 보초':'원정 갑옷 보초',noElite:true,noRespawn:true}:ranged?{...PFROG,label:'원정 독침 보초',noElite:true,noRespawn:true}:{...ENEMY,hp:35,dmg:6,label:'원정 근접 보초',noElite:true,noRespawn:true};
   const enemies=[];for(let i=0;i<(st===3?1:2);i++){const proto=ranged?state.protos.Frog:state.protos.skel;if(!proto)continue;const e=state.spawn(proto,stats,target.x+(i?2:-2),target.z+2);e.expedition=true;e.trial=true;if(!e.nameSprite){e.nameSprite=makeNameSprite(stats.label);e.nameSprite.position.y=2.3;e.root.add(e.nameSprite)}enemies.push(e)}
@@ -2755,7 +2835,7 @@ function openObservatoryDialog(d){
  state.dialog=true;state.dlgFocus=new THREE.Vector3(d.x,0,d.z);document.getElementById('dlg-name').textContent=d.name;document.getElementById('dlg-list').innerHTML='';const btns=document.getElementById('dlg-btns');btns.innerHTML='';
  const add=(label,fn)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>{if(state.dead||!state.dialog||nearbyObservatory()?.id!==d.id)return;b.disabled=true;fn()};btns.appendChild(b)};
  const n=state.observatory||0;
- document.getElementById('dlg-text').innerHTML=d.id==='board'?`<b>바람을 멀리 보내는 이에게</b><br>입구 왼쪽의 종을 <b>3m 이상 떨어져</b> 바람칼날(G/버튼)로 울리면 문이 열린다. K에서 1P로 배운다. 근접공격과 회전베기로는 종을 울릴 수 없다.<br>안쪽 보초 둘은 근접 공격과 독침을 함께 쓴다. 낮은 돌벽으로 독침을 막고, 정리한 뒤 벽을 돌아 안쪽 종을 울리자. 마지막 기록함은 북쪽에 있다.<br><b>현재: ${observatoryStatus()}</b><br>단계마다 저장. 사망·멀리 이탈하면 미완료 전투만 다시 시작한다. 보초는 전리품을 주지 않으며 최종 기록 보상은 한 번뿐이다.`:n<3?`기록함이 잠겨 있다.<br>${observatoryStatus()}<br>보초를 정리하고 안쪽 종에 바람칼날을 보내자.`:n===3?'안쪽에 구름과 바람의 방향을 그린 장부가 남았다.<br>"종은 명령을 전하는 도구가 아니었다. 골짜기 건너편에서 길을 잃은 이들에게 돌아오는 방향을 알려 주었다. 마지막 관측자는 폭풍이 멎을 때까지 이곳을 지켰다."<br>기록 회수: 최대 체력 +10 · 경험치 60 · 60G (한 번)':'기록을 안전하게 챙겼다. 폭풍이 와도 돌아갈 방향을 잊지 않을 것이다.<br>관측소의 가호: 최대 체력 +10 (적용 중).<br>돌봄 인장 해금 · 장로 곁 스킬 창에서 장착.';
+ document.getElementById('dlg-text').innerHTML=d.id==='board'?`<b>바람을 멀리 보내는 이에게</b><br>입구 왼쪽의 종을 <b>3m 이상 떨어져</b> 바람칼날(G/버튼)로 울리면 문이 열린다. K에서 1P로 배운다. 근접공격과 회전베기로는 종을 울릴 수 없다.<br>${(cycleSession?.active||1)>=2?'다회차 보초는 직선 돌진 창병(40HP)과 독침 보초(30HP)다. 붉은 직선 예고 0.9초 뒤 최대4m 돌진하므로 옆으로 피한다. 돌진 뒤 0.9초 빈틈에 반격하자. 돌벽과 방 가장자리에서 돌진이 멈춘다.':'안쪽 보초 둘은 근접 공격과 독침을 함께 쓴다.'} 낮은 돌벽으로 독침을 막고, 정리한 뒤 벽을 돌아 안쪽 종을 울리자. 마지막 기록함은 북쪽에 있다.<br><b>현재: ${observatoryStatus()}</b><br>단계마다 저장. 사망·멀리 이탈하면 미완료 전투만 다시 시작한다. 보초는 전리품을 주지 않으며 최종 기록 보상은 한 번뿐이다.`:n<3?`기록함이 잠겨 있다.<br>${observatoryStatus()}<br>보초를 정리하고 안쪽 종에 바람칼날을 보내자.`:n===3?'안쪽에 구름과 바람의 방향을 그린 장부가 남았다.<br>"종은 명령을 전하는 도구가 아니었다. 골짜기 건너편에서 길을 잃은 이들에게 돌아오는 방향을 알려 주었다. 마지막 관측자는 폭풍이 멎을 때까지 이곳을 지켰다."<br>기록 회수: 최대 체력 +10 · 경험치 60 · 60G (한 번)':'기록을 안전하게 챙겼다. 폭풍이 와도 돌아갈 방향을 잊지 않을 것이다.<br>관측소의 가호: 최대 체력 +10 (적용 중).<br>돌봄 인장 해금 · 장로 곁 스킬 창에서 장착.';
  if(d.id==='board'&&n<4)add('관측소 목표 추적',()=>{state.observatorySeen=true;state.tracked='observatory';saveGame();closeDialog()});
  if(d.id==='record'&&n===3)add('관측 기록 회수',()=>{if(state.observatory!==3)return;state.observatory=4;state.gold+=60;applyProgression();gainXp(60);if(state.tracked==='observatory')state.tracked='auto';updateObservatoryVisuals();saveGame();closeDialog();sfx('reward',1);toast('관측 기록 회수! 최대 체력 +10 · 경험치 60 · 60G')});
  add('닫기',closeDialog);dlgEl().style.display='block';document.getElementById('dlgback').style.display='block';
@@ -2765,7 +2845,7 @@ function hitObservatoryBell(w,p){const n=state.observatory||0;if(n!==0&&n!==2)re
  if(n===2&&!observatoryInside(w.origin)){toast('안쪽 종은 관측소 안에서 울려야 한다.');return true;}
  state.observatory=n+1;state.observatorySeen=true;state.tracked='observatory';updateObservatoryVisuals();skillFx(new THREE.Vector3(b.x,1,b.z),0xffdc75,1.7,'hit');saveGame();sfx('reward',.8);toast(n===0?'입구 바람종 공명! 관측소 문이 열렸다.':'안쪽 바람종 공명! 북쪽 기록함이 열렸다.');return true;
 }
-function clearObservatoryFight(){if(!state.observatoryFight)return;for(const e of state.observatoryFight){e.dead=true;e.despawned=true;e.mode='dead';e.respawnAt=1e12;e.root.visible=false;if(e.tele)e.tele.visible=false;cancelFrogSpit(e)}state.observatoryFight=null;}
+function clearObservatoryFight(){if(!state.observatoryFight)return;for(const e of state.observatoryFight){e.dead=true;e.despawned=true;e.mode='dead';e.respawnAt=1e12;e.root.visible=false;if(e.tele)e.tele.visible=false;cancelFrogSpit(e);cancelLancer(e);if(e.lanceTele){scene.remove(e.lanceTele);e.lanceTele.geometry.dispose();e.lanceTele.material.dispose();e.lanceTele=null;}}state.observatoryFight=null;}
 function updateObservatory(){
  if(!state.player)return;const p=state.player.position,n=state.observatory||0;
  if(!n&&observatoryInside(p)){p.set(60,0,-4);toast('먼저 입구 바람종을 울려 문을 열자.');return;}
@@ -2774,9 +2854,144 @@ function updateObservatory(){
  if(n!==1)return;
  if(state.observatoryFight?.every(e=>e.dead)){clearObservatoryFight();state.observatory=2;updateObservatoryVisuals();saveGame();toast('보초를 정리했다. 돌벽을 돌아 안쪽 종에 바람칼날을 보내자.');return;}
  if(state.dialog||state.menuOpen||state.trial?.active||state.observatoryFight||!observatoryInside(p))return;
- const defs=[[state.protos.skel,{...ENEMY,hp:40,dmg:7,label:'관측소 근접 보초'},57,4],[state.protos.Frog,{...PFROG,hp:30,dmg:6,label:'관측소 독침 보초'},65,5]];
+ const plan=observatoryCyclePlan(cycleSession?.active||1);
+ const defs=plan?plan.map(d=>[d.role==='lancer'?state.protos.skel:state.protos.Frog,{...(d.role==='lancer'?ENEMY:PFROG),hp:d.hp,dmg:d.dmg,lancer:d.role==='lancer',label:d.label},d.x,d.z]):[[state.protos.skel,{...ENEMY,hp:40,dmg:7,label:'관측소 근접 보초'},57,4],[state.protos.Frog,{...PFROG,hp:30,dmg:6,label:'관측소 독침 보초'},65,5]];
  if(defs.some(([proto])=>!proto))return;
- state.observatoryFight=defs.map(([proto,stats,x,z])=>{const e=state.spawn(proto,{...stats,noElite:true,noRespawn:true},x,z);e.trial=true;e.expedition=true;e.observatoryGuard=true;if(!e.nameSprite){e.nameSprite=makeNameSprite(stats.label);e.nameSprite.position.y=2.3;e.root.add(e.nameSprite)}return e;});
+ state.observatoryFight=defs.map(([proto,stats,x,z])=>{const e=state.spawn(proto,{...stats,noElite:true,noRespawn:true},x,z);e.trial=true;e.expedition=true;e.observatoryGuard=true;if(stats.lancer){e.lanceNext=clock.elapsedTime+1.8;e.highlandBounds={x1:53,x2:67,z1:-1,z2:11};const spear=new THREE.Mesh(new THREE.CylinderGeometry(.045,.045,3.2,5),new THREE.MeshLambertMaterial({color:0xc7b28c}));spear.rotation.x=Math.PI/2;spear.position.set(.45,1,1);e.root.add(spear);}if(!e.nameSprite){e.nameSprite=makeNameSprite(stats.label);e.nameSprite.position.y=2.3;e.root.add(e.nameSprite)}return e;});
+}
+
+// ---------- 별빛 수로: 수위 관측, 정비, 방향 방류와 북쪽 기록소 ----------
+function inRelay(p=state.player?.position){return !!p&&p.x>=764&&p.x<=836&&p.z>=-36&&p.z<=36;}
+function relayState(){return state.lightRelay||(state.lightRelay=normalizeRelay(null));}
+function relayStatus(){const s=relayState();return s.stage===3?(s.surveyClaimed?'공동 관측 기록 완료':`빛의 길잡이 · 공동 관측 ${[1,2,4].filter(b=>(s.survey||0)&b).length}/3`):s.stage===2?'세 수신 기록 완료 · 남쪽 관리대에 인계':s.stage===1?`수신 기록 ${[1,2,4].filter(b=>s.records&b).length}/3 · 반사경을 돌려 광로 연결`:'별빛 수로 하항에서 중계소로 출발';}
+function relaySites(){return[{id:'desk',name:'빛의 중계소 관리대',x:800,z:32},...RELAY_MIRRORS.map(d=>({...d,x:d.x+800,mirror:true})),...RELAY_RECEIVERS.map(d=>({...d,x:d.x+800,receiver:true}))];}
+function nearbyRelay(){return state.ready&&!state.dead&&inRelay()?(state.relayProps||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.6)||null:null;}
+function relayTarget(){if(state.canal?.stage!==5)return null;const s=relayState();if(!inRelay())return s.stage===3&&s.surveyClaimed?null:{x:600,z:60,label:'별빛 수로 하항 · 빛의 중계소'};if(s.stage!==1)return{x:800,z:32,label:s.stage===2?'중계 기록 인계':s.stage===3&&!s.surveyClaimed?'관리대 · 공동 관측':'관리대 · 무료 귀환'};const ray=traceRelay(s.mirrors),r=RELAY_RECEIVERS.find(r=>r.id===ray.receiver&&!(s.records&r.bit));return r?{x:r.x+800,z:r.z,label:r.name+' · 수신 기록'}:{x:800,z:32,label:'관리대 · 광로 지도 확인'};}
+function relayTravel(inside){if(inside&&(state.canal.stage!==5||nearbyCanal()?.id!=='harbor'))return;if(!inside&&!inRelay())return;if(inside&&!relayState().stage)state.lightRelay=normalizeRelay({stage:1});state.player.position.set(inside?800:600,0,inside?30:60);state.tracked=inside?'lightRelay':'canal';closeDialog();updateRelayVisual();saveGame();toast(inside?(relayState().stage===3?'빛의 중계소 · 세 항로의 빛이 돌아왔다':'빛의 중계소 · 관리대에서 반사 지도를 읽자'):'하항 귀환 · 반사경과 수신 기록 보존');}
+function relayMapHtml(){const s=relayState(),ray=traceRelay(s.mirrors);return(s.stage===3?surveyMapHtml():'')+`<div style="padding:8px;background:#213b48;line-height:1.6;text-align:center">북쪽 산길 수신기<br>서북 B ───── 동북 C<br>│　　　　　　│<br>광원 → 서남 A ─ 동남 D → 동쪽 나루<br>↓<br>남쪽 마을 수신기</div><p>${relayStatus()}<br>현재 빛: ${RELAY_RECEIVERS.find(r=>r.id===ray.receiver)?.name||'외벽으로 새어 나감'}</p><p>반사면 / 는 동쪽으로 향하는 빛을 북쪽으로, 북쪽으로 향하는 빛을 동쪽으로 꺾는다. 반사면 ＼ 는 동쪽으로 향하는 빛을 남쪽으로 꺾는다. 같은 반사경도 빛이 들어오는 방향이 다르면 나가는 방향이 바뀐다. 금빛 선이 실제 광로다.</p><p>힌트: 먼저 A에서 북쪽 B로, B에서 동쪽 C로 보낸다. C에서 북쪽 산길 또는 남쪽 D를 택한다. D의 두 방향과 되돌아온 빛의 A 반사를 살펴 남쪽 마을도 연결하자. 수신 순서는 자유이며 수신기 곁에서 기록해야 남는다.</p><p>반사경 회전은 무료·무제한. 전투·시간 제한·잘못 돌린 벌점 없음. 수신 기록은 빛을 바꿔도 남는다. 세 기록을 관리대에 인계하면 1회 700XP·350G와 빛의 길잡이 기록과 회귀풍 조율을 얻는다. 회귀풍은 장로 곁 원풍 조율에서 무료 선택한다. 언제든 하항 무료 귀환.</p>`;}
+function surveyMapHtml(){const s=relayState(),r=surveyRays(s.mirrors),label=id=>RELAY_RECEIVERS.find(x=>x.id===id)?.name||'외벽';return`<h3>두 광원 공동 관측</h3><p>같은 반사경에 금빛과 푸른빛이 서로 다른 방향에서 들어온다. <b>두 빛을 동시에</b> 아래 두 항로에 연결하자. 현재 금빛: ${label(r.gold.receiver)} / 푸른빛: ${label(r.blue.receiver)}</p><p>${SURVEY_TARGETS.map(t=>`${(s.survey||0)&t.bit?'✓':'○'} ${t.name}: 금빛 → ${label(t.gold)}, 푸른빛 → ${label(t.blue)}`).join('<br>')}</p><p>맞춘 뒤 관리대에서 공동 관측 기록을 남긴다. 세 조합은 자유 순서이며 기록한 조합은 빛을 바꿔도 유지된다. 겹치는 구간은 두 색을 나란히 표시한다. 시간 제한·실패 벌점·비용 없음. 기존 수신 기록과 회귀풍 해금은 유지된다. 마지막 인계는 한 번 400XP·200G·스킬1P와 확산풍 조율 해금. 장로 곁 원풍 조율에서 무료 선택한다.</p>${s.surveyClaimed?'<p><b>공동 관측 인계 완료</b> · 두 항로가 서로의 귀환 신호를 전한다.</p>':''}`;}
+function relayDialog(title,text,buttons=[]){journeyDialog(title,text,buttons);dlgEl().classList.add('cycle-panel','relay-panel','archive-panel','equipment-panel');}
+function openRelay(d){const s=relayState(),at=()=>state.dialog&&dlgEl().classList.contains('relay-panel')&&nearbyRelay()?.id===d.id;state.dlgFocus=d.root.position;if(d.id==='desk'){const choices=[['하항으로 무료 귀환',()=>{if(at())relayTravel(false);}]];if(s.stage===3&&!s.surveyClaimed){const match=surveyMatch(s.mirrors);if(match&&!((s.survey||0)&match.bit))choices.unshift(['공동 관측 기록: '+match.name,()=>{if(!at())return;const next=surveyRecord(s);if(!next)return;Object.assign(s,next);closeDialog();updateRelayVisual();saveGame();toast('공동 관측 기록 저장 · '+match.name);}]);if(s.survey===7)choices.unshift(['공동 관측 세 기록 인계',()=>{if(!at()||s.stage!==3||s.survey!==7||s.surveyClaimed)return;s.surveyClaimed=true;state.gold+=200;state.skillPts++;gainXp(400);closeDialog();saveGame();toast('공동 관측 인계 · 400XP · 200G · 스킬1P · 확산풍 해금');}]);}if(s.stage===2)choices.unshift(['세 중계 기록 인계',()=>{if(!at()||s.stage!==2||s.records!==7||s.claimed)return;s.stage=3;s.claimed=true;state.gold+=350;gainXp(700);closeDialog();saveGame();updateRelayVisual();toast('빛의 길잡이 · 700XP · 350G · 회귀풍 조율 해금');}]);relayDialog(d.name,relayMapHtml(),choices);return;}if(d.mirror){const i=RELAY_MIRRORS.findIndex(m=>m.id===d.id);relayDialog(d.name,`현재 반사면 <b>${s.mirrors[i]?'＼':'/'}</b><br><br>현장 반사경에서 회전하면 금빛 광로가 즉시 바뀐다. 빛은 길을 막지 않으며 피해도 없다. 같은 반사경을 반대 방향에서 다시 통과할 수도 있다.<br><br>`+relayMapHtml(),[['반사경 90도 회전',()=>{if(!at()||!s.stage)return;s.mirrors[i]=1-s.mirrors[i];updateRelayVisual();saveGame();openRelay(d);}]]);return;}if(d.receiver){if(s.stage===3){const rays=surveyRays(s.mirrors);relayDialog(d.name,`금빛 수신: ${rays.gold.receiver===d.id?'연결':'미연결'}<br>푸른빛 수신: ${rays.blue.receiver===d.id?'연결':'미연결'}<br><br>공동 관측은 두 광로를 동시에 맞춘 뒤 남쪽 관리대에서 기록한다. 기존 수신 기록과 회귀풍 해금은 그대로 유지된다.`);return;}const lit=traceRelay(s.mirrors).receiver===d.id,done=!!(s.records&d.bit);relayDialog(d.name,done?'이 수신 기록은 관리 수첩에 남아 있다. 다른 반사경을 돌려도 이 기록은 사라지지 않는다.':lit?'금빛 광선이 수신기에 닿았다. 이 길의 반사 기록을 수첩에 남기자.':'아직 빛이 닿지 않는다. 관리대의 광로 지도와 금빛 선을 살펴 반사경을 돌리자.',!done&&lit?[['수신 기록 남기기',()=>{if(!at()||(s.records&d.bit)||traceRelay(s.mirrors).receiver!==d.id)return;s.records|=d.bit;if(s.records===7)s.stage=2;closeDialog();updateRelayVisual();saveGame();toast(s.stage===2?'세 광로 기록 완료 · 관리대로':'수신 기록 저장');}]]:[]);}}
+function buildRelay(){const root=new THREE.Group();scene.add(root);const floor=new THREE.Mesh(new THREE.BoxGeometry(72,.22,72),new THREE.MeshLambertMaterial({color:0x646f83}));floor.position.set(800,-.13,0);root.add(floor);for(let i=-24;i<=24;i+=12){for(const axis of['x','z']){const line=new THREE.Mesh(new THREE.BoxGeometry(axis==='x'?64:.1,.025,axis==='z'?64:.1),new THREE.MeshBasicMaterial({color:0x8996a7}));line.position.set(800+(axis==='z'?i:0),.01,axis==='x'?i:0);root.add(line);}}const emitter=new THREE.Mesh(new THREE.ConeGeometry(1,2,8),new THREE.MeshLambertMaterial({color:0xd8ad50}));emitter.rotation.z=-Math.PI/2;emitter.position.set(772,1.25,12);root.add(emitter);const emitName=makeNameSprite('서쪽 광원 →');emitName.position.set(772,3,12);root.add(emitName);state.relayProps=relaySites().map(d=>{const g=new THREE.Group();g.position.set(d.x,0,d.z);const base=new THREE.Mesh(new THREE.CylinderGeometry(.8,1,.6,8),new THREE.MeshLambertMaterial({color:0x8c8c99}));base.position.y=.3;g.add(base);let mirror=null,gem=null;if(d.mirror){const frame=new THREE.Mesh(new THREE.BoxGeometry(3.4,.12,.16),new THREE.MeshLambertMaterial({color:0xc7bd9f})),surface=new THREE.Mesh(new THREE.BoxGeometry(3.1,.06,.48),new THREE.MeshBasicMaterial({color:0xb2f2ff}));mirror=new THREE.Group();mirror.position.y=1.15;mirror.add(frame,surface);g.add(mirror);}else{const post=new THREE.Mesh(new THREE.BoxGeometry(.22,1.8,.22),new THREE.MeshLambertMaterial({color:0xc0b395}));post.position.y=1.1;g.add(post);gem=new THREE.Mesh(new THREE.OctahedronGeometry(.5),new THREE.MeshBasicMaterial({color:d.receiver?0x73a4b9:0xffcc77}));gem.position.y=2.1;g.add(gem);}const label=makeNameSprite(d.name+(d.mirror?' '+d.id.toUpperCase():''));label.scale.multiplyScalar(d.mirror?1.5:1.3);label.position.y=3.1;g.add(label);root.add(g);return{...d,root:g,mirror,gem};});for(const [x,z,w,depth]of[[800,-35.6,71,.3],[800,35.6,71,.3],[764.4,0,.3,71],[835.6,0,.3,71]]){const rail=new THREE.Mesh(new THREE.BoxGeometry(w,.45,depth),new THREE.MeshLambertMaterial({color:0x36475b}));rail.position.set(x,.23,z);root.add(rail);}for(const d of RELAY_RECEIVERS){const mast=new THREE.Group();mast.position.set(d.x+800,0,d.z);const ring=new THREE.Mesh(new THREE.TorusGeometry(1.1,.12,6,24),new THREE.MeshLambertMaterial({color:0xd5bf70}));ring.position.y=2.1;ring.rotation.y=d.id==='east'?Math.PI/2:0;mast.add(ring);const symbol=makeNameSprite(d.id==='north'?'산 △':d.id==='east'?'나루 ≋':'마을 ⌂');symbol.position.y=4.3;symbol.scale.multiplyScalar(1.6);mast.add(symbol);root.add(mast);}const blueRoot=new THREE.Group();blueRoot.position.set(828,0,-12);const blue=new THREE.Mesh(new THREE.ConeGeometry(1,2,8),new THREE.MeshBasicMaterial({color:0x55caff}));blue.rotation.z=Math.PI/2;blue.position.y=1.25;blueRoot.add(blue);const blueName=makeNameSprite('푸른 광원 ←');blueName.position.y=3;blueRoot.add(blueName);root.add(blueRoot);state.relayBlueSource=blueRoot;state.relayRoot=root;state.relayBeam=new THREE.Group();scene.add(state.relayBeam);updateRelayVisual();}
+function updateRelayVisual(){if(!state.relayBeam)return;while(state.relayBeam.children.length){const m=state.relayBeam.children[0];state.relayBeam.remove(m);m.geometry.dispose();m.material.dispose();}const s=relayState(),ray=traceRelay(s.mirrors);if(state.relayBlueSource)state.relayBlueSource.visible=s.stage===3;const beams=[...ray.segments.map(seg=>({...seg,color:0xffe373,offset:s.stage===3?-.15:0})),...(s.stage===3?traceRelay(s.mirrors,BLUE_SOURCE).segments.map(seg=>({...seg,color:0x55caff,offset:.15})):[])];for(const seg of beams){const a=new THREE.Vector3(seg.from.x+800+seg.offset,1.15,seg.from.z+seg.offset),b=new THREE.Vector3(seg.to.x+800+seg.offset,1.15,seg.to.z+seg.offset),delta=b.clone().sub(a),m=new THREE.Mesh(new THREE.CylinderGeometry(.11,.11,delta.length(),6),new THREE.MeshBasicMaterial({color:seg.color}));m.position.copy(a.add(b).multiplyScalar(.5));m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());state.relayBeam.add(m);}for(const d of state.relayProps||[]){if(d.mirror){const i=RELAY_MIRRORS.findIndex(m=>m.id===d.id);d.mirror.rotation.y=s.mirrors[i]? -Math.PI/4:Math.PI/4;}if(d.receiver){const blue=s.stage===3&&traceRelay(s.mirrors,BLUE_SOURCE).receiver===d.id;d.gem.material.color.setHex(s.stage===3?(blue?0x55caff:ray.receiver===d.id?0xffe373:0x77ffc7):(s.records&d.bit)?0x77ffc7:ray.receiver===d.id?0xffe373:0x73a4b9);}}}
+
+function inCanal(p=state.player?.position){return!!p&&p.x>=520&&p.x<=680&&p.z>=-70&&p.z<=70;}
+const CANAL_SITES=[{id:'harbor',name:'별빛 수로 하항',x:600,z:60},{id:'sluice',name:'남쪽 수문 레버',x:586,z:46},{id:'west',name:'서쪽 관측 수첩',x:542,z:24},{id:'marker0',name:'물밑 해 문양',x:552,z:10},{id:'marker1',name:'수면 새 문양',x:576,z:1},{id:'marker2',name:'석벽 산 문양',x:546,z:-8},{id:'repair',name:'동쪽 정비 기록대',x:650,z:24},{id:'chest',name:'배수기 정비함',x:658,z:2},{id:'pump',name:'북동쪽 배수기',x:632,z:-8},{id:'control',name:'북쪽 방류 관제대',x:620,z:-46},{id:'westvalve',name:'서쪽 방류 손잡이',x:614,z:-42},{id:'centervalve',name:'가운데 방류 손잡이',x:626,z:-42},{id:'northvalve',name:'북쪽 방류 손잡이',x:620,z:-53},{id:'archive',name:'수로 기록소',x:600,z:-61}];
+function canalBox(root,x,z,w,h,d,mat,solid=true){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);mesh.position.set(x,h/2,z);root.add(mesh);if(solid){state.canalSolidRects.push({x,z,w,d,mesh});const add=(a,b)=>colliders.push({x:a,z:b,r:.7,canalWall:true,observatoryWall:true});if(Math.min(w,d)<2){const along=w>d,count=Math.max(1,Math.ceil(Math.max(w,d)/1.1));for(let i=0;i<=count;i++)add(x+(along?(i/count-.5)*(w-.4):0),z+(!along?(i/count-.5)*(d-.4):0));}else{for(let i=0;i<=Math.ceil(w/1.1);i++){const a=x+(i/Math.ceil(w/1.1)-.5)*(w-.8);add(a,z-d/2+.4);add(a,z+d/2-.4);}for(let i=0;i<=Math.ceil(d/1.1);i++){const b=z+(i/Math.ceil(d/1.1)-.5)*(d-.8);add(x-w/2+.4,b);add(x+w/2-.4,b);}}}return mesh;}
+function buildCanal(){state.canalSolidRects=[];const root=new THREE.Group();scene.add(root);state.canalRoot=root;const stone=new THREE.MeshLambertMaterial({color:0x8b969a}),edge=new THREE.MeshLambertMaterial({color:0x56636c}),wood=new THREE.MeshLambertMaterial({color:0x98734f}),roof=new THREE.MeshLambertMaterial({color:0x3b687c}),brass=new THREE.MeshLambertMaterial({color:0xb99b58}),path=new THREE.MeshLambertMaterial({color:0xb5aa90}),water=new THREE.MeshLambertMaterial({color:0x3b8f9f,transparent:true,opacity:.88});
+const base=canalBox(root,600,0,164,6,144,edge,false);base.position.y=-3.3;
+for(const[x,z,w,d]of[[556,0,72,140],[644,0,72,140],[600,58,16,24],[600,-63,16,14]]){const floor=canalBox(root,x,z,w,.25,d,stone,false);floor.position.y=-.16;}
+const river=new THREE.Mesh(new THREE.PlaneGeometry(16,114),water);river.rotation.x=-Math.PI/2;river.position.set(600,-.1,-1);root.add(river);state.canalWater=river;
+for(const[x,z,w,d]of[[520,0,1,140],[680,0,1,140],[600,70,160,1],[600,-70,160,1]])canalBox(root,x,z,w,2,d,edge);
+// 양쪽 난간은 세 다리에서만 열고 강변 우회길은 남긴다.
+for(const x of[591.5,608.5])for(const[z,d]of[[-47,18],[-15,34],[23,28]])canalBox(root,x,z,.7,1.1,d,edge);
+for(const z of[40,5,-35]){const bridge=canalBox(root,600,z,19,.4,5,wood,false);bridge.position.y=.05;for(const dz of[-2.5,2.5])canalBox(root,600,z+dz,18,1,.4,wood);for(const x of[590,610]){const pillar=new THREE.Mesh(new THREE.CylinderGeometry(.8,1,4,8),stone);pillar.position.set(x,2,z);root.add(pillar);const lamp=new THREE.Mesh(new THREE.OctahedronGeometry(.5),new THREE.MeshBasicMaterial({color:0xffde95}));lamp.position.set(x,4.4,z);root.add(lamp);}}
+for(const[x,z,w,d]of[[559,47,62,4],[641,47,62,4],[551,21,4,51],[649,21,4,51],[570,-9,41,4],[630,-9,41,4],[600,-52,96,4],[560,-36,4,52],[640,-36,4,52]]){const m=new THREE.Mesh(new THREE.PlaneGeometry(w,d),path);m.rotation.x=-Math.PI/2;m.position.set(x,.13,z);root.add(m);}
+// 낮은 저수조와 정비 건물의 모양을 구분한다. 건물 내부는 막는다.
+for(const[x,z,w,d]of[[542,57,22,16],[658,57,22,16],[535,34,13,14],[666,31,12,19],[662,-22,18,16],[536,-39,18,22]]){canalBox(root,x,z,w,5,d,stone);const r=new THREE.Mesh(new THREE.ConeGeometry(Math.max(w,d)*.76,4,4),roof);r.rotation.y=Math.PI/4;r.position.set(x,7,z);r.scale.set(w/Math.max(w,d),1,d/Math.max(w,d));root.add(r);const door=new THREE.Mesh(new THREE.PlaneGeometry(2,3),wood);door.position.set(x,1.5,z+d/2+.02);root.add(door);}
+for(const[x,z]of[[562,23],[575,18],[564,-2]]){const basin=new THREE.Mesh(new THREE.CylinderGeometry(4.5,4.8,1.8,12,1,true),edge);basin.position.set(x,.9,z);root.add(basin);const fill=new THREE.Mesh(new THREE.CircleGeometry(4.35,20),water);fill.rotation.x=-Math.PI/2;fill.position.set(x,1.55,z);root.add(fill);colliders.push({x,z,r:4.8,canalWall:true,observatoryWall:true});}
+for(const[x,z]of[[628,26],[661,15],[636,4]]){canalBox(root,x,z,3.4,2.6,3.4,edge);const wheel=new THREE.Mesh(new THREE.TorusGeometry(1.1,.22,6,12),brass);wheel.rotation.y=Math.PI/2;wheel.position.set(x+2,1.8,z);root.add(wheel);}
+for(const[x,z]of[[551,-24],[565,-44],[625,-25],[646,-44]]){canalBox(root,x,z,2.7,2.7,2.7,edge);const p=new THREE.Mesh(new THREE.CylinderGeometry(.6,.9,4.5,6),stone);p.position.set(x,4.9,z);root.add(p);const lamp=new THREE.Mesh(new THREE.OctahedronGeometry(.55),new THREE.MeshBasicMaterial({color:0xbceeff}));lamp.position.set(x,7.7,z);root.add(lamp);}
+for(const[x,z,w]of[[538.25,-15,36.5],[577.5,-15,28],[622.5,-15,28],[661.75,-15,36.5]])canalBox(root,x,z,w,2,1,edge);state.canalGates=[560,640].map(x=>canalBarrier(root,x,-15,7,1));state.canalFlood=canalBarrier(root,583,8,6,16,true);state.canalStonePath=canalBox(root,583,8,6,.1,16,path,false);const lowSign=makeNameSprite('낮은 돌길 · 높은 물에 잠김');lowSign.position.set(583,2.5,20);root.add(lowSign);for(let z=-57;z<56;z+=1.1){if([40,5,-35].some(b=>Math.abs(z-b)<3.5))continue;for(const x of[593,607])colliders.push({x,z,r:.76,canalWall:true,canalRiver:true,observatoryWall:true});}
+state.canalProps=CANAL_SITES.map(d=>{const g=new THREE.Group();g.position.set(d.x,0,d.z);canalBox(g,0,0,1.4,1.2,1,wood,false);const name=makeNameSprite(d.name);name.position.y=2.5;g.add(name);root.add(g);return{...d,root:g};});
+for(const[x,z,label]of[[550,42,'서쪽 · 저수지 관측로'],[650,42,'동쪽 · 배수기 정비구'],[600,-56,'북쪽 · 별빛 수로 기록소']]){const n=makeNameSprite(label);n.position.set(x,4,z);root.add(n);}
+}
+
+// 수로 진행과 저장 정규화. 진행 체크포인트는 영구, 경비 전투/예고는 임시.
+function canalCommit(){const s=state.canal;if(s.stage===1&&s.west===7&&s.east===2){s.stage=2;toast('두 지구 복구 · 북쪽 수문 개방');}applyCanalGeometry();saveGame();}
+function canalCheckpointDialog(d){const s=state.canal,at=()=>nearbyCanal()?.id===d.id&&state.canal.stage>0;
+if(d.id==='west'){journeyDialog(d.name,canalMapHtml()+'<p>관측 수첩: 세 문양은 어떤 순서로 읽어도 된다. 낮은 물에서 해, 높은 물에서 새, 석벽에서 산을 기록한다. 세 기록을 모두 읽으면 서쪽 관측이 끝난다. 기록은 수위를 바꿔도 남는다.</p>');return true;}
+if(d.id.startsWith('marker')){const i=+d.id.slice(-1),bit=1<<i,ok=i===2||s.water===(i===0?'low':'high'),done=!!(s.west&bit);journeyDialog(d.name,done?'수첩에 기록한 문양이다. 물을 바꾸거나 다시 접속해도 기록은 남는다.':!ok?(i===0?'해 문양은 물 아래에 있다. 하항 레버로 수위를 낮추자.':'새 문양은 수면 반사에서 드러난다. 하항 레버로 수위를 높이자.'):[ '낮은 돌의 해 문양: 첫 빛은 서쪽 수로에서 시작한다.','수면의 새 문양: 흐르는 빛은 가운데 운하를 건넌다.','석벽의 산 문양: 마지막 물길은 북쪽 산 아래로 향한다.' ][i],!done&&ok?[['문양 기록',()=>{if(!at()||(s.west&bit)||(i<2&&s.water!==(i===0?'low':'high')))return;s.west|=bit;closeDialog();skillFx(d.root.position,0xffd48a,1.4,'ready');canalCommit();toast(s.west===7?'서쪽 관측 완료 · 기록 저장':`관측 문양 ${[1,2,4].filter(b=>s.west&b).length}/3 저장`);}]]:[]);return true;}
+if(d.id==='repair'){journeyDialog(d.name,s.east===2?'배수기 정비를 마쳤다. 서쪽 관측도 마치면 북쪽 문이 열린다.':s.east===1?'정비함을 회수했다. 북동쪽 배수기에서 부품을 끼우자.':'정비함 앞의 수문 창병과 사수를 먼저 물리쳐야 한다. 창병은 마지막으로 본 방향에 긴 붉은 띠를 고정한 뒤 찌른다. 옆으로 이동하거나 기계 뒤로 피하고, 찌른 뒤 빈틈을 노리자. 사수의 화살은 기계에 막힌다. 기본 회피로도 충분하며 견인풍은 필수가 아니다. 미완료 전투는 이탈·사망·재접속 시 초기화, 전리품/입장료 없음.',!s.east&&!state.canalFight?[['정비함 경비와 맞서기',()=>{if(!at()||s.east||state.canalFight)return;closeDialog();spawnCanalFight();}]]:[]);return true;}
+if(d.id==='chest'){journeyDialog(d.name,s.east?'정비함은 회수했다. 북동쪽 배수기로 가자.':'정비 기록대에서 경비와 맞서자. 전투를 마치면 정비함을 안전하게 회수한다.');return true;}
+if(d.id==='pump'){journeyDialog(d.name,s.east===2?'배수기가 고정되었다. 이 기록은 저장된다.':s.east===1?'정비함의 부품을 배수기에 끼운다. 물 높이는 바뀌지 않는다.':'동쪽 정비 기록대에서 경비를 정리하고 부품을 회수하자.',s.east===1?[['배수기 부품 끼우기',()=>{if(!at()||s.east!==1)return;s.east=2;closeDialog();canalCommit();skillFx(d.root.position,0x8ae6db,1.6,'ready');toast('동쪽 정비 완료 · 기록 저장');}]]:[]);return true;}
+if(d.id==='control'){journeyDialog(d.name,canalMapHtml()+'<p>관측 수첩을 펼치면 첫 빛은 서쪽, 흐르는 빛은 가운데, 마지막 물길은 북쪽으로 향한다. 손잡이를 <b>서쪽 → 가운데 → 북쪽</b> 순서로 돌리자. 오답은 손잡이 입력만 초기화하며 두 지구의 복구는 잃지 않는다.</p><p>방류 뒤에는 동쪽 관제구의 창병, 북쪽 다리를 건넌 서쪽 기록소의 사수를 지나야 한다. 경비 구간은 개별 저장되며 최종 기록은 기록소에서 한 번만 인계한다.</p>');return true;}
+if(['westvalve','centervalve','northvalve'].includes(d.id)){journeyDialog(d.name,s.stage===2?`방류 ${s.input}/3 · 서쪽 → 가운데 → 북쪽`:s.stage>=3?'방류를 마쳤다. 북쪽 경비 두 구간의 안전을 확보하자.':'두 지구 복구가 먼저다.',s.stage===2?[['방류 손잡이 돌리기',()=>{if(!at()||s.stage!==2)return;if(d.id===['westvalve','centervalve','northvalve'][s.input]){s.input++;if(s.input===3){s.stage=3;toast('방류 완료 · 동쪽 관제구 경비로');}}else{s.input=0;toast('방향 불일치 · 서쪽 → 가운데 → 북쪽');}closeDialog();canalCommit();skillFx(d.root.position,0x8edfff,1.4,'ready');}]]:[]);return true;}
+if(d.id==='archive'){journeyDialog(d.name,s.stage===5?'복구한 수로 지도는 기록소와 하항에 남았다. 수로지기 기록과 보상은 이미 받았다.':s.stage===4?'관측 수첩과 배수기 기록이 하나의 왕복 지도가 되었다. 이 기록을 인계하면 수로지기 기록과 1회 900XP·550G를 받는다.':'북쪽 경비 두 구간의 안전을 먼저 확보하자.',s.stage===4?[['수로 기록 인계',()=>{if(!at()||s.stage!==4||s.claimed)return;s.stage=5;s.claimed=true;state.gold+=550;gainXp(900);closeDialog();canalCommit();toast('수로지기 기록 · 900XP · 550G');}]]:s.stage===5?[['하항으로 무료 이동',()=>{if(!at())return;clearCanalFight();state.player.position.set(600,0,60);closeDialog();saveGame();}]]:[]);return true;}return false;}
+function clearCanalFight(){for(const e of state.canalFight?.enemies||[]){clearWindDraw(e);cancelLancer(e);cancelArcher(e);if(e.lanceTele){scene.remove(e.lanceTele);e.lanceTele.geometry.dispose();e.lanceTele.material.dispose();}if(e.tele)scene.remove(e.tele);for(const m of e.archerLines||[])scene.remove(m);for(const a of e.arrows||[])scene.remove(a.root);e.dead=e.despawned=true;scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);}state.canalFight=null;}
+function spawnCanalFight(kind='east',step=0){if(state.canalFight||(kind==='east'?state.canal.east:state.canal.stage!==3)||!inCanal()||!state.protos.skel)return;const bounds=kind==='east'?{x1:614,x2:674,z1:-11,z2:39}:step?{x1:550,x2:587,z1:-62,z2:-25}:{x1:614,x2:651,z1:-55,z2:-18};const specs=kind==='east'?[{...WARRIOR,hp:220,dmg:25,speed:2.4,guard:false,combo:false,lancer:true,label:'수문 창병',x:650,z:15},{...ENEMY,hp:145,dmg:18,speed:1.9,archer:true,label:'수로 사수',x:646,z:4}]:step?[{...ENEMY,hp:150,dmg:20,speed:2,archer:true,label:'기록소 남쪽 사수',x:559,z:-37},{...ENEMY,hp:150,dmg:20,speed:2,archer:true,label:'기록소 북쪽 사수',x:575,z:-51}]:[{...WARRIOR,hp:300,dmg:28,speed:2.6,guard:false,combo:false,lancer:true,label:'관제구 창병',x:636,z:-32}];const enemies=specs.map(stats=>{const e=state.spawn(state.protos.skel,{...stats,noRespawn:true,noElite:true,canalGuard:true,aggro:30},stats.x,stats.z);e.expedition=e.trial=true;e.highlandBounds=bounds;e.lanceNext=clock.elapsedTime+1.8;e.archerNext=clock.elapsedTime+2.8;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=3;e.root.add(e.nameSprite);}if(e.stats.lancer){const spear=new THREE.Group(),shaft=new THREE.Mesh(new THREE.CylinderGeometry(.045,.045,3.7,5),new THREE.MeshLambertMaterial({color:0xa98b59})),tip=new THREE.Mesh(new THREE.ConeGeometry(.16,.65,5),new THREE.MeshLambertMaterial({color:0xc7e7ee}));shaft.rotation.x=Math.PI/2;shaft.position.z=1;tip.rotation.x=Math.PI/2;tip.position.z=3;spear.add(shaft,tip);spear.position.set(.48,1,0);e.root.add(spear);}return e;});state.canalFight={kind,step,enemies,bounds};toast(kind==='east'?'수문 창병 · 붉은 직선의 옆으로 피하기':step?'서쪽 기록소 · 기둥 뒤로 사격 피하기':'동쪽 관제구 · 창병의 옆으로 피하기');}
+function cancelLancer(e,now=clock.elapsedTime){if(!e.stats.lancer)return;e.lanceAt=0;e.lanceDash=null;e.lanceNext=Math.max(e.lanceNext||0,now+1.2);if(e.lanceTele)e.lanceTele.visible=false;}
+function lanceBlocked(e,p){const b=e.highlandBounds;return !onWorld(p)||b&&(p.x<b.x1||p.x>b.x2||p.z<b.z1||p.z>b.z2)||colliders.some(c=>Math.hypot(p.x-c.x,p.z-c.z)<c.r+.55);}
+function updateLancer(e,dt,now){if(!e.stats.lancer)return false;e.anim.update(dt);const p=state.player.position;if(e.dead||state.dead||state.dialog||state.menuOpen){cancelLancer(e,now);return true;}if((e.hitUntil||0)>now||(e.staggerUntil||0)>now){cancelLancer(e,now);return true;}
+if(e.lanceDash){const d=e.lanceDash;let left=Math.max(0,4*Math.min(1,(now-d.start)/.3)-d.moved);while(left>.001){const step=Math.min(.15,left),from=e.root.position.clone(),to=from.clone().addScaledVector(d.dir,step);if(lanceBlocked(e,to)){e.lanceWalls=(e.lanceWalls||0)+1;d.stopped=true;break;}e.root.position.copy(to);d.moved+=step;left-=step;if(!d.hit&&segmentDistance(p,from,to)<.85){d.hit=true;if(now<state.invUntil){e.lanceDodges=(e.lanceDodges||0)+1;registerDodgeBlock(now);}else{e.lanceHits=(e.lanceHits||0)+1;state.hp=Math.max(0,state.hp-Math.max(1,e.stats.dmg-currentEquipmentStats().defense));hitFlash(state.player);sfx('hurt',.8);if(!state.hp){playerDie(e.stats.label);return true;}}}}if(d.stopped||d.moved>=3.99||now-d.start>=.32){e.lanceDash=null;e.lanceAt=0;e.lanceNext=now+2;e.lanceTele.visible=false;e.lanceRecover=now+.9;}return true;}
+if(e.lanceAt){if(now>=e.lanceAt){e.lanceDash={dir:e.lanceDir.clone(),start:now,moved:0,hit:false};e.anim.playOnce('unarmed_melee_attack_punch','attack');e.lanceTele.material.color.setHex(0xffe4ac);}return true;}
+if(now<(e.lanceRecover||0)){e.anim.play('idle');return true;}const to=p.clone().sub(e.root.position);to.y=0;const distance=to.length();if(distance>30){e.anim.play('idle');return true;}if(distance<7&&now>=(e.lanceNext||0)){e.lanceDir=distance>.01?to.normalize():new THREE.Vector3(0,0,1);e.root.rotation.y=Math.atan2(e.lanceDir.x,e.lanceDir.z);e.lanceAt=now+.9;e.lanceStarts=(e.lanceStarts||0)+1;if(!e.lanceTele){e.lanceTele=new THREE.Mesh(new THREE.PlaneGeometry(1.35,5),new THREE.MeshBasicMaterial({color:0xff705f,transparent:true,opacity:.46,depthWrite:false,side:THREE.DoubleSide}));e.lanceTele.rotation.x=-Math.PI/2;e.lanceTele.userData.lanceTele=true;scene.add(e.lanceTele);}e.lanceTele.material.color.setHex(0xff705f);e.lanceTele.position.copy(e.root.position).addScaledVector(e.lanceDir,2.5);e.lanceTele.position.y=.15;e.lanceTele.rotation.z=e.root.rotation.y;e.lanceTele.visible=true;e.anim.play('idle');return true;}if(distance>2&&now>=(e.lanceNext||0)-.7){const step=to.normalize().multiplyScalar(Math.min(distance-2,e.stats.speed*enemyMoveScale(e,now)*dt));const next=e.root.position.clone().add(step);if(!lanceBlocked(e,next))e.root.position.copy(next);e.root.rotation.y=Math.atan2(to.x,to.z);e.anim.play('running','run','walking','walk');}else e.anim.play('idle');return true;}
+
+function canalReady(){return state.highland.stage===5;}
+function normalizeCanal(raw){const v=raw||{},n=(x,m)=>Number.isInteger(x)?Math.max(0,Math.min(m,x)):0;const s={stage:n(v.stage,5),water:v.water==='high'?'high':'low',west:n(v.west,7),east:n(v.east,2),input:n(v.input,3),north:n(v.north,2),claimed:v.claimed===true};if(!canalReady()||!s.stage)return{stage:0,water:'low',west:0,east:0,input:0,north:0,claimed:false};if(s.west!==7||s.east!==2){s.stage=1;s.input=s.north=0;s.claimed=false;return s;}s.stage=Math.max(2,s.stage);if(s.stage>=3||s.input===3){s.input=3;s.stage=Math.max(3,s.stage);}else{s.north=0;s.claimed=false;}if(s.stage>=4||s.north===2){s.north=2;s.stage=Math.max(4,s.stage);}if(s.stage===5)s.claimed=true;else s.claimed=false;return s;}
+function canalBarrier(root,x,z,w,d,water=false){const start=colliders.length,mesh=canalBox(root,x,z,w,water?.25:2.5,d,new THREE.MeshLambertMaterial({color:water?0x368ca2:0xb99b58,transparent:water,opacity:water?.75:1}));const cs=colliders.slice(start);for(const c of cs)c.canalGate=true;return{mesh,colliders:cs};}
+function canalSetBarrier(b,closed){b.mesh.visible=closed;for(const c of b.colliders){const i=colliders.indexOf(c);if(closed&&i<0)colliders.push(c);if(!closed&&i>=0)colliders.splice(i,1);}}
+function canalBlocked(p,pad=.5){if(!inCanal(p))return true;if(p.x<521.4||p.x>678.6||p.z<-68.6||p.z>68.6)return true;if(p.x>592&&p.x<608&&p.z>-58&&p.z<56&&![40,5,-35].some(z=>Math.abs(p.z-z)<2))return true;return state.canalSolidRects.some(r=>r.mesh.visible&&Math.abs(p.x-r.x)<r.w/2+pad&&Math.abs(p.z-r.z)<r.d/2+pad)||colliders.some(c=>c.canalWall&&Math.hypot(p.x-c.x,p.z-c.z)<c.r+pad);}
+function canalSafePosition(){const p=state.player.position;if(!inCanal(p))return;if(!state.canal.stage){p.set(400,0,-47);return;}if(canalBlocked(p)||(state.canal.stage<2&&p.z<-13)){p.set(600,0,60);state.dodgeFrom=null;state.dodgeUntil=0;state.attackUntil=0;}}
+function applyCanalGeometry(){if(!state.canalGates)return;state.canalGates.forEach(b=>canalSetBarrier(b,state.canal.stage<2));canalSetBarrier(state.canalFlood,state.canal.water==='high');state.canalStonePath.visible=state.canal.water!=='high';state.canalWater.material.color.setHex(state.canal.water==='high'?0x417eaa:0x3b8f9f);state.canalWater.position.y=state.canal.water==='high'?.03:-.1;}
+function canalWaterChange(mode){if(!['low','high'].includes(mode)||nearbyCanal()?.id!=='sluice'||!state.canal.stage)return false;state.canal.water=mode;applyCanalGeometry();canalSafePosition();closeDialog();saveGame();skillFx(state.player.position,mode==='high'?0x84d5ff:0xffd899,1.5,'ready');toast(mode==='high'?'수위 높임 · 서쪽 낮은 돌길은 물에 잠김':'수위 낮춤 · 서쪽 낮은 돌길 개방');return true;}
+function nearbyCanal(){return state.ready&&!state.dead&&inCanal()?(state.canalProps||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.4)||null:null;}
+function canalTravel(inside){if(inside&&!canalReady())return;clearCanalFight();highlandTravel(false);state.player.position.set(inside?600:400,0,inside?60:-47);if(inside&&!state.canal.stage)state.canal.stage=1;state.tracked=inside?'canal':'highland';applyCanalGeometry();state.invUntil=Math.max(state.invUntil,clock.elapsedTime+1);closeDialog();saveGame();toast(inside?'별빛 수로 · 하항 레버에서 물길을 살피자.':'고원 피난처 귀환 · 수로 조사 기록 보존');}
+function canalStatus(){const s=state.canal;if(s.stage===5)return'별빛 수로 왕복로 복구 완료';if(s.stage===4)return'북쪽 기록소에서 수로 기록 인계';if(s.stage===3)return`북쪽 경비 ${s.north}/2 · 창병과 사수 구분`;if(s.stage===2)return`방류 순서 · 서쪽 → 가운데 → 북쪽 ${s.input}/3`;return!state.canal.stage?'고원 피난처에서 수로행 지도 받기':`물 ${state.canal.water==='high'?'높음':'낮음'} · 관측 ${[1,2,4].filter(b=>state.canal.west&b).length}/3 · 정비 ${state.canal.east}/2`;}
+function canalMapHtml(){return`<div style="padding:8px;margin:8px 0;background:#253d46;text-align:center;line-height:1.8">북쪽 관제구 · ${state.canal.stage>=2?'개방':'닫힌 문'}<br>서쪽 관측로 │ 중앙 운하 │ 동쪽 정비구<br>다리는 남쪽·중앙·북쪽 세 곳<br>↓ 하항 · 수문 레버 · 고원 왕복 ↓</div><p>${canalStatus()}</p><p>수위는 레버에서 직접 바꾼다. 높은 물에서는 서쪽 낮은 돌길이 잠기지만 외곽 우회길은 남는다. 높은 물에서 새 문양을, 낮은 물에서 해 문양을 읽을 수 있다. 물을 바꿔도 조사 기록은 잃지 않는다.</p>`;}
+function canalFloodRoute(t){const p=state.player.position;if(state.canal.water!=='high')return t;let hit=false;for(let i=1;i<=30;i++){const f=i/30,x=p.x+(t.x-p.x)*f,z=p.z+(t.z-p.z)*f;if(x>579&&x<587&&z>-1&&z<17)hit=true;}if(!hit)return t;const z=p.z<8?-4:20,side=p.x<583?578:588,other=p.x<583?588:578;if(Math.abs(p.z-z)>1)return{x:side,z,label:'잠긴 돌길의 바깥으로 우회'};return{x:other,z,label:'물 가장자리 우회로'};}
+function canalRoute(t){const p=state.player.position;if(p.x<591&&t.x>609||p.x>609&&t.x<591){const zs=state.canal.stage>=2?[40,5,-35]:[40,5],z=zs.sort((a,b)=>Math.abs(p.z-a)+Math.abs(t.z-a)-Math.abs(p.z-b)-Math.abs(t.z-b))[0];if(Math.abs(p.z-z)>1)return canalFloodRoute({x:p.x<600?588:612,z,label:'운하 다리 입구로 우회'});return canalFloodRoute({x:p.x<600?612:588,z,label:'다리 건너 반대편으로'});}return canalFloodRoute(t);}
+function canalTarget(){if(!canalReady()||state.canal.stage===5)return null;if(!inCanal())return{x:400,z:-47,label:'고원 피난처 · 수로행'};const s=state.canal;if(state.canalFight){const e=state.canalFight.enemies.find(e=>!e.dead);if(e)return canalRoute({x:e.root.position.x,z:e.root.position.z,label:(state.canalFight.kind==='north'?'북쪽 경비 · ':'정비함 경비 · ')+e.stats.label});}if(s.stage===5)return null;const east=state.canalTrack==='east'&&s.east<2;let id=s.stage===4?'archive':s.stage===3?'control':s.stage===2?(s.input?['westvalve','centervalve','northvalve'][s.input]:'control'):east?(s.east===1?'pump':'repair'):s.east===1?'pump':s.west!==7?'marker'+[0,1,2].find(i=>!(s.west&(1<<i))):'repair';if(s.stage===3)return canalRoute({x:s.north?560:640,z:s.north?-48:-28,label:s.north?'서쪽 기록소 경비 · 사수 엄폐':'동쪽 관제구 경비 · 창병 직선'});if(id==='marker0'&&s.water!=='low'||id==='marker1'&&s.water!=='high')id='sluice';const d=CANAL_SITES.find(d=>d.id===id);return canalRoute({...d,label:d.name});}
+function openCanal(d){openCanalContent(d);dlgEl().classList.add('canal-panel');}
+function openCanalContent(d){state.dlgFocus=d.root.position;const s=state.canal;if(d.id==='harbor'){journeyDialog(d.name,canalMapHtml(),[...(state.canal.stage===5?[['빛의 중계소로 무료 이동',()=>relayTravel(true)]]:[]),['고원 피난처로 무료 귀환',()=>{if(nearbyCanal()?.id==='harbor')canalTravel(false);}],['서쪽 관측 추적',()=>{if(nearbyCanal()?.id!=='harbor')return;state.canalTrack='west';state.tracked='canal';closeDialog();}],['동쪽 정비 추적',()=>{if(nearbyCanal()?.id!=='harbor')return;state.canalTrack='east';state.tracked='canal';closeDialog();}]]);return;}if(canalCheckpointDialog(d))return;if(d.id==='sluice'){journeyDialog(d.name,canalMapHtml(),[['낮은 물 · 돌길 열기',()=>canalWaterChange('low')],['높은 물 · 수면 관측',()=>canalWaterChange('high')]]);return;}journeyDialog(d.name,'수로 조사와 정비 구역이다. 먼저 하항 수문 레버에서 물길과 지도 구조를 살펴보자.');}
+function updateCanal(){const f=state.canalFight;if(f){const p=state.player.position,b=f.bounds;if(!inCanal()||state.dead||p.x<b.x1-6||p.x>b.x2+6||p.z<b.z1-6||p.z>b.z2+6){clearCanalFight();toast('미완료 정비함 전투만 초기화 · 관측 기록 보존');}else if(f.enemies.every(e=>e.dead)){const kind=f.kind;clearCanalFight();if(kind==='east')state.canal.east=1;else{state.canal.north++;if(state.canal.north===2)state.canal.stage=4;}canalCommit();toast(kind==='east'?'정비함 확보 · 북동쪽 배수기에 부품 끼우기':`북쪽 경비 ${state.canal.north}/2 저장`);}}if(!inCanal()||state.dead)return;const p=state.player.position;if(!state.canal.stage){p.set(400,0,-47);return;}if(state.canal.stage<2&&p.z<-13){p.z=-12;toast('북쪽 문 · 서쪽 조사와 동쪽 정비 후 개방');}if(state.canal.stage===3&&!state.canalFight&&!state.dialog&&!state.menuOpen){const i=state.canal.north,x=i?560:640,z=i?-48:-28;if(Math.hypot(p.x-x,p.z-z)<9)spawnCanalFight('north',i);}if(state.canal.water==='high'&&p.x>580&&p.x<586&&p.z>0&&p.z<16){canalSafePosition();toast('잠긴 돌길 · 안전한 하항으로 이동');}}
+
+// ---------- 갈라진 고원: 두 경로 복구, 중앙 신호와 북쪽 피난처 ----------
+const HIGHLAND_SITES=[{id:'camp',name:'고원 남쪽 야영지',x:400,z:46},{id:'west0',name:'첫 바람다리 조절기',x:368,z:32},{id:'west1',name:'협곡 중간 조절기',x:360,z:12},{id:'west2',name:'협곡 끝 조절기',x:374,z:-2},{id:'east0',name:'폐 초소 남문',x:432,z:28},{id:'east1',name:'폐 초소 북문',x:432,z:1},{id:'relay',name:'중앙 신호대',x:400,z:-15},{id:'sun',name:'해 문양 기둥',x:392,z:-16},{id:'bird',name:'새 문양 기둥',x:400,z:-20},{id:'mountain',name:'산 문양 기둥',x:408,z:-16},{id:'refuge',name:'북쪽 피난처 기록대',x:400,z:-47}];
+function highlandReady(){return state.archive.stage===4;}
+function inHighland(p=state.player?.position){return!!p&&p.x>=340&&p.x<=460&&p.z>=-55&&p.z<=55;}
+function normalizeHighland(raw){const v=raw||{},n=(x,m)=>Number.isInteger(x)?Math.max(0,Math.min(m,x)):0;const s={stage:n(v.stage,5),west:n(v.west,3),east:n(v.east,2),relay:n(v.relay,3),north:n(v.north,2),route:['west','east'].includes(v.route)?v.route:null};if(!highlandReady()||!s.stage)return{stage:0,west:0,east:0,relay:0,north:0,route:null};if(s.stage>=2&&!s.route)s.route=s.west===3?'west':s.east===2?'east':null;if(s.stage>=2&&!s.route)s.stage=1;if(s.route==='west')s.west=3;if(s.route==='east')s.east=2;if(s.stage<2)s.relay=0;if(s.stage>=3)s.relay=3;if(s.stage<3)s.north=0;if(s.stage>=4)s.north=2;return s;}
+function highlandStatus(){const s=state.highland;return!s.stage?'기록원 대합실에서 고원행 지도 받기':s.stage===1?`경로 선택 · 바람다리 ${s.west}/3 · 초소 ${s.east}/2`:s.stage===2?`중앙 신호 · 해 → 새 → 산 ${s.relay}/3`:s.stage===3?`북쪽 관문 ${s.north}/2 · 엄폐와 횡풍`:s.stage===4?'북쪽 피난처에서 지도 인계':'고원 왕복로 복구 완료';}
+function highlandRoute(t){const p=state.player.position;if(p.z>-7&&t.z<-8&&Math.abs(p.x-400)>3)return{x:400,z:-4,label:'중앙 통로 입구로 우회'};if(p.z<-9&&t.z>-8&&Math.abs(p.x-400)>3)return{x:400,z:-13,label:'중앙 통로로 돌아가기'};return t;}
+function highlandTarget(){
+if(!highlandReady())return null;const s=state.highland,choice=state.highlandTrack;
+const optional=choice==='west'&&s.west<3?'west'+s.west:choice==='east'&&s.east<2?'east'+s.east:null;
+if(s.stage===5&&!optional)return null;if(!inHighland())return{x:260,z:25,label:'기록원 대합실 · 고원행'};
+if(state.highlandFight){const alive=state.highlandFight.enemies.filter(e=>!e.dead),e=alive[0];if(e)return{x:e.root.position.x,z:e.root.position.z,label:`${state.highlandFight.kind==='east'?'초소':'북쪽 관문'} · 남은 경비 ${alive.length}`};}
+if(optional){const d=HIGHLAND_SITES.find(d=>d.id===optional);return highlandRoute({...d,label:d.name});}
+let id='camp';if(s.stage===1){const ds=HIGHLAND_SITES.filter(d=>d.id===(s.west<3?'west'+s.west:'')||d.id===(s.east<2?'east'+s.east:''));const d=ds.sort((a,b)=>Math.hypot(a.x-state.player.position.x,a.z-state.player.position.z)-Math.hypot(b.x-state.player.position.x,b.z-state.player.position.z))[0];if(d)return{...d,label:d.name};}
+if(s.stage===2)id=s.relay===0?'relay':['sun','bird','mountain'][s.relay];if(s.stage===3)return highlandRoute({x:400,z:s.north?-39:-31,label:'북쪽 관문 · 경비와 횡풍'});if(s.stage===4)id='refuge';const d=HIGHLAND_SITES.find(d=>d.id===id);return highlandRoute({...d,label:d.name});}
+function highlandBarrier(root,x,z,w,d,color=0x7e8178){const cs=[],m=new THREE.Mesh(new THREE.BoxGeometry(w,2,d),new THREE.MeshLambertMaterial({color}));m.position.set(x,1,z);root.add(m);const count=Math.ceil(Math.max(w,d)/1.2);for(let i=0;i<=count;i++){const c={x:x+(w>d?(i/count-.5)*(w-.2):0),z:z+(d>=w?(i/count-.5)*(d-.2):0),r:.75,highlandWall:true,observatoryWall:true};colliders.push(c);cs.push(c);}return{mesh:m,colliders:cs};}
+function setHighlandBarrier(b,closed){b.mesh.visible=closed;for(const c of b.colliders){const i=colliders.indexOf(c);if(closed&&i<0)colliders.push(c);if(!closed&&i>=0)colliders.splice(i,1);}}
+function buildHighland(){const root=new THREE.Group();scene.add(root);state.highlandRoot=root;const stone=new THREE.MeshLambertMaterial({color:0x8c8879}),grass=new THREE.MeshLambertMaterial({color:0x89967b}),wood=new THREE.MeshLambertMaterial({color:0xa08054});
+const base=new THREE.Mesh(new THREE.BoxGeometry(124,8,114),stone);base.position.set(400,-4.2,0);root.add(base);const floor=new THREE.Mesh(new THREE.BoxGeometry(122,.2,112),grass);floor.position.set(400,-.06,0);root.add(floor);const sky=new THREE.Mesh(new THREE.PlaneGeometry(150,140),new THREE.MeshBasicMaterial({color:0x94b5bf,side:THREE.DoubleSide}));sky.rotation.x=-Math.PI/2;sky.position.set(400,-8,0);root.add(sky);
+for(const[x,z,w,d]of[[340,0,1,110],[460,0,1,110],[400,55,120,1],[400,-55,120,1],[400,23,12,30],[368,-8,56,1],[432,-8,56,1],[368,-25,56,1],[432,-25,56,1]])highlandBarrier(root,x,z,w,d);
+state.highlandGates={path:highlandBarrier(root,400,-8,8,1,0x9a7552),north:highlandBarrier(root,400,-25,8,1,0x9a7552)};
+// 지면 길과 협곡/폐 초소의 실루엣을 분리한다. 먼 산은 경계 밖 장식이다.
+for(const[x,z,w,d]of[[383,40,34,3],[368,32,4,18],[364,18,4,18],[367,2,18,3],[384,-4,28,3],[416,40,32,3],[432,20,4,38],[416,-4,32,3],[400,-16,20,3],[400,-38,4,25]]){const path=new THREE.Mesh(new THREE.PlaneGeometry(w,d),new THREE.MeshLambertMaterial({color:0xb9ac8d}));path.rotation.x=-Math.PI/2;path.position.set(x,.06,z);root.add(path);}
+for(const[x,z]of[[368,26],[360,6],[374,-5]]){const pit=new THREE.Mesh(new THREE.PlaneGeometry(11,4.5),new THREE.MeshBasicMaterial({color:0x39484b}));pit.rotation.x=-Math.PI/2;pit.position.set(x,.07,z);root.add(pit);}
+for(const[x,z,sz]of[[348,35,5],[352,22,4],[350,1,5],[380,21,4],[384,8,5],[381,-2,3],[424,-56,10],[400,-61,13],[376,-58,9]]){const rock=new THREE.Mesh(new THREE.DodecahedronGeometry(sz,0),new THREE.MeshLambertMaterial({color:z<-55?0x76898a:0x777d70}));rock.scale.set(1,1.7,.8);rock.position.set(x,sz*.65,z);root.add(rock);if(z>-55){colliders.push({x,z,r:sz*.8,highlandWall:true,observatoryWall:true});registerTreeFade(rock,x,z);}}
+for(const[x,z]of[[421,29],[443,29],[421,3],[443,3]]){const tower=new THREE.Group();tower.position.set(x,0,z);const shaft=new THREE.Mesh(new THREE.CylinderGeometry(1.1,1.4,4.2,6),stone);shaft.position.y=2.1;tower.add(shaft);for(let i=0;i<3;i++){const tooth=new THREE.Mesh(new THREE.BoxGeometry(.7,.8,.7),stone);tooth.position.set(Math.cos(i*2.1),4.5,Math.sin(i*2.1));tower.add(tooth);}root.add(tower);colliders.push({x,z,r:1.4,highlandWall:true,observatoryWall:true});registerTreeFade(tower,x,z);}
+for(const[x,z]of[[347,49],[354,46],[451,46],[454,37],[449,-17],[350,-17],[387,-49],[413,-49]]){const tree=new THREE.Group();tree.position.set(x,0,z);const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.2,.3,2.8,5),wood);trunk.position.y=1.4;tree.add(trunk);for(const[y,r]of[[2.5,1.5],[3.5,1.2],[4.4,.8]]){const leaves=new THREE.Mesh(new THREE.ConeGeometry(r,2.3,5),new THREE.MeshLambertMaterial({color:0x4e7161}));leaves.position.y=y;tree.add(leaves);}root.add(tree);colliders.push({x,z,r:.5,highlandWall:true});registerTreeFade(tree,x,z);}
+state.highlandBridges=[];for(const[x,z]of[[368,26],[360,6],[374,-5]]){const g=new THREE.Group();root.add(g);const deck=new THREE.Mesh(new THREE.BoxGeometry(7,.22,4),wood);deck.position.set(x,.14,z);g.add(deck);for(const side of[-1,1]){const rail=new THREE.Mesh(new THREE.BoxGeometry(.2,.6,4),wood);rail.position.set(x+side*3.4,.55,z);g.add(rail);}const gate=highlandBarrier(root,x,z,8,1,0x7a5b45);state.highlandBridges.push({g,gate});}
+for(const[x,z]of[[363,31],[355,11],[369,-3],[425,22],[439,19],[425,-2],[439,-4],[394,-33],[406,-40]]){const block=new THREE.Mesh(new THREE.BoxGeometry(2.4,2.7,2.4),stone);block.position.set(x,1.35,z);root.add(block);colliders.push({x,z,r:1.65,highlandWall:true,observatoryWall:true});registerTreeFade(block,x,z);}
+state.highlandProps=HIGHLAND_SITES.map(d=>{const g=new THREE.Group();g.position.set(d.x,0,d.z);const m=new THREE.Mesh(new THREE.CylinderGeometry(.7,.9,1.3,6),d.id.startsWith('west')?wood:stone);m.position.y=.65;g.add(m);const gem=new THREE.Mesh(new THREE.OctahedronGeometry(.34),new THREE.MeshBasicMaterial({color:0xf4d18f}));gem.position.y=1.9;g.add(gem);const name=makeNameSprite(d.name);name.position.y=2.8;g.add(name);root.add(g);return{...d,root:g,gem};});
+for(const[x,z]of[[403,47],[405,-48]]){const tent=new THREE.Mesh(new THREE.ConeGeometry(2.3,2.8,4),new THREE.MeshLambertMaterial({color:0x627a83}));tent.rotation.y=Math.PI/4;tent.position.set(x,1.4,z);root.add(tent);colliders.push({x,z,r:1.6,highlandWall:true});}
+state.highlandGusts=[{x:368,z:29,w:15,d:5},{x:360,z:9,w:15,d:5},{x:374,z:0,w:15,d:5},{x:400,z:-35,w:30,d:5}].map((d,i)=>{const mesh=new THREE.Mesh(new THREE.PlaneGeometry(d.w,d.d),new THREE.MeshBasicMaterial({color:0x8bd6df,transparent:true,opacity:.15,side:THREE.DoubleSide,depthWrite:false}));mesh.rotation.x=-Math.PI/2;mesh.position.set(d.x,.08,d.z);root.add(mesh);const label=makeNameSprite('횡풍 · 붉은 띠 밖/돌 뒤');label.position.set(d.x,1.2,d.z);root.add(label);return{...d,i,mesh,label,at:0,next:0,hits:0,blocks:0,saves:0};});
+for(const[x,z,text]of[[374,39,'서쪽 · 바람과 쉼터'],[428,40,'동쪽 · 두 초소'],[400,-11,'해가 뜨고 새가 날아 산에 닿는다']]){const label=makeNameSprite(text);label.scale.multiplyScalar(1.5);label.position.set(x,3.2,z);root.add(label);}
+}
+function nearbyHighland(){return state.ready&&!state.dead&&inHighland()?(state.highlandProps||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.4)||null:null;}
+function clearHighlandFight(){const f=state.highlandFight;for(const e of f?.enemies||[]){clearWindDraw(e);cancelArcher(e);if(e.tele)scene.remove(e.tele);for(const m of e.archerLines||[])scene.remove(m);for(const a of e.arrows||[])scene.remove(a.root);e.dead=e.despawned=true;scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);}state.highlandFight=null;state.highlandChannel=null;}
+function highlandTravel(inside){clearCanalFight();clearHighlandFight();clearArchiveFight();clearMistFight();clearWindPractice();clearBellFight();clearEstuaryFight();clearCourierFight();clearCartRun();clearEchoFight();clearObservatoryFight();clearBeaconFight();if(state.trial?.active)endTrial(false);cancelWindshot('travel');resetMasteryCombat();state.dodgeFrom=null;state.dodgeUntil=0;state.attackUntil=0;state.autoOn=false;document.getElementById('auto').textContent='자동 전투 OFF';document.getElementById('auto').classList.remove('on');state.player.position.set(inside?400:260,0,inside?46:24);state.invUntil=Math.max(state.invUntil,clock.elapsedTime+1);state.tracked=inside?'highland':'auto';closeDialog();saveGame();toast(inside?'갈라진 고원 · 지도에서 두 길을 살피자.':'기록원 대합실 귀환 · 복구한 길은 보존');}
+function highlandMapHtml(){const s=state.highland;return`<div style="padding:10px;margin:8px 0;background:#283a36;text-align:center;line-height:1.8"><b>북쪽 피난처</b> · 관문 ${s.north}/2<br>↑ 중앙 신호 ${s.relay}/3 ↑<br>해 → 새 → 산<br>↗ <b>중앙 신호대</b> ↖<br>서쪽 바람다리 ${s.west}/3 │ 동쪽 초소 ${s.east}/2<br>↖ <b>남쪽 야영지</b> ↗</div>`;}
+function openHighlandEntrance(){if(!highlandReady())return;journeyDialog('갈라진 고원',highlandMapHtml()+'기록원의 오래된 지도에는 고립된 피난처가 남아 있다. 바람에 끊긴 서쪽 길과 경비가 점거한 동쪽 길 중 <b>한 길만 복구해도</b> 중앙에 도달한다. 다른 길은 나중에 열어 지름길로 남길 수 있다.<br><br>바람은 붉은 띠로 예고한다. 띠 밖이나 돌벽 뒤로 피하자. 보법 연마는 필수가 아니며 기본 회피와 우회로로 진행할 수 있다.<br><br>완료한 다리·초소·관문은 저장된다. 미완료 전투·작업은 이탈/사망/재접속 때 초기화. 왕복·재도전 무료. 최종 인계 한 번 800XP·500G. 양쪽 길 복구는 별도 보상 없이 지도 기록과 통행로로 남는다.',[[state.highland.stage?'고원으로 다시 출발':'고원 지도 받고 출발',()=>{if(!highlandReady()||nearbyArchive()?.id!=='desk')return;if(!state.highland.stage)state.highland.stage=1;highlandTravel(true);}]]);}
+function openHighland(d){const s=state.highland;state.dlgFocus=d.root.position;
+if(d.id==='camp'){journeyDialog(d.name,highlandMapHtml()+highlandStatus()+'<br><br>서쪽 조절기는 남쪽부터 차례로 2초 고정. 바람 예고 중에는 멈추고 붉은 띠 밖이나 돌 뒤에서 기다리자. 동쪽 초소는 남문부터 두 곳을 차례로 정리한다. 먼저 완전히 복구한 경로가 기록된다. 안전한 야영지에서 언제든 귀환할 수 있다.',[['기록원 대합실로 귀환',()=>{if(nearbyHighland()?.id==='camp')highlandTravel(false);}],['서쪽 길 추적',()=>{state.highlandTrack='west';state.tracked='highland';closeDialog();}],['동쪽 길 추적',()=>{state.highlandTrack='east';state.tracked='highland';closeDialog();}]]);return;}
+if(d.id.startsWith('west')){const i=+d.id.slice(-1);if(s.west>i){journeyDialog(d.name,'이 바람다리는 고정되어 있다. 기록은 다시 접속해도 남는다.');return;}if(s.west!==i){journeyDialog(d.name,'남쪽 다리부터 차례로 고정하자. 지도에서 아직 복구하지 않은 첫 조절기를 찾을 수 있다.');return;}const t=state.highlandGusts[i];if(t.at){toast('바람 예고 중 · 붉은 띠 밖이나 돌 뒤에서 기다리자.');return;}state.highlandChannel={i,x:d.x,z:d.z,start:clock.elapsedTime,hp:state.hp};closeDialog();toast('다리 고정 2초 · 이동/피격/회피/공격/메뉴 시 취소');return;}
+if(d.id.startsWith('east')){const i=+d.id.slice(-1);journeyDialog(d.name,s.east>i?'이 초소는 정리되어 있다. 경비는 다시 나타나지 않는다.':s.east<i?'먼저 남문 초소를 정리하자.':'기둥 뒤로 세 갈래 화살을 피하며 방패 경비를 유인하자. 사수의 사격 준비를 원거리로 끊거나 강공격으로 가드를 부술 수 있다.',s.east===i&&!state.highlandFight?[['초소 경비와 맞서기',()=>{if(nearbyHighland()?.id!==d.id||state.highland.east!==i)return;closeDialog();spawnHighlandFight('east',i);}]]:[]);return;}
+if(d.id==='relay'){if(s.stage===1){journeyDialog(d.name,'중앙으로 이어지는 한 길을 완전히 복구해야 신호가 깨어난다.');return;}journeyDialog(d.name,highlandMapHtml()+'낡은 지도에는 <b>해가 뜨고, 새가 날아, 산에 닿는다</b>고 적혀 있다. 세 기둥의 문양을 이 순서대로 읽자. 오답은 기둥 입력만 초기화한다. 길의 복구 기록은 잃지 않는다.');return;}
+if(['sun','bird','mountain'].includes(d.id)){journeyDialog(d.name,s.stage===2?`신호 ${s.relay}/3 · 해가 뜨고 새가 날아 산에 닿는다.`:s.stage>=3?'중앙 신호가 북쪽 관문을 열었다.':'먼저 한 경로를 복구하자.',s.stage===2?[['문양 조율',()=>{if(nearbyHighland()?.id!==d.id||s.stage!==2)return;if(d.id===['sun','bird','mountain'][s.relay]){s.relay++;skillFx(d.root.position,0xffd785,1.3,'ready');if(s.relay===3){s.stage=3;toast('북쪽 관문 개방 · 횡풍과 엄폐를 살피자.');}}else{s.relay=0;toast('신호 불일치 · 해 → 새 → 산');}saveGame();closeDialog();}]]:[]);return;}
+if(d.id==='refuge'){journeyDialog(d.name,s.stage===4?'피난처 사람들이 새 왕복로를 지도에 옮긴다. 고원을 가로지른 길을 전하자.':s.stage===5?'피난처와 야영지를 잇는 길이 지도에 남았다. 아직 가지 않은 길도 복구할 수 있다.':'북쪽 관문 경비가 남아 있다. 먼저 두 구간의 안전을 확보하자.',s.stage===4?[['고원 지도 인계',()=>{if(nearbyHighland()?.id!=='refuge'||s.stage!==4)return;s.stage=5;state.gold+=500;gainXp(800);saveGame();closeDialog();toast('고원 왕복로 복구 · 800XP · 500G');}]]:s.stage===5?[['별빛 수로로 무료 이동',()=>{if(nearbyHighland()?.id==='refuge'&&canalReady())canalTravel(true);}],['야영지로 무료 이동',()=>{if(nearbyHighland()?.id!=='refuge')return;state.player.position.set(400,0,46);closeDialog();saveGame();}]]:[]);}
+}
+function spawnHighlandFight(kind,step){if(state.highlandFight||!state.protos.skel)return;const x=kind==='east'?432:400,z=kind==='east'?(step?0:24):(step?-42:-31);const bounds=kind==='east'?{x1:416,x2:450,z1:step?-6:12,z2:step?10:36}:{x1:386,x2:414,z1:step?-51:-38,z2:step?-36:-27};const enemies=[{...ENEMY,hp:130,dmg:17,speed:2,label:'고원 사수',archer:true},{...WARRIOR,hp:200,dmg:21,speed:2.4,combo:false,guard:true,label:'고원 방패 경비'}].map((stats,i)=>{const e=state.spawn(state.protos.skel,{...stats,noRespawn:true,noElite:true,aggro:24,highlandGuard:true},x+(i?4:-4),z+(i?2:-1));e.expedition=e.trial=true;e.highlandBounds=bounds;e.archerNext=clock.elapsedTime+2;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=2.6;e.root.add(e.nameSprite);}return e;});state.highlandFight={kind,step,enemies,bounds};toast(kind==='east'?'초소 경비 · 사수 예고와 방패를 구분':'북쪽 관문 · 돌 뒤 엄폐와 횡풍');}
+function updateHighland(now){const s=state.highland,inside=inHighland(),p=state.player.position;setHighlandBarrier(state.highlandGates.path,s.stage<2);setHighlandBarrier(state.highlandGates.north,s.stage<3);state.highlandBridges.forEach((b,i)=>{b.g.visible=s.west>i;setHighlandBarrier(b.gate,s.west<=i);});for(const d of state.highlandProps){d.gem.visible=d.id.startsWith('west')?s.west<=+d.id.slice(-1):d.id.startsWith('east')?s.east<=+d.id.slice(-1):d.id==='refuge'?s.stage<5:true;}
+if(state.dead||!inside){clearHighlandFight();for(const t of state.highlandGusts){t.at=0;t.next=0;t.mesh.visible=t.label.visible=false;}return;}
+if(!s.stage){p.set(260,0,24);return;}if(s.stage===1&&p.z<-7){p.z=-5;toast('먼저 한 경로를 복구하자.');}if(s.stage<3&&p.z<-24)p.z=-22;
+const f=state.highlandFight;if(f){const b=f.bounds;if(p.x<b.x1-8||p.x>b.x2+8||p.z<b.z1-8||p.z>b.z2+8){clearHighlandFight();toast('미완료 전투만 초기화 · 완료한 경로 유지');}else if(f.enemies.every(e=>e.dead)){const kind=f.kind;clearHighlandFight();if(kind==='east')s.east++;else{s.north++;if(s.north===2)s.stage=4;}saveGame();sfx('reward',.7);toast(kind==='east'?`초소 ${s.east}/2 저장`:`북쪽 관문 ${s.north}/2 저장`);}}
+if(s.stage===1&&(s.west===3||s.east===2)){s.route=s.west===3?'west':'east';s.stage=2;saveGame();toast('중앙 신호대로 이어지는 길 복구 · 다른 길도 나중에 탐험 가능');}
+if(s.stage===3&&!state.highlandFight&&!state.dialog&&!state.menuOpen&&p.z<-26&&p.z>(s.north?-53:-39))spawnHighlandFight('north',s.north);
+for(const t of state.highlandGusts){const active=t.i<3?s.west<=t.i&&s.stage>0:s.stage===3;if(!active){t.mesh.visible=t.label.visible=false;t.at=t.next=0;continue;}t.mesh.visible=t.label.visible=true;if(state.dialog||state.menuOpen){t.at=0;t.next=now+2+t.i*.4;continue;}if(!t.next)t.next=now+2+t.i*.6;if(!t.at&&now>=t.next)t.at=now+1.3;t.mesh.material.color.setHex(t.at?0xf27862:0x8bd6df);t.mesh.material.opacity=t.at?.22+.15*Math.sin(now*8)**2:.12;if(t.at&&now>=t.at){const hit=Math.abs(p.x-t.x)<t.w/2&&Math.abs(p.z-t.z)<t.d/2;const safe=colliders.some(c=>c.highlandWall&&Math.hypot(p.x-c.x,p.z-c.z)<c.r+2&&p.x>c.x);if(hit){if(safe)t.saves++;else if(now<state.invUntil){t.blocks++;registerDodgeBlock(now);}else{t.hits++;state.hp=Math.max(0,state.hp-Math.max(1,24-currentEquipmentStats().defense));state.highlandChannel=null;hitFlash(state.player);toast('횡풍! 붉은 띠 밖/돌 뒤로');if(!state.hp)playerDie('고원 횡풍');}}t.at=0;t.next=now+5.2;}}
+const ch=state.highlandChannel;if(ch){const t=state.highlandGusts[ch.i];if(state.dialog||state.menuOpen||state.hp<ch.hp||Math.hypot(p.x-ch.x,p.z-ch.z)>1.5||now<state.dodgeUntil||now<state.attackUntil||t.at){state.highlandChannel=null;toast('다리 작업 취소 · 복구한 다리 유지');}else if(now-ch.start>=2){if(s.west===ch.i){s.west++;saveGame();sfx('reward',.7);toast(`바람다리 ${s.west}/3 고정 · 다음 쉼터로`);}state.highlandChannel=null;}}
 }
 
 // ---------- 북서 전령길: 엄폐와 세 갈래 사격 ----------
@@ -2784,8 +2999,8 @@ const COURIER_CENTER={x:-54,z:-23},COURIER_BOARD={x:-47,z:-14,name:'북서 전�
 // ---------- 회색 여울: 별도 섬, 구조와 침수 주기를 잇는 다음 지역 ----------
 const ESTUARY_SITES=[{id:'ferry',name:'회색 여울 나루',x:70,z:-12},{id:'return',name:'언덕행 나룻배',x:126,z:0},{id:'chart',name:'젖은 조사 지도',x:140,z:-16},{id:'north',name:'북쪽 조사원',x:157,z:-12,bit:1},{id:'south',name:'남쪽 조사원',x:157,z:12,bit:2},{id:'sluice',name:'막힌 여울 수문',x:172,z:0}];
 function inEstuary(p=state.player?.position){return !!p&&p.x>105&&p.x<210;}
-function onWorld(p){return inArchive(p)||Math.hypot(p.x,p.z)<=78||Math.hypot(p.x-150,p.z)<=30;}
-function clampWorld(p){if(p.x>210){p.x=Math.max(231,Math.min(289,p.x));p.z=Math.max(-31,Math.min(31,p.z));return p;}const east=p.x>105,cx=east?150:0,r=east?30:78,d=Math.hypot(p.x-cx,p.z);if(d>r){p.x=cx+(p.x-cx)*r/d;p.z=p.z*r/d;}return p;}
+function onWorld(p){return inRelay(p)||inCanal(p)||inHighland(p)||inArchive(p)||Math.hypot(p.x,p.z)<=78||Math.hypot(p.x-150,p.z)<=30;}
+function clampWorld(p){if(p.x>720){p.x=Math.max(765,Math.min(835,p.x));p.z=Math.max(-35,Math.min(35,p.z));return p;}if(p.x>500){p.x=Math.max(521,Math.min(679,p.x));p.z=Math.max(-69,Math.min(69,p.z));return p;}if(p.x>315){p.x=Math.max(341,Math.min(459,p.x));p.z=Math.max(-54,Math.min(54,p.z));return p;}if(p.x>210){p.x=Math.max(231,Math.min(289,p.x));p.z=Math.max(-31,Math.min(31,p.z));return p;}const east=p.x>105,cx=east?150:0,r=east?30:78,d=Math.hypot(p.x-cx,p.z);if(d>r){p.x=cx+(p.x-cx)*r/d;p.z=p.z*r/d;}return p;}
 function estuaryReady(){return state.quest.idx>=20&&state.courier===3;}
 function estuaryStatus(){const s=state.estuary;return s.stage===5?'회색 여울 구조 기록 인계 완료':s.stage===4?'언덕 나루로 돌아가 구조 기록 인계':s.stage===3?'동쪽 수문 철갑병을 물리치고 수문 열기':s.stage===2?`조사원 구조 ${Number(!!(s.rescued&1))+Number(!!(s.rescued&2))}/2 · 침수 뒤 3초 확보`:s.stage===1?'북서 물가의 젖은 조사 지도 읽기':estuaryReady()?'동쪽 나루에서 회색 여울로 출발':'메인 20개·전령 기록 인계 후 출발';}
 function estuaryTarget(){if(state.estuary.stage===5)return null;let id='ferry';if(inEstuary()){id=state.estuary.stage===1?'chart':state.estuary.stage===2?(!(state.estuary.rescued&1)?'north':'south'):state.estuary.stage===3?'sluice':'return';}const d=ESTUARY_SITES.find(d=>d.id===id);return{...d,label:d.name};}
@@ -2820,7 +3035,7 @@ function updateEstuary(now){const s=state.estuary,p=state.player.position,inside
  if((s.stage===2||(s.stage===3&&!s.bossWon))&&!state.estuaryFight&&!state.dialog&&!state.menuOpen){const defs=s.stage===2?ESTUARY_SITES.filter(d=>d.bit&&!(s.rescued&d.bit)).map(d=>({x:d.x-4,z:d.z,stats:{...WARRIOR,hp:90,dmg:12,guard:false,label:'여울 표류병'}})):[{x:169,z:0,stats:{...WARRIOR,hp:260,dmg:18,guard:true,combo:false,label:'수문 철갑병',estuaryBoss:true}}];state.estuaryFight=defs.map(d=>{const e=state.spawn(state.protos.skel,{...d.stats,aggro:11,noElite:true,noRespawn:true},d.x,d.z);e.expedition=true;e.trial=true;e.estuary=true;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=2.4;e.root.add(e.nameSprite)}return e;});}
  if(s.stage===3&&!s.bossWon&&state.estuaryFight?.some(e=>e.stats.estuaryBoss)&&state.estuaryFight.every(e=>e.dead)){s.bossWon=true;saveGame();toast('수문 철갑병 격파 · 손잡이에서 수문을 열자.');}
  for(const t of state.estuaryTides||[]){const active=s.stage===2&&!(s.rescued&t.bit);t.disc.visible=t.ring.visible=active;if(!active){t.at=0;t.next=0;continue;}if(state.dialog||state.menuOpen){t.next=now+2;t.at=0;t.disc.material.opacity=.12;t.ring.material.color.setHex(0x69cfe9);continue;}if(!t.next)t.next=now+2;if(!t.at&&now>=t.next){t.at=now+1.5;t.ring.material.color.setHex(0xff665b);t.disc.material.color.setHex(0xff665b);}t.disc.material.opacity=t.at?.18+.18*Math.sin(now*10)**2:.10;
-  if(t.at&&now>=t.at){const wet=Math.hypot(p.x-t.x,p.z-t.z)<5.5,safe=Math.hypot(p.x-t.x-3.8,p.z-t.z)<1.5;if(wet){if(safe)t.saves++;else if(now<state.invUntil){t.blocks++;registerDodgeBlock(now);}else{t.hits++;state.hp=Math.max(0,state.hp-Math.max(1,16-GEAR_DEF[state.gear.armor]));state.estuaryChannel=null;hitFlash(state.player);sfx('hurt',.8);toast('여울 침수! 높은 돌로 피하거나 물 빠진 뒤 구조하자.');if(!state.hp)playerDie('여울 침수');}}t.at=0;t.next=now+6.5;t.ring.material.color.setHex(0x69cfe9);t.disc.material.color.setHex(0x599cb7);}
+  if(t.at&&now>=t.at){const wet=Math.hypot(p.x-t.x,p.z-t.z)<5.5,safe=Math.hypot(p.x-t.x-3.8,p.z-t.z)<1.5;if(wet){if(safe)t.saves++;else if(now<state.invUntil){t.blocks++;registerDodgeBlock(now);}else{t.hits++;state.hp=Math.max(0,state.hp-Math.max(1,16-currentEquipmentStats().defense));state.estuaryChannel=null;hitFlash(state.player);sfx('hurt',.8);toast('여울 침수! 높은 돌로 피하거나 물 빠진 뒤 구조하자.');if(!state.hp)playerDie('여울 침수');}}t.at=0;t.next=now+6.5;t.ring.material.color.setHex(0x69cfe9);t.disc.material.color.setHex(0x599cb7);}
  }
  const ch=state.estuaryChannel;if(ch){if(state.dead||state.dialog||state.menuOpen||state.hp<ch.hp||Math.hypot(p.x-ch.x,p.z-ch.z)>2||now<state.dodgeUntil||now<state.attackUntil){state.estuaryChannel=null;toast('구조 중단 · 완료 기록 손실 없이 다시 시도할 수 있다.');}else if(now-ch.start>=3){s.rescued|=ch.bit;state.estuaryChannel=null;skillFx(p,0x88ffcc,1.6,'heal');if(s.rescued===3){s.stage=3;clearEstuaryFight();toast('조사원 둘 구조! 동쪽 수문을 열어 대피로를 확보하자.');}else toast('조사원 구조 완료 · 반대쪽 조사원에게 이동');saveGame();sfx('reward',.8);}}
 }
@@ -2843,7 +3058,7 @@ const clues=BELL_SITES.filter(d=>d.bit&&(s.clues&d.bit)).map(d=>d.text).join('<b
 function bellShieldHit(e,dmg,heavy,source){if(!e.stats.bellBoss||e.dead)return false;const now=clock.elapsedTime;if(now<(e.bellExposed||0))return false;if(source==='windshot')e.bellCracks=2;else if(heavy)e.bellCracks=(e.bellCracks||0)+1;if(e.bellCracks>=2){e.bellExposed=now+5;e.bellAt=0;e.bellNext=now+6.8;e.bellDisc.visible=e.bellRing.visible=false;e.bellCracks=0;e.bellBreaks++;skillFx(e.root.position,0xffd779,2,'break');toast('종 방어 해제! 5초 동안 접근 공격');sfx('reward',.8);}else{skillFx(e.root.position,0x8edcf5,1.6,'hit');toast(heavy?'방어 균열 1/2 · 강공격 한 번 더!':'푸른 방어! 바람칼날 1회 또는 강공격 2회');}return true;}
 function updateBellEnemy(e,dt,now){if(!e.stats.bellBoss)return false;e.anim.update(dt);if(state.dead||state.dialog||state.menuOpen){e.bellAt=0;e.bellNext=now+1.8;e.bellDisc.visible=e.bellRing.visible=false;return true;}const p=state.player.position;const d=Math.hypot(p.x-e.root.position.x,p.z-e.root.position.z);e.root.rotation.y=Math.atan2(p.x-e.root.position.x,p.z-e.root.position.z);const exposed=now<(e.bellExposed||0);e.bellShield.visible=!exposed;e.bellShield.rotation.y=now*.7;e.bellShield.material.opacity=.18+.10*Math.sin(now*4)**2;if(exposed){e.bellDisc.visible=e.bellRing.visible=false;return true;}e.bellExposed=0;if(!e.bellNext)e.bellNext=now+1.8;
 if(!e.bellAt&&now>=e.bellNext){e.bellAt=now+1.4;e.bellOuter=!e.bellOuter;e.bellDisc.visible=!e.bellOuter;e.bellRing.visible=e.bellOuter;toast(e.bellOuter?'붉은 고리 예고 · 3m 안쪽 또는 8m 밖으로!':'붉은 원 예고 · 4.5m 밖으로!');}
-if(e.bellAt){const opacity=.22+.25*Math.sin(now*10)**2;e.bellDisc.material.opacity=e.bellRing.material.opacity=opacity;if(now>=e.bellAt){const hit=e.bellOuter?(d>=3&&d<8):d<4.5;if(hit){if(now<state.invUntil){e.bellDodges++;registerDodgeBlock(now);}else{e.bellHits++;state.hp=Math.max(0,state.hp-Math.max(1,20-GEAR_DEF[state.gear.armor]));hitFlash(state.player);sfx('hurt',.8);if(state.hp<=0)playerDie('수문 종의 파동');}}e.bellPulses++;e.bellAt=0;e.bellNext=now+2.4;e.bellDisc.visible=e.bellRing.visible=false;}}return true;}
+if(e.bellAt){const opacity=.22+.25*Math.sin(now*10)**2;e.bellDisc.material.opacity=e.bellRing.material.opacity=opacity;if(now>=e.bellAt){const hit=e.bellOuter?(d>=3&&d<8):d<4.5;if(hit){if(now<state.invUntil){e.bellDodges++;registerDodgeBlock(now);}else{e.bellHits++;state.hp=Math.max(0,state.hp-Math.max(1,20-currentEquipmentStats().defense));hitFlash(state.player);sfx('hurt',.8);if(state.hp<=0)playerDie('수문 종의 파동');}}e.bellPulses++;e.bellAt=0;e.bellNext=now+2.4;e.bellDisc.visible=e.bellRing.visible=false;}}return true;}
 function updateBell(now){for(const d of state.bellProps||[]){d.root.visible=bellReady();if(d.bit)d.gem.visible=!(state.bell.clues&d.bit);else if(d.tone){const i=BELL_ORDER.indexOf(d.tone);d.gem.material.color.setHex(state.bell.stage>=3||i<state.bell.input?0x8affce:0xffd477);}}
 if(state.dead||!inEstuary()){clearBellFight();return;}if(!bellReady()||state.bell.stage!==3){if(state.bellEnemy&&state.bell.stage!==4)clearBellFight();return;}
 if(state.bellEnemy?.dead){state.bell.stage=4;clearBellFight();saveGame();toast('파수꾼의 울림이 잦아들었다 · 나루 곁 기록대로');return;}
@@ -2864,7 +3079,7 @@ function mistDamage(e){if(!e.stats.mistHunter||mistLit(e))return false;const f=s
 function clearMistFight(){const f=state.mistFight;if(!f)return;const e=f.enemy;for(const m of[e.mistAura,e.mistAttack]){if(m){m.parent?.remove(m);m.geometry.dispose();m.material.dispose();}}if(e.tele)scene.remove(e.tele);e.dead=true;e.despawned=true;scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);state.mistFight=null;}
 function spawnMistFight(now){const e=state.spawn(state.protos.skel,{...WARRIOR,hp:540,dmg:22,guard:false,combo:false,aggro:30,noElite:true,noRespawn:true,label:'안개 추적자',mistHunter:true},144,11);e.expedition=e.trial=e.estuary=true;e.root.scale.multiplyScalar(1.15);e.mistNext=now+2;e.mistAt=0;e.mistHits=e.mistDodges=e.mistStrikes=0;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=3;e.root.add(e.nameSprite);}e.mistAura=new THREE.Mesh(new THREE.CylinderGeometry(1.25,1.6,2.5,12,1,true),new THREE.MeshBasicMaterial({color:0x9d87e5,transparent:true,opacity:.30,depthWrite:false,side:THREE.DoubleSide}));e.mistAura.position.y=1.3;e.root.add(e.mistAura);e.mistAttack=new THREE.Mesh(new THREE.CircleGeometry(2.4,40),new THREE.MeshBasicMaterial({color:0xff6257,transparent:true,opacity:.32,depthWrite:false,side:THREE.DoubleSide}));e.mistAttack.rotation.x=-Math.PI/2;e.mistAttack.visible=false;scene.add(e.mistAttack);state.mistFight={enemy:e,active:0,next:now+8,last:now,swaps:0,blocks:0};}
 function updateMistEnemy(e,dt,now){if(!e.stats.mistHunter)return false;const f=state.mistFight;if(!f)return true;e.anim.update(dt);if(state.dead||state.dialog||state.menuOpen){e.mistAt=0;e.mistNext=now+1.5;e.mistAttack.visible=false;return true;}const p=state.player.position,to=p.clone().sub(e.root.position);to.y=0;const d=to.length();e.root.rotation.y=Math.atan2(to.x,to.z);e.mistAura.material.color.setHex(mistLit(e)?0xffd477:0x9d87e5);e.mistAura.material.opacity=mistLit(e)?.20:.32;
-if(e.mistAt){e.mistAttack.visible=true;e.mistAttack.position.set(e.root.position.x,.12,e.root.position.z);e.mistAttack.material.opacity=.2+.22*Math.sin(now*12)**2;if(now>=e.mistAt){if(d<2.4){if(now<state.invUntil){e.mistDodges++;registerDodgeBlock(now);}else{e.mistHits++;state.hp=Math.max(0,state.hp-Math.max(1,22-GEAR_DEF[state.gear.armor]));hitFlash(state.player);sfx('hurt',.8);if(!state.hp)playerDie('안개 추적자');}}e.mistStrikes++;e.mistAt=0;e.mistNext=now+1.8;e.mistAttack.visible=false;}return true;}
+if(e.mistAt){e.mistAttack.visible=true;e.mistAttack.position.set(e.root.position.x,.12,e.root.position.z);e.mistAttack.material.opacity=.2+.22*Math.sin(now*12)**2;if(now>=e.mistAt){if(d<2.4){if(now<state.invUntil){e.mistDodges++;registerDodgeBlock(now);}else{e.mistHits++;state.hp=Math.max(0,state.hp-Math.max(1,22-currentEquipmentStats().defense));hitFlash(state.player);sfx('hurt',.8);if(!state.hp)playerDie('안개 추적자');}}e.mistStrikes++;e.mistAt=0;e.mistNext=now+1.8;e.mistAttack.visible=false;}return true;}
 if(now<e.mistNext){e.anim.play('idle');return true;}if(d<2.2){e.mistAt=now+1;e.mistAttack.visible=true;e.mistAttack.position.set(e.root.position.x,.12,e.root.position.z);e.anim.playOnce('unarmed_melee_attack_punch','attack');return true;}if(d>.05){const step=to.normalize().multiplyScalar(Math.min(d,2.9*enemyMoveScale(e,now)*dt));e.root.position.add(step);for(const c of colliders){const dx=e.root.position.x-c.x,dz=e.root.position.z-c.z,cd=Math.hypot(dx,dz),r=c.r+.55;if(cd<r&&cd>.001){e.root.position.x=c.x+dx*r/cd;e.root.position.z=c.z+dz*r/cd;}}clampWorld(e.root.position);e.anim.play('running','run','walking','walk');}return true;}
 function updateMist(dt,now){const s=state.mist,p=state.player.position;let f=state.mistFight;if(f&&f.enemy.dead){s.stage=3;clearMistFight();saveGame();toast('항로 등불 아래 남은 이름을 찾았다 · 나루 기록대로');f=null;}if(state.dead||state.windPractice||!inEstuary()||Math.hypot(p.x-144,p.z-8)>25){clearMistFight();f=null;}else if(mistReady()&&s.stage===2&&!f&&!state.dialog&&!state.menuOpen&&Math.hypot(p.x-144,p.z-8)<16){spawnMistFight(now);f=state.mistFight;}
 if(f){const elapsed=now-f.last;f.last=now;if(state.dialog||state.menuOpen)f.next+=elapsed;else if(now>=f.next){f.active=1-f.active;f.next=now+8;f.swaps++;sfx('reward',.3);toast(MIST_LAMPS[f.active].name+' 점등 · 적을 이 빛으로 유인!');}}
@@ -2885,16 +3100,18 @@ state.archiveStreams=[-1,5].map((z,i)=>{const m=new THREE.Mesh(new THREE.PlaneGe
 if(params.get('lite')!=='1'){for(const[file,height,spots]of[['column.gltf.glb',3.2,[[232,18],[248,18],[272,18],[288,18],[232,-29],[288,-29]]]]){try{const p=await load('assets/dungeon/'+file);for(const[x,z]of spots){const o=shadowify(p.scene.clone());const box=new THREE.Box3().setFromObject(o),size=box.getSize(new THREE.Vector3()),h=file.startsWith('shelf')?Math.max(size.x,size.y,size.z)/1.4:size.y;o.scale.multiplyScalar(height/h);o.position.set(x,-box.min.y*height/h,z);root.add(o);registerTreeFade(o,x,z);}}catch(e){console.warn('archive decoration',file,e);}}}
 const sign=makeNameSprite('서가 ← 대합실 → 수로');sign.scale.multiplyScalar(1.6);sign.position.set(260,3.5,20);root.add(sign);}
 function nearbyArchive(){return state.ready&&!state.dead&&inArchive()?(state.archiveProps||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.2)||null:null;}
-function clearArchiveFight(){for(const e of state.archiveFight||[]){cancelArcher(e);if(e.tele)scene.remove(e.tele);for(const m of e.archerLines||[])scene.remove(m);for(const a of e.arrows||[])scene.remove(a.root);e.dead=true;e.despawned=true;scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);}state.archiveFight=null;state.archiveChannel=null;}
-function archiveTravel(inside){clearArchiveFight();clearMistFight();clearWindPractice();clearBellFight();clearEstuaryFight();clearCourierFight();clearCartRun();clearEchoFight();clearObservatoryFight();clearBeaconFight();if(state.trial?.active)endTrial(false);cancelWindshot('travel');resetMasteryCombat();state.dodgeFrom=null;state.dodgeUntil=0;state.attackUntil=0;state.autoOn=false;document.getElementById('auto').textContent='자동 전투 OFF';document.getElementById('auto').classList.remove('on');state.player.position.set(inside?260:129,0,inside?25:-5);state.invUntil=Math.max(state.invUntil,clock.elapsedTime+1);state.tracked='archive';closeDialog();saveGame();toast(inside?'침묵의 기록원 · 서가와 수로는 자유 순서로 조사':'여울 기록대로 귀환 · 기록원 진행 보존');}
-function openArchiveEntrance(){const s=state.archive,bs=[];const text='<b>'+archiveStatus()+'</b><br><br>안개 항로의 끝은 이름을 지우는 기록원으로 이어진다. 같은 적을 더 많이 잡는 곳이 아니라, 두 날개의 기록을 모아 닫힌 회랑을 여는 별도 지역이다.<br><br><b>서쪽 서가</b>에서는 사서의 수기를 읽고 달·바람·물결 서가의 순서를 추론한다. 틀려도 수기는 잃지 않는다. <b>동쪽 수로</b>에서는 번갈아 붉어지는 물길을 건너 조절기 둘을 각각 2.5초 동안 작동한다. 1.8m 이탈·피격·회피·공격·메뉴는 작업을 취소한다.<br><br>둘을 마치면 <b>북쪽 회랑</b> 개방. 첫 경비는 기둥 엄폐와 사격 예고 끊기, 다음 경비는 강공격 가드 파괴로 대응한다. 두 전투 사이 승리는 저장된다. 마지막 원본을 회수해 이곳에 인계하며 기록의 운명을 고른다.<br><br>배편·귀환·재도전 무료. 각 날개·조절기·전투 차수·원본 회수 저장. 사망·지역 이탈·재접속은 미완료 전투와 작업만 초기화한다. 경비별 전리품 없음. 마지막 인계 한 번 <b>600XP·400G·스킬1P</b>. 보존/공유는 이야기 기록만 다르며 능력치 보상은 같다.<br><br><b>인계 후 보법 연마 해금</b>: Lv.10과 잔상 습득 후 장로 곁 스킬 창(K)에서 2P로 짧은/긴 발걸음 중 하나를 배운다. 안전한 장로 곁에서 보법 비용2P를 돌려받아 기본 회피로 돌아갈 수 있다.';
-if(archiveReady()){bs.push([s.stage?'기록원으로 다시 건너가기':'침묵의 기록원 조사 시작',()=>{if(!archiveReady()||nearbyBell()?.id!=='archive')return;if(!s.stage)s.stage=1;archiveTravel(true);}]);if(s.stage===3)for(const[id,label]of[['keep','원본을 보존해 인계'],['share','길잡이 사본으로 인계']])bs.push([label,()=>{if(s.stage!==3||nearbyBell()?.id!=='archive')return;s.stage=4;s.ending=id;state.gold+=400;state.skillPts=(state.skillPts||0)+1;gainXp(600);saveGame();closeDialog();sfx('reward',1);toast('침묵을 건넌 기록 · 600XP · 400G · 스킬1P · 보법 연마(K) 해금');}]);}journeyDialog('침묵의 기록원',text,bs);}
+function clearArchiveFight(){for(const e of state.archiveFight||[]){clearWindDraw(e);cancelLancer(e);cancelArcher(e);if(e.lanceTele){scene.remove(e.lanceTele);e.lanceTele.geometry.dispose();e.lanceTele.material.dispose();}if(e.tele)scene.remove(e.tele);for(const m of e.archerLines||[])scene.remove(m);for(const a of e.arrows||[])scene.remove(a.root);e.dead=true;e.despawned=true;scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);}state.archiveFight=null;state.archiveChannel=null;}
+function archiveTravel(inside){clearHighlandFight();clearArchiveFight();clearMistFight();clearWindPractice();clearBellFight();clearEstuaryFight();clearCourierFight();clearCartRun();clearEchoFight();clearObservatoryFight();clearBeaconFight();if(state.trial?.active)endTrial(false);cancelWindshot('travel');resetMasteryCombat();state.dodgeFrom=null;state.dodgeUntil=0;state.attackUntil=0;state.autoOn=false;document.getElementById('auto').textContent='자동 전투 OFF';document.getElementById('auto').classList.remove('on');state.player.position.set(inside?260:129,0,inside?25:-5);state.invUntil=Math.max(state.invUntil,clock.elapsedTime+1);state.tracked='archive';closeDialog();saveGame();toast(inside?'침묵의 기록원 · 서가와 수로는 자유 순서로 조사':'여울 기록대로 귀환 · 기록원 진행 보존');}
+function archiveDialog(title,html,buttons=[]){journeyDialog(title,html,buttons);dlgEl().classList.add('archive-panel');}
+function openArchiveEntrance(){const s=state.archive,bs=[];const text='<b>'+archiveStatus()+'</b><br><br>안개 항로의 끝은 이름을 지우는 기록원으로 이어진다. 같은 적을 더 많이 잡는 곳이 아니라, 두 날개의 기록을 모아 닫힌 회랑을 여는 별도 지역이다.<br><br><b>서쪽 서가</b>에서는 사서의 수기를 읽고 달·바람·물결 서가의 순서를 추론한다. 틀려도 수기는 잃지 않는다. <b>동쪽 수로</b>에서는 번갈아 붉어지는 물길을 건너 조절기 둘을 각각 2.5초 동안 작동한다. 1.8m 이탈·피격·회피·공격·메뉴는 작업을 취소한다.<br><br>둘을 마치면 <b>북쪽 회랑</b> 개방. '+((cycleSession?.active||1)>=2?'첫 경비는 창병과 사수의 혼합, 다음 경비는 방패 대장과 후방 사수다. 아래 다회차 설명을 읽자.':'첫 경비는 기둥 엄폐와 사격 예고 끊기, 다음 경비는 강공격 가드 파괴로 대응한다.')+' 두 전투 사이 승리는 저장된다. 마지막 원본을 회수해 이곳에 인계하며 기록의 운명을 고른다.<br><br>배편·귀환·재도전 무료. 각 날개·조절기·전투 차수·원본 회수 저장. 사망·지역 이탈·재접속은 미완료 전투와 작업만 초기화한다. 경비별 전리품 없음. 마지막 인계 한 번 <b>600XP·400G·스킬1P</b>. 보존/공유는 이야기 기록만 다르며 능력치 보상은 같다.<br><br><b>인계 후 보법 연마 해금</b>: Lv.10과 잔상 습득 후 장로 곁 스킬 창(K)에서 2P로 짧은/긴 발걸음 중 하나를 배운다. 안전한 장로 곁에서 보법 비용2P를 돌려받아 기본 회피로 돌아갈 수 있다.';
+if(archiveReady()){bs.push([s.stage?'기록원으로 다시 건너가기':'침묵의 기록원 조사 시작',()=>{if(!archiveReady()||nearbyBell()?.id!=='archive')return;if(!s.stage)s.stage=1;archiveTravel(true);}]);if(s.stage===3)for(const[id,label]of[['keep','원본을 보존해 인계'],['share','길잡이 사본으로 인계']])bs.push([label,()=>{if(s.stage!==3||nearbyBell()?.id!=='archive')return;s.stage=4;s.ending=id;state.gold+=400;state.skillPts=(state.skillPts||0)+1;gainXp(600);saveGame();closeDialog();sfx('reward',1);toast('침묵을 건넌 기록 · 600XP · 400G · 스킬1P · 보법 연마(K) 해금');}]);}archiveDialog('침묵의 기록원',text+archiveCycleHint(),bs);}
+function archiveCycleHint(){return(cycleSession?.active||1)>=2?'<br><b>다회차 회랑</b>: 1차는 직선 돌진 창병(110HP)과 사수(110HP). 2차는 방패 대장(300HP)과 후방 사수(160HP). 기둥에 숨으며 직선 예고의 옆으로 피하고, 후방 사수 우선 또는 대장 가드 파괴를 고른다. 첫 회차와 총 체력은 같지만 동시 대응이 달라진다. 완료한 차수만 저장되며 미완료 조합은 다시 시작한다.':'';}
 function archiveMapHtml(){const s=state.archive;return `<div style="margin:8px 0;padding:10px;background:#1b2a34;border:1px solid #647c8e;border-radius:8px;text-align:center"><div style="padding:10px;background:#494353">북쪽 원본대<br>회랑 ${s.wave}/2 · ${s.stage>=3?'원본 회수':'원본 미회수'}</div><div style="padding:7px">↑ ${s.shelf&&s.valves===3?'문 열림':'서가 + 수로 기록 필요'}</div><div style="display:flex;gap:10px"><div style="flex:1;background:#514d51;padding:8px">서쪽 서가<br>${s.shelf?'복원 완료':s.read?'수기 기록됨':'수기부터 조사'}</div><div style="flex:1;background:#36535b;padding:8px">동쪽 수로<br>조절기 ${Number(!!(s.valves&1))+Number(!!(s.valves&2))}/2</div></div><div style="padding:9px">↖ 자유 순서 ↗</div><div style="padding:9px;background:#665e49">남쪽 대합실 · 언제든 여울로 귀환</div></div>`;}
-function openArchive(d){const s=state.archive;state.dlgFocus=d.root.position;if(d.id==='desk'){journeyDialog(d.name,archiveMapHtml()+archiveStatus()+'<br><br>서쪽 서가와 동쪽 수로는 원하는 순서로 진행한다. 북쪽 문은 두 날개의 기록이 있어야 열린다. 귀환은 언제든 무료이며 완료한 기록은 사라지지 않는다.',[['여울 기록대로 귀환',()=>{if(nearbyArchive()?.id==='desk')archiveTravel(false);}]]);return;}if(d.id==='clue'){journeyDialog(d.name,'사서의 수기: "<b>첫 장은 밤하늘을 비추고, 다음 장은 보이지 않는 숨결로 넘긴다. 마지막 장은 바다의 흔들림 속에 묻는다.</b>"<br><br>서가의 이름과 대조해 순서대로 책을 펼치자. 수기를 기록한 뒤부터 시도할 수 있다.',!s.read&&s.stage===1?[['사서 수기 기록',()=>{if(nearbyArchive()?.id!=='clue'||s.read)return;s.read=true;saveGame();closeDialog();toast('서가 수기를 기록했다 · 밤하늘, 숨결, 바다');}]]:[]);return;}if(['moon','wind','tide'].includes(d.id)){journeyDialog(d.name,s.shelf?'서가 기록은 이미 복원했다.':!s.read?'먼저 서가 남쪽의 사서 수기를 읽자.':`첫 장은 밤하늘, 다음 장은 숨결, 마지막 장은 바다.<br>올바른 책 ${s.input}/3 · 이 서가를 펼칠까?`,s.stage===1&&s.read&&!s.shelf?[['서가 펼치기',()=>{if(nearbyArchive()?.id!==d.id||s.shelf||!s.read)return;if(d.id===['moon','wind','tide'][s.input]){s.input++;skillFx(d.root.position,0x94dfdb,1.7,'ready');if(s.input===3){s.shelf=true;toast('서쪽 서가 기록 복원 · 북쪽 잠금 하나 해제');}else toast(`올바른 책 ${s.input}/3`);}else{s.input=0;toast('연결되지 않는 기록 · 책 순서만 처음부터');}saveGame();closeDialog();}]]:[]);return;}if(d.bit){if(s.valves&d.bit){journeyDialog(d.name,'조절기를 고정했다. 이 기록은 저장된다.');return;}if(s.stage!==1)return;state.archiveChannel={id:d.id,bit:d.bit,x:d.x,z:d.z,start:clock.elapsedTime,hp:state.hp};toast('수로 조절 중 · 2.5초, 피격·1.8m 이탈·회피·공격 시 취소');return;}if(d.id==='seal'){journeyDialog(d.name,s.shelf&&s.valves===3?'두 기록이 문을 열었다. 북쪽 회랑의 엄폐물 뒤로 접근하자.':`잠금: 서가 ${s.shelf?'해제':'미해제'}, 수로 ${s.valves===3?'해제':'미해제'}. 둘 다 마치면 문이 열린다.`);return;}if(d.id==='core'){journeyDialog(d.name,s.stage===2?'빈 서가와 물길 끝에 사라지지 않은 이름들이 남아 있다. 이 원본을 회수하면 두 날개의 여정이 끝난다.':s.stage>=3?'원본은 이미 회수했다. 여울 기록대에 인계하자.':'회랑 경비가 남아 있다. 원본은 아직 봉인되어 있다.',s.stage===2?[['기록원 원본 회수',()=>{if(s.stage!==2||nearbyArchive()?.id!=='core')return;s.stage=3;saveGame();closeDialog();sfx('reward',.7);toast('원본 회수 · 대합실로 돌아가 여울 기록대에 인계');}]]:[]);}}
-function spawnArchiveWave(){const s=state.archive;if(s.wave>=2||state.archiveFight)return;const defs=s.wave===0?[[254,-26,{...ENEMY,hp:110,dmg:17,speed:2,range:1.7,cd:1.8,label:'기록원 사수',archer:true}],[266,-26,{...ENEMY,hp:110,dmg:17,speed:2,range:1.7,cd:1.8,label:'기록원 사수',archer:true}]]:[[260,-24,{...WARRIOR,hp:460,dmg:24,guard:true,combo:false,aggro:24,label:'기록원 철갑 대장'}]];state.archiveFight=defs.map(([x,z,stats])=>{const e=state.spawn(state.protos.skel,{...stats,aggro:24,noElite:true,noRespawn:true,archiveGuard:true},x,z);e.expedition=e.trial=e.estuary=true;e.archerNext=clock.elapsedTime+2;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=2.8;e.root.add(e.nameSprite);}if(stats.archer){const bow=new THREE.Mesh(new THREE.TorusGeometry(.5,.07,5,16,Math.PI),new THREE.MeshLambertMaterial({color:0xc5a05f}));bow.position.set(-.5,1.4,.2);e.root.add(bow);}return e;});toast(s.wave===0?'회랑 사수 · 기둥 뒤로 엄폐하거나 사격 준비 끊기':'회랑 1차 저장 · 철갑 대장은 강공격으로 가드 파괴');}
+function openArchive(d){const s=state.archive;state.dlgFocus=d.root.position;if(d.id==='desk'){archiveDialog(d.name,archiveStatus()+archiveCycleHint()+archiveMapHtml()+'<br><br>서쪽 서가와 동쪽 수로는 원하는 순서로 진행한다. 북쪽 문은 두 날개의 기록이 있어야 열린다. 귀환은 언제든 무료이며 완료한 기록은 사라지지 않는다.',[['여울 기록대로 귀환',()=>{if(nearbyArchive()?.id==='desk')archiveTravel(false);}],...(highlandReady()?[['갈라진 고원 지도',openHighlandEntrance]]:[])]);return;}if(d.id==='clue'){archiveDialog(d.name,'사서의 수기: "<b>첫 장은 밤하늘을 비추고, 다음 장은 보이지 않는 숨결로 넘긴다. 마지막 장은 바다의 흔들림 속에 묻는다.</b>"<br><br>서가의 이름과 대조해 순서대로 책을 펼치자. 수기를 기록한 뒤부터 시도할 수 있다.',!s.read&&s.stage===1?[['사서 수기 기록',()=>{if(nearbyArchive()?.id!=='clue'||s.read)return;s.read=true;saveGame();closeDialog();toast('서가 수기를 기록했다 · 밤하늘, 숨결, 바다');}]]:[]);return;}if(['moon','wind','tide'].includes(d.id)){archiveDialog(d.name,s.shelf?'서가 기록은 이미 복원했다.':!s.read?'먼저 서가 남쪽의 사서 수기를 읽자.':`첫 장은 밤하늘, 다음 장은 숨결, 마지막 장은 바다.<br>올바른 책 ${s.input}/3 · 이 서가를 펼칠까?`,s.stage===1&&s.read&&!s.shelf?[['서가 펼치기',()=>{if(nearbyArchive()?.id!==d.id||s.shelf||!s.read)return;if(d.id===['moon','wind','tide'][s.input]){s.input++;skillFx(d.root.position,0x94dfdb,1.7,'ready');if(s.input===3){s.shelf=true;toast('서쪽 서가 기록 복원 · 북쪽 잠금 하나 해제');}else toast(`올바른 책 ${s.input}/3`);}else{s.input=0;toast('연결되지 않는 기록 · 책 순서만 처음부터');}saveGame();closeDialog();}]]:[]);return;}if(d.bit){if(s.valves&d.bit){archiveDialog(d.name,'조절기를 고정했다. 이 기록은 저장된다.');return;}if(s.stage!==1)return;state.archiveChannel={id:d.id,bit:d.bit,x:d.x,z:d.z,start:clock.elapsedTime,hp:state.hp};toast('수로 조절 중 · 2.5초, 피격·1.8m 이탈·회피·공격 시 취소');return;}if(d.id==='seal'){archiveDialog(d.name,s.shelf&&s.valves===3?'두 기록이 문을 열었다. 북쪽 회랑의 엄폐물 뒤로 접근하자.':`잠금: 서가 ${s.shelf?'해제':'미해제'}, 수로 ${s.valves===3?'해제':'미해제'}. 둘 다 마치면 문이 열린다.`);return;}if(d.id==='core'){archiveDialog(d.name,s.stage===2?'빈 서가와 물길 끝에 사라지지 않은 이름들이 남아 있다. 이 원본을 회수하면 두 날개의 여정이 끝난다.':s.stage>=3?'원본은 이미 회수했다. 여울 기록대에 인계하자.':'회랑 경비가 남아 있다. 원본은 아직 봉인되어 있다.',s.stage===2?[['기록원 원본 회수',()=>{if(s.stage!==2||nearbyArchive()?.id!=='core')return;s.stage=3;saveGame();closeDialog();sfx('reward',.7);toast('원본 회수 · 대합실로 돌아가 여울 기록대에 인계');}]]:[]);}}
+function spawnArchiveWave(){const s=state.archive;if(s.wave>=2||state.archiveFight)return;const plan=archiveCyclePlan(cycleSession?.active||1,s.wave);const defs=plan?plan.map(d=>[d.x,d.z,{...(d.role==='archer'?ENEMY:WARRIOR),hp:d.hp,dmg:d.dmg,speed:d.role==='lancer'?2.4:2,range:1.7,cd:1.8,combo:false,guard:d.role==='guard',archer:d.role==='archer',lancer:d.role==='lancer',label:d.label}]):s.wave===0?[[254,-26,{...ENEMY,hp:110,dmg:17,speed:2,range:1.7,cd:1.8,label:'기록원 사수',archer:true}],[266,-26,{...ENEMY,hp:110,dmg:17,speed:2,range:1.7,cd:1.8,label:'기록원 사수',archer:true}]]:[[260,-24,{...WARRIOR,hp:460,dmg:24,guard:true,combo:false,aggro:24,label:'기록원 철갑 대장'}]];state.archiveFight=defs.map(([x,z,stats])=>{const e=state.spawn(state.protos.skel,{...stats,aggro:24,noElite:true,noRespawn:true,archiveGuard:true},x,z);e.expedition=e.trial=e.estuary=true;if(plan)e.highlandBounds={x1:232,x2:288,z1:-30.5,z2:-12.5};e.lanceNext=clock.elapsedTime+1.8;e.archerNext=clock.elapsedTime+2;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=2.8;e.root.add(e.nameSprite);}if(stats.lancer){const spear=new THREE.Group(),shaft=new THREE.Mesh(new THREE.CylinderGeometry(.045,.045,3.7,5),new THREE.MeshLambertMaterial({color:0xa98b59})),tip=new THREE.Mesh(new THREE.ConeGeometry(.16,.65,5),new THREE.MeshLambertMaterial({color:0xc7e7ee}));shaft.rotation.x=Math.PI/2;shaft.position.z=1;tip.rotation.x=Math.PI/2;tip.position.z=3;spear.add(shaft,tip);spear.position.set(.48,1,0);e.root.add(spear);}if(stats.archer){const bow=new THREE.Mesh(new THREE.TorusGeometry(.5,.07,5,16,Math.PI),new THREE.MeshLambertMaterial({color:0xc5a05f}));bow.position.set(-.5,1.4,.2);e.root.add(bow);}return e;});toast(plan?(s.wave===0?'회차 회랑 · 창병의 직선 옆으로, 사수는 기둥 엄폐':'회차 회랑 · 대장의 가드 파괴 또는 후방 사수부터') :s.wave===0?'회랑 사수 · 기둥 뒤로 엄폐하거나 사격 준비 끊기':'회랑 1차 저장 · 철갑 대장은 강공격으로 가드 파괴');}
 function updateArchive(now){const s=state.archive,p=state.player.position,inside=inArchive();const open=s.shelf&&s.valves===3;state.archiveGate.mesh.visible=!open;for(const c of state.archiveGate.colliders){const i=colliders.indexOf(c);if(open&&i>=0)colliders.splice(i,1);else if(!open&&i<0)colliders.push(c);}for(const d of state.archiveProps||[]){const done=d.id==='clue'?s.read:['moon','wind','tide'].includes(d.id)?s.shelf:d.bit?!!(s.valves&d.bit):d.id==='core'?s.stage>=3:false;d.gem.visible=!done;}
 if(state.dead||!inside){clearArchiveFight();for(const t of state.archiveStreams){t.at=0;t.next=0;t.mesh.material.color.setHex(0x70cadf);}return;}if(state.archiveFight?.every(e=>e.dead)){s.wave++;clearArchiveFight();if(s.wave===2){s.stage=2;toast('회랑의 침묵 · 북쪽 원본대에서 핵심 기록 회수');}else toast('첫 경비 정리 · 차수 저장, 다음 경비에게 접근');saveGame();}if(s.stage===1&&open&&s.wave<2&&!state.archiveFight&&p.z<-13&&!state.dialog&&!state.menuOpen)spawnArchiveWave();
-for(const t of state.archiveStreams){t.label.visible=s.stage===1&&s.valves!==3;t.mesh.visible=true;if(s.stage!==1||s.valves===3){t.at=0;t.next=0;t.mesh.material.color.setHex(0x70cadf);continue;}if(state.dialog||state.menuOpen){t.at=0;t.next=now+2+t.i*2;t.mesh.material.color.setHex(0x70cadf);continue;}if(!t.next)t.next=now+2+t.i*2;if(!t.at&&now>=t.next){t.at=now+1.2;t.mesh.material.color.setHex(0xff6b5c);}t.mesh.material.opacity=t.at?.22+.18*Math.sin(now*10)**2:.2;if(t.at&&now>=t.at){if(p.x>=272&&p.x<=289&&Math.abs(p.z-t.z)<1.3){if(now<state.invUntil){t.dodges++;registerDodgeBlock(now);}else{t.hits++;state.hp=Math.max(0,state.hp-Math.max(1,28-GEAR_DEF[state.gear.armor]));state.archiveChannel=null;hitFlash(state.player);sfx('hurt',.7);if(!state.hp)playerDie('기록원 수로');}}t.at=0;t.next=now+5;t.mesh.material.color.setHex(0x70cadf);}}
+for(const t of state.archiveStreams){t.label.visible=s.stage===1&&s.valves!==3;t.mesh.visible=true;if(s.stage!==1||s.valves===3){t.at=0;t.next=0;t.mesh.material.color.setHex(0x70cadf);continue;}if(state.dialog||state.menuOpen){t.at=0;t.next=now+2+t.i*2;t.mesh.material.color.setHex(0x70cadf);continue;}if(!t.next)t.next=now+2+t.i*2;if(!t.at&&now>=t.next){t.at=now+1.2;t.mesh.material.color.setHex(0xff6b5c);}t.mesh.material.opacity=t.at?.22+.18*Math.sin(now*10)**2:.2;if(t.at&&now>=t.at){if(p.x>=272&&p.x<=289&&Math.abs(p.z-t.z)<1.3){if(now<state.invUntil){t.dodges++;registerDodgeBlock(now);}else{t.hits++;state.hp=Math.max(0,state.hp-Math.max(1,28-currentEquipmentStats().defense));state.archiveChannel=null;hitFlash(state.player);sfx('hurt',.7);if(!state.hp)playerDie('기록원 수로');}}t.at=0;t.next=now+5;t.mesh.material.color.setHex(0x70cadf);}}
 const ch=state.archiveChannel;if(ch){if(state.dead||state.dialog||state.menuOpen||state.hp<ch.hp||Math.hypot(p.x-ch.x,p.z-ch.z)>1.8||now<state.dodgeUntil||now<state.attackUntil){state.archiveChannel=null;toast('수로 조절 중단 · 완료한 조절기는 보존');}else if(now-ch.start>=2.5){s.valves|=ch.bit;state.archiveChannel=null;saveGame();sfx('reward',.6);toast(s.valves===3?'동쪽 수로 기록 복원 · 북쪽 잠금 하나 해제':'수로 조절기 고정 · 반대쪽으로 이동');}}}
 
 function courierStatus(){if(state.courier===3)return '북서 전령 기록 인계 완료';if(state.courier===2)return '전령길 안내판에 기록 인계';if(state.courier===1)return '길 안쪽 봉인함 회수';if(state.courierFight)return `전령길 궁수 ${(state.courierFight||[]).filter(e=>!e.dead).length}명 · 엄폐/사격 예고 끊기`;return state.quest.idx>=10?'북서 전령길 안내판에서 시작':'메인 의뢰 10개 완료 후 도전';}
@@ -2925,7 +3142,7 @@ function updateArcher(e,dt,now){if(!e.stats.archer)return false;
  if(state.dead||state.dialog||state.menuOpen||e.dead){cancelArcher(e);e.archerNext=now+1.6;e.anim.update(dt);return true;}
  if(now<(e.hitUntil||0)||now<(e.staggerUntil||0)){cancelArcher(e,'interrupted');e.archerNext=now+1.6;e.anim.update(dt);return true;}
  makeArcherShots(e);const p=state.player.position;let flying=false;
- for(const a of e.arrows){if(a.left<=0)continue;flying=true;const from=a.root.position.clone(),step=Math.min(a.left,10*dt),to=from.clone().addScaledVector(a.dir,step);if(colliders.some(c=>segmentDistance(c,from,to)<c.r+.15)){a.left=0;a.root.visible=false;e.archerWalls=(e.archerWalls||0)+1;e.archerResult='wall';}else if(segmentDistance(p,from,to)<.65){a.left=0;a.root.visible=false;if(!e.archerBatchHit){e.archerBatchHit=true;if(now<state.invUntil){registerDodgeBlock(now);e.archerDodges=(e.archerDodges||0)+1;e.archerResult='dodge';}else if(now>=(state.arrowSafeUntil||0)){state.arrowSafeUntil=now+.35;state.hp=Math.max(0,state.hp-Math.max(1,e.stats.dmg-GEAR_DEF[state.gear.armor]));hitFlash(state.player);sfx('hurt',.7);e.archerHits=(e.archerHits||0)+1;e.archerResult='hit';if(state.hp<=0)playerDie(e.stats.label);}}}else{a.root.position.copy(to);a.left-=step;if(a.left<=0){a.root.visible=false;e.archerResult='miss';}}}
+ for(const a of e.arrows){if(a.left<=0)continue;flying=true;const from=a.root.position.clone(),step=Math.min(a.left,10*dt),to=from.clone().addScaledVector(a.dir,step);if(colliders.some(c=>segmentDistance(c,from,to)<c.r+.15)){a.left=0;a.root.visible=false;e.archerWalls=(e.archerWalls||0)+1;e.archerResult='wall';}else if(segmentDistance(p,from,to)<.65){a.left=0;a.root.visible=false;if(!e.archerBatchHit){e.archerBatchHit=true;if(now<state.invUntil){registerDodgeBlock(now);e.archerDodges=(e.archerDodges||0)+1;e.archerResult='dodge';}else if(now>=(state.arrowSafeUntil||0)){state.arrowSafeUntil=now+.35;state.hp=Math.max(0,state.hp-Math.max(1,e.stats.dmg-currentEquipmentStats().defense));hitFlash(state.player);sfx('hurt',.7);e.archerHits=(e.archerHits||0)+1;e.archerResult='hit';if(state.hp<=0)playerDie(e.stats.label);}}}else{a.root.position.copy(to);a.left-=step;if(a.left<=0){a.root.visible=false;e.archerResult='miss';}}}
  if(e.archerAt){e.mode='archerAim';if(now>=e.archerAt){e.archerAt=0;for(const l of e.archerLines)l.visible=false;for(let i=0;i<3;i++){const a=e.arrows[i];a.root.position.copy(e.archerFrom);a.root.position.y=.8;a.dir.copy(e.archerDirs[i]);a.root.rotation.y=Math.atan2(a.dir.x,a.dir.z);a.root.visible=true;a.left=14;}e.archerBatchHit=false;e.archerRecover=now+2;e.archerNext=now+5;e.archerFired=(e.archerFired||0)+1;e.archerResult='flying';e.anim.playOnce('attack');}e.anim.update(dt);return true;}
  if(flying||now<(e.archerRecover||0)){e.mode='archerRecover';e.anim.update(dt);return true;}
  const dir=p.clone().sub(e.root.position);dir.y=0;const d=dir.length();if(d<2.4)return false;e.anim.play('idle');e.mode='archerWait';if(d<17&&now>=(e.archerNext||0)){dir.normalize();e.root.rotation.y=Math.atan2(dir.x,dir.z);e.archerFrom=e.root.position.clone();e.archerDirs=[-.25,0,.25].map(a=>dir.clone().applyAxisAngle(new THREE.Vector3(0,1,0),a));e.archerAt=now+1.2;e.archerResult='aim';e.pendingHit=0;e.combo2=0;if(e.tele)e.tele.visible=false;for(let i=0;i<3;i++){const l=e.archerLines[i],v=e.archerDirs[i],length=archerAimLength(e.archerFrom,v);l.scale.y=length/14;l.position.copy(e.archerFrom).addScaledVector(v,length/2);l.position.y=.075;l.rotation.z=Math.atan2(v.x,v.z);l.visible=length>.05;}}e.anim.update(dt);return true;
@@ -3542,9 +3759,12 @@ function objectiveTarget() {
   if (!state.npc) return null;
   const mode = state.tracked || 'auto';
   if (mode === 'none') return null;
+  if (mode === 'lightRelay')return relayTarget()||autoObjective();
   if (mode === 'archive') return archiveTarget() || autoObjective();
   if (mode === 'mist') return mistTarget() || autoObjective();
   if (mode === 'bell') return bellTarget() || autoObjective();
+  if(mode==='canal')return canalTarget()||autoObjective();
+  if(mode==='highland')return highlandTarget()||autoObjective();
   if (mode === 'estuary') return estuaryTarget() || autoObjective();
   if (mode === 'courier') return courierTarget() || autoObjective();
   if (mode === 'cart') return cartTarget() || autoObjective();
@@ -3563,13 +3783,15 @@ function autoObjective() {
   return bountyTarget();
 }
 function cycleTrack() {
-  const opts = ['auto'];
+  const opts = ['auto'];if(relayTarget())opts.push('lightRelay');
   if (QUESTS[state.quest.idx]) opts.push('quest');
   if (state.bounty && state.bounty.active) opts.push('bounty');
   if (journeyTarget()) opts.push('journey');
   if (beaconTarget()) opts.push('beacon');
   if (observatoryTarget()) opts.push('observatory');
   if (echoTarget()) opts.push('echo');
+  if(canalTarget())opts.push('canal');
+  if(highlandTarget())opts.push('highland');
   if(archiveTarget())opts.push('archive');
   if(mistTarget())opts.push('mist');
   if(bellTarget())opts.push('bell');
@@ -3705,6 +3927,7 @@ document.getElementById('tutskip').addEventListener('click', (e) => {
 
 // ---------- 전투 판정 ----------
 function killEnemy(e) {
+  clearWindDraw(e);cancelLancer(e);cancelCycleEcho(e);cancelMender(e);
   e.dead = true; e.mode = 'dead';
   cancelWardenPulse(e);
   cancelStormCharge(e);
@@ -3714,6 +3937,7 @@ function killEnemy(e) {
   sfx('death', 0.9);
   e.respawnAt = clock.elapsedTime + (e.stats.boss ? 60 : 6);
   if(e.expedition){e.respawnAt=1e12;if(e.tele)e.tele.visible=false;setTimeout(()=>{e.root.visible=false},1600);return;}
+  if(!e.trial)notifyEquipment(equipmentDrop(ensureEquipment(),e.stats),'몬스터 장비');
   state.kills++;
   state.dex[e.stats.label] = (state.dex[e.stats.label] || 0) + 1;
   gainXp(e.stats.gold || 3);
@@ -3813,7 +4037,7 @@ function playerAttackHit() {
     if (fwd.angleTo(to.normalize()) > PLAYER.arc / 2) continue;
     const guardNow=(e.stats.echoBoss&&state.echoFight?.shield)||(e.stats.guard&&!(e.staggerUntil&&now<e.staggerUntil));
     const pursuitHit=!strong&&!guardNow&&pursuitReady(e,now);
-    let dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * mult * (pursuitHit?1.5:1));
+    let dmg = Math.round((PLAYER.dmg + currentEquipmentStats().attack) * mult * (pursuitHit?1.5:1));
     let bladeHit=false;
     if (!bladeUsed && state.bladeUntil && now < state.bladeUntil) { bladeHit=true; dmg = Math.round(dmg * 1.6); bladeUsed = true; state.bladeUntil = 0; } // 칼바람
     const guardHeld = e.stats.guard && !(e.staggerUntil && now < e.staggerUntil) && !strong;
@@ -3828,12 +4052,13 @@ function playerAttackHit() {
 
 // ---------- 회전베기 (선풍 스킬, F키 / 회전베기 버튼): 주위 360° 범위 공격, 가드 파괴 가능 ----------
 function tryWhirl() {
-  if (!state.ready || state.dead || state.dialog) return;
+  if (!state.ready || state.dead || state.dialog || state.menuOpen) return;
   if (!hasSkill('whirl')) { toggleSkillTree(); return; }
   const now = clock.elapsedTime;
   if (now < state.whirlCdUntil || now < state.dodgeUntil || now < state.attackCdUntil) return;
   state.masteryChain = null;
-  state.whirlCdUntil = now + (hasSkill('storm') ? 6 : 8);
+  const profile=whirlProfile();state.lastWhirlProfile={...profile};
+  state.whirlCdUntil = now + profile.cooldown;
   state.didHit = true; // 회전베기는 아래에서 즉시 판정. 일반 공격 지연 판정이 덧붙지 않게 함
   state.attackUntil = now + 0.5;
   state.attackCdUntil = now + 0.6;
@@ -3841,16 +4066,16 @@ function tryWhirl() {
   state.anim.playOnce('slice_diagonal');
   sfx('swing2', 1);
   window.__dbgWhirl = (window.__dbgWhirl || 0) + 1;
-  const dmg = Math.round((PLAYER.dmg + GEAR_ATK[state.gear.sword]) * (hasSkill('storm') ? 2.0 : 1.4));
+  const dmg = Math.round((PLAYER.dmg + currentEquipmentStats().attack) * profile.multiplier);
   const p = state.player.position;
   for (const e of state.enemies) {
     if (e.dead) continue;
-    if (e.root.position.distanceTo(p) > 2.8 || observatoryBlocked(p,e.root.position)) continue;
-    damageEnemy(e, dmg, true);
-    skillFx(e.root.position,0xd5f4ff,1,'hit');
+    if (e.root.position.distanceTo(p) > profile.radius || observatoryBlocked(p,e.root.position)) continue;
+    damageEnemy(e, dmg, profile.heavy,'whirl');
+    skillFx(e.root.position,profile.color,1,'hit');
     if (activeMastery('gale') && galeEligible(e)) e.galeUntil = now + 3;
   }
-  skillFx(p,activeMastery('gale')?0x91ffd5:0x91dbff,2.8,'whirl');
+  skillFx(p,profile.id?profile.color:activeMastery('gale')?0x91ffd5:profile.color,profile.radius,'whirl');
   updateWhirlBtn();
 }
 
@@ -3880,9 +4105,10 @@ let windVisual=null;
 function makeWindVisual(){if(windVisual)return;const root=new THREE.Group();const mat=new THREE.MeshBasicMaterial({color:0x7de7ff,transparent:true,opacity:.95,depthWrite:false});
   const arc=new THREE.Mesh(new THREE.TorusGeometry(.48,.095,6,20,Math.PI*1.5),mat);arc.rotation.x=Math.PI/2;root.add(arc);
   const core=new THREE.Mesh(new THREE.OctahedronGeometry(.24),new THREE.MeshBasicMaterial({color:0xecffff}));root.add(core);
-  const tail=new THREE.Mesh(new THREE.ConeGeometry(.2,1.7,5),new THREE.MeshBasicMaterial({color:0x45c5ff,transparent:true,opacity:.45,depthWrite:false}));tail.rotation.x=-Math.PI/2;tail.position.z=-.85;root.add(tail);scene.add(root);root.visible=false;windVisual=root;
+  const tail=new THREE.Mesh(new THREE.ConeGeometry(.2,1.7,5),new THREE.MeshBasicMaterial({color:0x45c5ff,transparent:true,opacity:.45,depthWrite:false}));tail.rotation.x=-Math.PI/2;tail.position.z=-.85;root.add(tail);const echoArc=new THREE.Mesh(new THREE.TorusGeometry(.68,.065,6,24,Math.PI*1.5),new THREE.MeshBasicMaterial({color:0xbaffdf,transparent:true,opacity:.95,depthWrite:false}));echoArc.rotation.x=Math.PI/2;echoArc.rotation.z=Math.PI;echoArc.visible=false;root.add(echoArc);scene.add(root);root.visible=false;windVisual=root;
 }
-function cancelWindshot(result){if(state.windshot){state.windshot=null;state.windResult=result;}if(windVisual)windVisual.visible=false;}
+const fanVisuals=[];
+function cancelWindshot(result){for(const v of fanVisuals)v.visible=false;if(state.windshot){state.windshot=null;state.windResult=result;}if(windVisual)windVisual.visible=false;}
 function windWall(p){
   if(!onWorld(p))return true;
   if(colliders.some(c=>Math.hypot(p.x-c.x,p.z-c.z)<c.r+.22))return true;
@@ -3896,22 +4122,30 @@ function tryWindshot(){
   if(!state.ready||state.dead||state.dialog||state.menuOpen)return;
   if(!hasSkill('windshot')){toggleSkillTree();return;}
   const now=clock.elapsedTime;if(now<state.windCdUntil||now<state.attackCdUntil||now<state.dodgeUntil)return;
-  state.windCdUntil=now+5;state.attackCdUntil=now+.6;state.attackUntil=now+.45;state.didHit=true;state.attackStrong=false;state.masteryChain=null;
+  state.windCdUntil=now+(fanningWind()?7:returningWind()?6:5);state.attackCdUntil=now+.6;state.attackUntil=now+.45;state.didHit=true;state.attackStrong=false;state.masteryChain=null;
   const dir=new THREE.Vector3(Math.sin(state.heading),0,Math.cos(state.heading));const pos=state.player.position.clone();pos.y=.8;
-  const pierce=piercingWind();state.lastWindHits=0;state.windshot={pos,origin:pos.clone(),dir,left:10,dmg:Math.round((PLAYER.dmg+GEAR_ATK[state.gear.sword])*(pierce?.9:1.2)),pierce,hits:new Set()};state.windResult='flying';
-  state.anim.playOnce('slice_diagonal');skillFx(pos,0x66dfff,1.15,'cast',state.heading);makeWindVisual();windVisual.children[0].scale.set(pierce?.55:1,pierce?1.7:1,1);windVisual.children[0].material.color.setHex(pierce?0xffd36c:0x7de7ff);windVisual.children[1].material.color.setHex(pierce?0xfff2b2:0xecffff);windVisual.children[2].material.color.setHex(pierce?0xffb34e:0x45c5ff);windVisual.position.copy(pos);windVisual.rotation.y=state.heading;windVisual.visible=true;sfx('swing2',.8);window.__dbgWind=(window.__dbgWind||0)+1;
+  if(fanningWind()){startFanWind(pos,dir);return;}
+  const pierce=piercingWind(),draw=drawingWind(),returning=returningWind();state.lastWindHits=0;state.windshot={pos,origin:pos.clone(),dir,left:returning?8:10,returning,returnLeg:false,totalHits:0,dmg:Math.round((PLAYER.dmg+currentEquipmentStats().attack)*(returning?.65:draw?.75:pierce?.9:1.2)),pierce,draw,hits:new Set()};state.windResult='flying';
+  state.anim.playOnce('slice_diagonal');skillFx(pos,0x66dfff,1.15,'cast',state.heading);makeWindVisual();windVisual.children[3].visible=returning;windVisual.children[0].scale.set(pierce?.55:1,pierce?1.7:1,1);windVisual.children[0].material.color.setHex(returning?0x65ffbc:draw?0xbb8bff:pierce?0xffd36c:0x7de7ff);windVisual.children[1].material.color.setHex(returning?0xe2ffee:draw?0xe8d7ff:pierce?0xfff2b2:0xecffff);windVisual.children[2].material.color.setHex(returning?0x14bf8e:draw?0x8f56df:pierce?0xffb34e:0x45c5ff);windVisual.position.copy(pos);windVisual.rotation.y=state.heading;windVisual.visible=true;sfx('swing2',.8);window.__dbgWind=(window.__dbgWind||0)+1;
 }
+function startFanWind(pos,dir){makeWindVisual();windVisual.visible=false;while(fanVisuals.length<3){const v=windVisual.clone(true);v.traverse(o=>{if(o.isMesh&&o.material)o.material=o.material.clone()});v.children[0].material.color.setHex(0x7de7ff);v.children[1].material.color.setHex(0xecffff);v.children[2].material.color.setHex(0x45c5ff);v.children[3].visible=false;scene.add(v);fanVisuals.push(v);}const heading=Math.atan2(dir.x,dir.z);const rays=[0,-.32,.32].map((angle,i)=>{const h=heading+angle,d=new THREE.Vector3(Math.sin(h),0,Math.cos(h));const v=fanVisuals[i];v.children[0].scale.set(1,1,1);v.children[3].visible=false;v.position.copy(pos);v.rotation.y=h;v.visible=true;return{pos:pos.clone(),origin:pos.clone(),dir:d,left:7,active:true};});state.windshot={fan:true,pos:pos.clone(),dir:dir.clone(),left:7,rays,hits:new Set(),totalHits:0,dmg:Math.round((PLAYER.dmg+currentEquipmentStats().attack)*.55)};state.windResult='fan-flying';state.lastWindHits=0;state.anim.playOnce('slice_diagonal');skillFx(pos,0x7de7ff,1.4,'cast',heading);sfx('swing2',.8);window.__dbgWind=(window.__dbgWind||0)+1;}
+function updateFanWind(w,dt,now){for(let i=0;i<w.rays.length;i++){const r=w.rays[i];if(!r.active)continue;let remaining=Math.min(r.left,14*dt);while(remaining>.0001&&r.active){const step=Math.min(.15,remaining),next=r.pos.clone().addScaledVector(r.dir,step);if(windWall(next)){r.active=false;skillFx(next,0xa4b5c0,.7,'hit');break;}let target=null,best=Infinity;for(const e of state.enemies){if(e.dead||e.root.position.clone().sub(r.origin).dot(r.dir)<0)continue;if(segmentDistance(e.root.position,r.pos,next)<.7){const t=e.root.position.clone().sub(r.pos).dot(r.dir);if(t<best){target=e;best=t;}}}if(!target&&hitObservatoryBell(r,next)){r.active=false;break;}r.pos.copy(next);r.left-=step;remaining-=step;if(target){r.active=false;if(!w.hits.has(target)){w.hits.add(target);const guard=(target.stats.echoBoss&&state.echoFight?.shield)||(target.stats.guard&&!(target.staggerUntil&&now<target.staggerUntil)),before=target.hp;damageEnemy(target,w.dmg,false,'windshot');w.totalHits++;state.lastWindHits=w.totalHits;if(activeMastery('pursuit')&&!guard&&!target.dead&&target.hp<before){state.pursuit={target,until:now+4};skillFx(target.root.position,0xffc862,1,'ready');}skillFx(target.root.position,guard?0xa4b5c0:0x7de7ff,1,'hit');}break;}}if(r.left<=.0001)r.active=false;if(fanVisuals[i]){fanVisuals[i].visible=r.active;fanVisuals[i].position.copy(r.pos);}}w.left=Math.max(...w.rays.map(r=>r.active?r.left:0));w.pos.copy(w.rays[0].pos);if(w.rays.every(r=>!r.active))cancelWindshot('fan-ended');}
+function clearWindDraw(e){const d=e.windDraw;if(d?.line){scene.remove(d.line);d.line.geometry.dispose();d.line.material.dispose();}e.windDraw=null;}
+function windDrawEligible(e){return !e.dead&&!e.stats.windPractice&&!e.stats.boss&&!e.stats.elite&&(!(e.stats.noRespawn||e.expedition||e.trial)||!!(e.stats.highlandGuard||e.stats.canalGuard));}
+function startWindDraw(e,now){if(!windDrawEligible(e))return false;const dir=state.player.position.clone().sub(e.root.position);dir.y=0;const distance=Math.min(2.8,Math.max(0,dir.length()-1.8));if(distance<.05)return false;dir.normalize();clearWindDraw(e);cancelLancer(e,now);cancelCycleEcho(e,now);const geometry=new THREE.BufferGeometry().setFromPoints([e.root.position.clone(),state.player.position.clone()]),line=new THREE.Line(geometry,new THREE.LineBasicMaterial({color:0xd59aff,transparent:true,opacity:.9,depthTest:false}));line.userData.windDrawLine=true;scene.add(line);e.windDraw={dir,total:distance,left:distance,start:now,until:now+.35,moved:0,line};e.staggerUntil=Math.max(e.staggerUntil||0,now+.35);e.pendingHit=0;e.combo2=0;e.leapFrom=null;e.atkUntil=0;e.cdUntil=Math.max(e.cdUntil||0,now+.8);if(e.tele)e.tele.visible=false;cancelArcher(e);e.archerNext=Math.max(e.archerNext||0,now+.8);skillFx(e.root.position,0xbb8bff,1.4,'ready');state.lastWindDraw={label:e.stats.label,moved:0};return true;}
+function updateWindDraw(e,dt,now){const d=e.windDraw;if(!d)return false;if(e.dead||state.dead||state.dialog||state.menuOpen||now>d.until+.1||e.root.position.distanceTo(state.player.position)>14){clearWindDraw(e);return false;}let left=Math.max(0,Math.min(d.left,d.total*Math.min(1,Math.max(0,(now-d.start)/.35))-d.moved));while(left>.0001){const step=Math.min(.15,left),p=e.root.position.clone().addScaledVector(d.dir,step);if(windWall(p)||colliders.some(c=>Math.hypot(p.x-c.x,p.z-c.z)<c.r+.55)){clearWindDraw(e);break;}if(e.highlandBounds){const b=e.highlandBounds;if(p.x<b.x1||p.x>b.x2||p.z<b.z1||p.z>b.z2){clearWindDraw(e);break;}}if(p.distanceTo(state.player.position)<1.8){clearWindDraw(e);break;}e.root.position.copy(p);d.left-=step;d.moved+=step;left-=step;state.lastWindDraw={label:e.stats.label,moved:d.moved};}if(e.windDraw){const a=d.line.geometry.attributes.position;a.setXYZ(0,e.root.position.x,1.05,e.root.position.z);a.setXYZ(1,state.player.position.x,1.05,state.player.position.z);a.needsUpdate=true;}if(d.left<.01||now>=d.until)clearWindDraw(e);e.anim.update(dt);return true;}
 function updateWindshot(dt,now){
   const w=state.windshot;if(!w)return;if(state.dead||state.dialog||state.menuOpen){cancelWindshot('cancelled');return}
+  if(w.fan){updateFanWind(w,dt,now);return;}
   let remaining=Math.min(w.left,14*dt);
   while(remaining>.0001&&state.windshot){const step=Math.min(.15,remaining),next=w.pos.clone().addScaledVector(w.dir,step);
     if(windWall(next)){skillFx(next,0xa4b5c0,.7,'hit');cancelWindshot('wall');break;}
-    let target=null,best=Infinity;for(const e of state.enemies){if(e.dead||w.hits.has(e)||e.root.position.clone().sub(w.origin).dot(w.dir)<0)continue;const d=segmentDistance(e.root.position,w.pos,next);if(d<.7){const t=e.root.position.clone().sub(w.pos).dot(w.dir);if(t<best){best=t;target=e}}}
+    let target=null,best=Infinity;for(const e of state.enemies){if(e.dead||w.hits.has(e)||(w.returning&&w.hits.size>=2)||e.root.position.clone().sub(w.origin).dot(w.dir)<0)continue;const d=segmentDistance(e.root.position,w.pos,next);if(d<.7){const t=e.root.position.clone().sub(w.pos).dot(w.dir);if(t<best){best=t;target=e}}}
     if(!target&&hitObservatoryBell(w,next)){cancelWindshot('bell');break;}
     w.pos.copy(next);w.left-=step;remaining-=step;
-    if(target){const guard=(target.stats.echoBoss&&state.echoFight?.shield)||(target.stats.guard&&!(target.staggerUntil&&now<target.staggerUntil)),before=target.hp;damageEnemy(target,w.dmg,false,'windshot');if(activeMastery('pursuit')&&!guard&&!target.dead&&target.hp<before){state.pursuit={target,until:now+4};skillFx(target.root.position,0xffc862,1,'ready');toast('추격 표식! 4초 안에 같은 적을 일반 근접 타격');}const blocked=guard||target.hp===before;w.hits.add(target);state.lastWindHits=w.hits.size;skillFx(target.root.position,blocked?0xa4b5c0:w.pierce?0xffd36c:0xffe29b,1.2,'hit');if(!w.pierce||blocked||w.hits.size>=3){cancelWindshot(blocked?'guard':w.pierce?'pierce':'hit');break;}continue;}
-    if(w.left<=.0001){cancelWindshot('range');break;}
+    if(target){const guard=(target.stats.echoBoss&&state.echoFight?.shield)||(target.stats.guard&&!(target.staggerUntil&&now<target.staggerUntil)),before=target.hp;damageEnemy(target,w.dmg,false,'windshot');if(activeMastery('pursuit')&&!guard&&!target.dead&&target.hp<before){state.pursuit={target,until:now+4};skillFx(target.root.position,0xffc862,1,'ready');toast('추격 표식! 4초 안에 같은 적을 일반 근접 타격');}const blocked=guard||target.hp===before;if(w.draw&&!blocked&&!target.dead)startWindDraw(target,now);w.hits.add(target);w.totalHits=(w.totalHits||0)+1;state.lastWindHits=w.totalHits;skillFx(target.root.position,blocked?0xa4b5c0:w.returning?0x65ffbc:w.draw?0xbb8bff:w.pierce?0xffd36c:0xffe29b,1.2,'hit');if((!w.pierce&&!w.returning)||blocked||(!w.returning&&w.hits.size>=3)){cancelWindshot(blocked?'guard':w.pierce?'pierce':'hit');break;}continue;}
   }
+  if(state.windshot&&w.left<=.0001){if(w.returning&&!w.returnLeg){w.returnLeg=true;w.left=8;w.origin.copy(w.pos);w.dir.negate();w.hits.clear();state.windResult='returning';skillFx(w.pos,0x65ffbc,1.3,'ready');}else cancelWindshot(w.returning?'returned':'range');}
   if(state.windshot&&windVisual){windVisual.position.copy(w.pos);windVisual.rotation.y=Math.atan2(w.dir.x,w.dir.z);}
 }
 
@@ -3954,7 +4188,7 @@ function updateWardenPulse(e, dt, now) {
     if (d <= 4) {
       if (blocked) registerDodgeBlock(now);
       else {
-        state.hp = Math.max(0, state.hp - Math.max(1, 28 - GEAR_DEF[state.gear.armor]));
+        state.hp = Math.max(0, state.hp - Math.max(1, 28 - currentEquipmentStats().defense));
         hitFlash(state.player); sfx('hurt', 0.9);
         if (state.hp <= 0) playerDie('감시자의 지면파');
       }
@@ -4014,7 +4248,7 @@ function updateStormCharge(e, dt, now) {
     if (!e.stormHit && segmentDistance(state.player.position,prev,e.root.position)<=1.05) {
       e.stormHit=true; const blocked=now<state.invUntil, before=state.hp;
       if(blocked) registerDodgeBlock(now);
-      else { state.hp=Math.max(0,state.hp-Math.max(1,25-GEAR_DEF[state.gear.armor])); hitFlash(state.player); sfx('hurt',0.9); if(state.hp<=0) playerDie('칼날 말벌의 돌진'); }
+      else { state.hp=Math.max(0,state.hp-Math.max(1,25-currentEquipmentStats().defense)); hitFlash(state.player); sfx('hurt',0.9); if(state.hp<=0) playerDie('칼날 말벌의 돌진'); }
       e.stormResult={hit:true,blocked,damage:before-state.hp,at:now};
     }
     if(k>=1) {
@@ -4066,7 +4300,7 @@ function updateFrogSpit(e,dt,now) {
     else if(segmentDistance(p,from,to)<.65){
       e.spitLeft=0;e.spitOrb.visible=false;
       if(now<state.invUntil){registerDodgeBlock(now);e.spitResult='dodge';}
-      else {const dmg=Math.max(1,e.stats.dmg-GEAR_DEF[state.gear.armor]);state.hp=Math.max(0,state.hp-dmg);hitFlash(state.player);sfx('hurt',.7);e.spitResult='hit';
+      else {const dmg=Math.max(1,e.stats.dmg-currentEquipmentStats().defense);state.hp=Math.max(0,state.hp-dmg);hitFlash(state.player);sfx('hurt',.7);e.spitResult='hit';
         if(state.hp>0){state.poisonUntil=Math.max(state.poisonUntil,now+4);state.poisonTickAt=now+1;toast('독침에 맞았습니다! 물약(R)으로 해독');}else playerDie(e.stats.label);}
     }else {e.spitOrb.position.copy(to);e.spitLeft-=step;if(e.spitLeft<=0){e.spitOrb.visible=false;e.spitResult='miss';}}
   }
@@ -4095,13 +4329,24 @@ function updateFrogSpit(e,dt,now) {
   e.anim.update(dt);return true;
 }
 
+// Only inherited-cycle ordinary skeletons gain this pattern. Quest kill flags remain.
+function decorateCycleEnemy(e){const pattern=echoPattern(cycleSession?.active||1);if(!pattern||!echoEligible(e.stats)||e.cycleEcho)return;e.cycleEcho=pattern;e.cycleLabel=`${pattern.name} ${e.stats.label}`;e.echoPhase={next:0};if(e.nameSprite)e.root.remove(e.nameSprite);e.nameSprite=makeNameSprite(e.cycleLabel);e.nameSprite.position.y=(e.stats.teleH||1.9)+.7;e.root.add(e.nameSprite);}
+function cancelCycleEcho(e,now=clock.elapsedTime){if(!e.cycleEcho)return;e.echoPhase=echoStep(e.cycleEcho,e.echoPhase,now,{blocked:true}).phase;e.echoAt=0;if(e.echoTele)e.echoTele.visible=false;}
+function updateCycleEcho(e,dt,now){if(!e.cycleEcho)return false;const p=state.player.position,d=e.root.position.distanceTo(p),blocked=e.dead||state.dead||state.dialog||state.menuOpen||(e.hitUntil||0)>now||(e.staggerUntil||0)>now||!!e.windDraw||d>14||observatoryBlocked(e.root.position,p);const result=echoStep(e.cycleEcho,e.echoPhase,now,{blocked,distance:d});e.echoPhase=result.phase;e.echoAt=result.phase?.at||0;if(blocked){if(e.echoTele)e.echoTele.visible=false;if(!e.dead&&(state.dead||state.dialog||state.menuOpen)){e.pendingHit=0;e.combo2=0;e.leapFrom=null;if(e.tele)e.tele.visible=false;e.anim.update(dt);return true;}return false;}if(result.event==='start'){e.echoStarts=(e.echoStarts||0)+1;e.echoOrigin=e.root.position.clone();e.pendingHit=0;e.combo2=0;e.leapFrom=null;if(e.tele)e.tele.visible=false;const pattern=e.cycleEcho;if(!e.echoTele){const root=new THREE.Group(),paint=(geo,color,opacity,z)=>{const m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({color,transparent:true,opacity,depthWrite:false,side:THREE.DoubleSide,toneMapped:false}));m.position.z=z;root.add(m);return m;};paint(new THREE.RingGeometry(pattern.inner||.03,pattern.outer,64),pattern.id==='disc'?0xff1838:0xffc126,.66,0);paint(new THREE.RingGeometry(pattern.outer-.07,pattern.outer,64),pattern.id==='disc'?0xff203e:0xffdb5a,.98,.012);if(pattern.id==='ring')paint(new THREE.RingGeometry(pattern.inner,pattern.inner+.07,64),0xfff4c4,.98,.015);else for(const a of[-Math.PI/4,Math.PI/4]){const bar=paint(new THREE.PlaneGeometry(.09,1.15),0xffd5d9,.95,.015);bar.rotation.z=a;}e.echoTele=root;e.echoTele.rotation.x=-Math.PI/2;scene.add(e.echoTele);}e.echoTele.position.copy(e.echoOrigin);e.echoTele.position.y=.09;e.echoTele.visible=true;e.anim.play('idle');}
+if(result.event==='strike'){if(e.echoTele)e.echoTele.visible=false;const dist=Math.hypot(p.x-e.echoOrigin.x,p.z-e.echoOrigin.z);skillFx(e.echoOrigin,e.cycleEcho.color,e.cycleEcho.outer,'whirl');if(echoDanger(e.cycleEcho,dist)&&!observatoryBlocked(e.echoOrigin,p)){if(now<state.invUntil){registerDodgeBlock(now);e.echoBlocks=(e.echoBlocks||0)+1;}else{e.echoHits=(e.echoHits||0)+1;state.hp=Math.max(0,state.hp-Math.max(1,e.stats.dmg-currentEquipmentStats().defense));hitFlash(state.player);sfx('hurt',.8);if(state.hp<=0)playerDie(e.stats.label);}}e.anim.playOnce('unarmed_melee_attack_punch','attack');e.cdUntil=Math.max(e.cdUntil,now+e.cycleEcho.recover);}
+if(['start','aim','strike','recover'].includes(result.event)){e.mode=result.event==='recover'?'echoRecover':'echoAim';e.anim.update(dt);return true;}return false;}
+
 function updateEnemy(e, dt, now) {
+  if(updateMender(e,dt,now))return;
+  if(updateCycleEcho(e,dt,now))return;
+  if(updateWindDraw(e,dt,now))return;
   if (e.dead) {
     if (!e.trial && !e.denMob && !e.stats.noRespawn && now > e.respawnAt) respawnEnemy(e);
     e.anim.update(dt);
     return;
   }
   if(e.stats.windPractice){e.anim.update(dt);return;}
+  if (updateLancer(e,dt,now))return;
   if (updateMistEnemy(e,dt,now))return;
   if (updateBellEnemy(e,dt,now))return;
   if (updateArcher(e,dt,now))return;
@@ -4162,7 +4407,7 @@ function updateEnemy(e, dt, now) {
     if (e.pendingHit && now >= e.pendingHit) {
       e.pendingHit = 0;
       if (!state.dead && now >= state.invUntil && e.root.position.distanceTo(p) < e.stats.range + 0.4) {
-        state.hp = Math.max(0, state.hp - Math.max(1, e.stats.dmg - GEAR_DEF[state.gear.armor]));
+        state.hp = Math.max(0, state.hp - Math.max(1, e.stats.dmg - currentEquipmentStats().defense));
         (window.__dbgEnemyHits = window.__dbgEnemyHits || []).push({ t: +now.toFixed(2), invU: +state.invUntil.toFixed(2), d: +e.root.position.distanceTo(p).toFixed(2), blocked: 0, dmg: e.stats.dmg });
         hitFlash(state.player);
         sfx('hurt', 0.9);
@@ -4181,7 +4426,7 @@ function updateEnemy(e, dt, now) {
       e.combo2 = 0;
       showTelegraph(e, 0.2);
       if (!state.dead && now >= state.invUntil && e.root.position.distanceTo(p) < e.stats.range + 0.5) {
-        state.hp = Math.max(0, state.hp - Math.max(1, Math.ceil(e.stats.dmg / 2) - GEAR_DEF[state.gear.armor]));
+        state.hp = Math.max(0, state.hp - Math.max(1, Math.ceil(e.stats.dmg / 2) - currentEquipmentStats().defense));
         hitFlash(state.player);
         sfx('hurt', 0.7);
         if (state.hp <= 0) playerDie(e.stats.label);
@@ -4218,6 +4463,8 @@ function updateEnemy(e, dt, now) {
 
 function playerDie(killerLabel) {
   state.dead = true;
+  clearCanalFight();
+  clearHighlandFight();
   clearArchiveFight();
   clearCartRun();
   clearCourierFight();
@@ -4242,19 +4489,21 @@ document.getElementById('over').addEventListener('click', respawn);
 document.getElementById('over').addEventListener('touchstart', respawn);
 
 // ---------- 메인 루프 ----------
-const clock = new THREE.Clock();
+const renderClock = new THREE.Clock();
+const clock = createGameClock();
 const hud = document.getElementById('hud');
 const hpbar = document.getElementById('hpfill');
 let fpsAcc = 0, fpsN = 0, fps = 0, fpsTimer = 0;
 const WALK = 3.2, RUN = 6.5;
+document.addEventListener('visibilitychange',()=>{renderClock.getDelta();if(document.hidden){keys.clear();stick.x=stick.y=0;stick.active=false;cancelWindshot('hidden');}});
 
 function tick() {
   requestAnimationFrame(tick);
-  const frameElapsed = clock.getDelta(); // 제한 전 실제 프레임 간 경과 초
-  const dt = Math.min(frameElapsed, 0.05); // 움직임 안정화용 시뮬레이션 dt
+  const frameElapsed = renderClock.getDelta(); // 렌더링 성능 표시는 실제 경과 시간
+  const dt = clock.advance(frameElapsed,document.hidden); // 이동과 모든 전투 기한은 같은 제한 시계
   const now = clock.elapsedTime;
 
-  if (state.ready) {
+  if (state.ready&&!cycleWriteBlocked&&!cycleSwitchPending) {
     state.playTime = (state.playTime || 0) + dt;
     // 중독 DoT: 초당 2, 중독만으로는 쓰러지지 않음(최소 1HP)
     if (!state.dead && now < state.poisonUntil && now >= state.poisonTickAt) {
@@ -4302,7 +4551,7 @@ function tick() {
     if (m > 1) { ix /= m; iz /= m; }
 
     const running = keys.has('ShiftLeft') || keys.has('ShiftRight') || (stick.active && m > 0.92);
-    let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) * GEAR_SPD[state.gear.boots] * ((state.runes || []).includes('gale') ? 1.08 : 1) : 0; // 질주 룬 +8%
+    let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) * currentEquipmentStats().speed * ((state.runes || []).includes('gale') ? 1.08 : 1) : 0; // 질주 룬 +8%
     // 회피 구르기 중: 구르기 방향으로 빠르게 이동, 다른 조작/공격 불가
     if (!state.dead && state.dodgeFrom && now < state.dodgeUntil + 0.5) {
       // 시전 순간의 보법으로 고정. 0.2m 이하로 나누어 벽/기둥을 뚫지 않고 이동한다.
@@ -4341,6 +4590,7 @@ function tick() {
     for (const e of state.enemies) {
       const ep=e.root.position;const old=ep.x>49&&ep.x<71&&ep.z>-5&&ep.z<15?ep.clone():null;updateEnemy(e, dt, now);
       if(e.estuary)clampWorld(e.root.position);
+      if(e.stats.highlandGuard||e.stats.canalGuard){resolveCollisions(e.root.position);const b=e.highlandBounds;e.root.position.x=Math.max(b.x1,Math.min(b.x2,e.root.position.x));e.root.position.z=Math.max(b.z1,Math.min(b.z2,e.root.position.z));}
       if(e.stats.archiveGuard){resolveCollisions(e.root.position);e.root.position.x=Math.max(232,Math.min(288,e.root.position.x));e.root.position.z=Math.max(-30,Math.min(-13,e.root.position.z));}
       if(old&&colliders.some(c=>c.observatoryWall&&Math.hypot(e.root.position.x-c.x,e.root.position.z-c.z)<c.r+.5))e.root.position.copy(old);
     }
@@ -4368,6 +4618,8 @@ function tick() {
     updateBell(now);
     updateMist(dt,now);
     updateArchive(now);
+    updateHighland(now);updateCanal();
+    scene.fog.near=inCanal()?(params.get('canalPreview')==='1'?220:100):inHighland()?80:40;scene.fog.far=inCanal()?(params.get('canalPreview')==='1'?400:260):inHighland()?220:120;
     updateWindPractice();
     checkAch();
     updateWeather(dt, now);
@@ -4386,6 +4638,9 @@ function tick() {
     }
     const trialNear = state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8 && !state.dead;
     const promptEl = document.getElementById('prompt');
+    const relayNear=nearbyRelay();
+    const canalNear=state.canalFight?null:nearbyCanal();
+    const highNear=state.highlandFight?null:nearbyHighland();
     const arcNear=nearbyArchive();
     const mistNear=nearbyMist();
     const bellNear=nearbyBell();
@@ -4397,8 +4652,8 @@ function tick() {
     const sealNear = nearbySeal();
     const journeyNear = nearbyJourneySite();
     const beaconNear = nearbyBeacon();
-    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : arcNear ? `E · ${arcNear.name}` : mistNear ? `E · ${mistNear.name}` : bellNear ? `E · ${bellNear.name}` : estNear ? `E · ${estNear.name}` : courierNear ? `E · ${courierNear.name}` : cartNear ? 'E · 기록 운반 수레' : echoNear ? `E · ${echoNear.name}` : obsNear ? `E · ${obsNear.name}` : sealNear ? `E · ${sealNear.name}` : beaconNear ? `E · ${beaconNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
-    promptEl.style.display = (npcNear || trialNear || sealNear || journeyNear || beaconNear || obsNear || echoNear || cartNear || courierNear || estNear || bellNear || mistNear || arcNear) && !state.dialog ? 'block' : 'none';
+    promptEl.textContent = relayNear?`E · ${relayNear.name}` : npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : canalNear ? `E · ${canalNear.name}` : highNear ? `E · ${highNear.name}` : arcNear ? `E · ${arcNear.name}` : mistNear ? `E · ${mistNear.name}` : bellNear ? `E · ${bellNear.name}` : estNear ? `E · ${estNear.name}` : courierNear ? `E · ${courierNear.name}` : cartNear ? 'E · 기록 운반 수레' : echoNear ? `E · ${echoNear.name}` : obsNear ? `E · ${obsNear.name}` : sealNear ? `E · ${sealNear.name}` : beaconNear ? `E · ${beaconNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
+    promptEl.style.display = (relayNear || npcNear || trialNear || sealNear || journeyNear || beaconNear || obsNear || echoNear || cartNear || courierNear || estNear || bellNear || mistNear || arcNear || highNear || canalNear) && !state.dialog ? 'block' : 'none';
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
@@ -4426,6 +4681,9 @@ function tick() {
       lines.push(`${resolved === 'bounty' ? '▸ ' : ''}반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : b.kind === 'mats' ? b.mat + ' 납품' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
     }
     const bt=beaconTarget();if(bt)lines.push(`${state.tracked==='beacon'?'▸ ':''}원정 · ${bt.label} ${distTo(bt)}<br><span style="font-size:.85em">${beaconStatus()}</span>`);
+    if(inRelay())lines.push(`중계소 · ${relayStatus()}`);
+    const canalNav=canalTarget();if(inCanal()&&canalNav)lines.push(`수로 · ${state.canalFight?'정비함 경비 전투':canalStatus()}`);
+    const highNav=highlandTarget();if(highNav)lines.push(`${state.tracked==='highland'?'▸ ':''}고원 · ${state.highlandChannel?'다리 고정 중':highNav.label} ${distTo(highNav)}`);
     const arcNav=archiveTarget();if(arcNav)lines.push(`${state.tracked==='archive'?'▸ ':''}기록원 · ${state.archiveChannel?`조절 중 ${Math.max(0,2.5-(now-state.archiveChannel.start)).toFixed(1)}초`:archiveStatus()} ${distTo(arcNav)}`);
     const mistNav=mistTarget();if(mistNav)lines.push(`${state.tracked==='mist'?'▸ ':''}항로 · ${mistStatus()} ${distTo(mistNav)}`);
     const bellNav=bellTarget();if(bellNav)lines.push(`${state.tracked==='bell'?'▸ ':''}종 · ${bellStatus()} ${distTo(bellNav)}`);
@@ -4511,12 +4769,12 @@ function tick() {
     const potBtn = document.getElementById('pot');
     const potLabel = `물약 ${state.potions}`;
     if (potBtn.textContent !== potLabel) potBtn.textContent = potLabel;
-    if(hasSkill('windshot')){windBtn.style.display='flex';const left=state.windCdUntil-now;windBtn.textContent=left>0?`${Math.ceil(left)}`:windTuneName();}
+    if(hasSkill('windshot')){windBtn.style.display='flex';const left=state.windCdUntil-now;windBtn.textContent=state.windshot?.returning?(state.windshot.returnLeg?'회귀 중':'전진 중'):left>0?`${Math.ceil(left)}`:windTuneName();}
     const wh = document.getElementById('whirl');
     if (wh && hasSkill('whirl')) {
       wh.style.display = 'flex';
       const left = state.whirlCdUntil - now;
-      const whLabel = left > 0 ? `${Math.ceil(left)}` : '회전베기';
+      const whLabel = left > 0 ? `${Math.ceil(left)}` : whirlProfile().name;
       if (wh.textContent !== whLabel) wh.textContent = whLabel;
     }
   }
@@ -4526,12 +4784,13 @@ function tick() {
   fpsAcc += frameElapsed; fpsN++; fpsTimer += frameElapsed;
   if (fpsTimer > 0.5) {
     fps = fpsN / fpsAcc;
-    window.__frameTiming = { frames: fpsN, elapsedSeconds: fpsAcc, fps, lastFrameMs: frameElapsed * 1000, simulationStepMs: dt * 1000 };
+    window.__frameTiming = { frames: fpsN, elapsedSeconds: fpsAcc, fps, lastFrameMs: frameElapsed * 1000, simulationStepMs: dt * 1000,gameSeconds:clock.elapsedTime,discardedSeconds:clock.discardedSeconds };
     fpsAcc = 0; fpsN = 0; fpsTimer = 0;
     hud.textContent = `실제 FPS ${fps < 1 ? '<1' : Math.round(fps)} · 드로콜 ${renderer.info.render.calls} · 삼각형 ${(renderer.info.render.triangles / 1000).toFixed(0)}k · 처치 ${state.kills}`;
     window.__fps = fps;
     window.__drawCalls = renderer.info.render.calls;
   }
+  positionNarrowToast();
   // 검증용 프로브
   window.__probe = state.ready ? {
     pos: state.player.position.toArray().map((v) => +v.toFixed(2)),
@@ -4550,7 +4809,7 @@ function tick() {
     mapFrags: state.mapFrags || 0, treasureDone: !!state.treasureDone, treasure: state.treasure ? { x: state.treasure.x, z: state.treasure.z } : null,
     dens: state.dens ? state.dens.map((d) => ({ name: d.name, cleared: d.cleared, spawned: d.spawned, alive: d.mobs.filter((e) => !e.dead).length })) : null, densCleared: (state.densCleared || []).length,
     golden: state.golden ? { active: !!state.golden.active, mode: state.golden.active ? state.golden.active.mode : null, pos: state.golden.active ? state.golden.active.root.position.toArray().map((v) => +v.toFixed(1)) : null, until: +state.golden.until.toFixed(1) } : null,
-    gear: { ...state.gear }, effDmg: PLAYER.dmg + GEAR_ATK[state.gear.sword], speedMul: GEAR_SPD[state.gear.boots],
+    gear: { ...state.gear }, effDmg: PLAYER.dmg + currentEquipmentStats().attack, speedMul: currentEquipmentStats().speed,
     achCount: Object.keys(state.ach).length, ach: { ...state.ach },
     flowersLeft: state.flowers ? state.flowers.filter((f) => !f.taken).length : null,
     bossHp: state.boss ? state.boss.hp : null, bossDead: state.boss ? state.boss.dead : null,
@@ -4566,7 +4825,7 @@ function tick() {
 
 addEventListener('resize', () => {
   applyCamFraming();
-  renderer.setSize(innerWidth, innerHeight);
+  applyDisplay();
 });
 
 // 스크린샷 검증용: ?demo=walk|running 이면 자동 전진, ?tp=x,z 텔레포트, ?reset=1 세이브 초기화

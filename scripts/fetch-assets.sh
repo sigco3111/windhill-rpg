@@ -84,4 +84,6 @@ grep -o 'https://[^)]*\.woff2' "$TMP/fonts-raw.css" | sort -u | while read -r u;
   curl -sSL -o "public/fonts/$(basename "$u")" "$u"
 done
 sed -E 's#url\(https://[^)]*/([^/)]+\.woff2)\)#url(\1)#g' "$TMP/fonts-raw.css" > public/fonts/fonts.css
+curl -fsSL -o public/fonts/OFL-NotoSansKR.txt "https://github.com/google/fonts/raw/refs/heads/main/ofl/notosanskr/OFL.txt"
+grep -q 'SIL OPEN FONT LICENSE' public/fonts/OFL-NotoSansKR.txt
 echo "완료. 라이선스 사본은 각 assets 폴더의 LICENSE-* 파일을 참조하세요."

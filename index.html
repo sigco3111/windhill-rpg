@@ -152,6 +152,7 @@
     }
     #menuback { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 26; display: none; }
     #menudlg {
+      box-sizing: border-box;
       position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
       display: none; width: min(460px, 94vw); max-height: calc(100vh - 48px); overflow-y: auto;
       background: #12161e; border: 1px solid rgba(255,255,255,.25); border-radius: 10px;
@@ -172,7 +173,7 @@
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       padding: 7px 0; border-top: 1px solid rgba(255,255,255,.12); word-break: keep-all;
     }
-    #menudlg .mrow small { color: #9fb4c8; }
+    #menudlg .mrow small { color: #9fb4c8; display: block; }
     #menudlg button.act {
       font: 600 13px 'Noto Sans KR', sans-serif; color: #fff; background: #3a6db5;
       border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; flex-shrink: 0;
@@ -183,6 +184,8 @@
       background: #0b0f16; color: #fff; border: 1px solid rgba(255,255,255,.3);
       border-radius: 6px; padding: 7px 10px; font: 14px 'Noto Sans KR', sans-serif; width: 110px;
     }
+    #display-help { box-sizing:border-box; width:100%; min-width:0; padding:6px 4px 10px; color:#9fb4c8; font-size:12px; line-height:1.7; text-align:left; white-space:normal; overflow-wrap:anywhere; word-break:normal; }
+    #display-help p { margin:0; padding:0; max-width:100%; text-indent:0; }
     #menudlg .recgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
     /* 작은 화면: HUD 겹침·가림 방지 */
     @media (max-height: 500px) {

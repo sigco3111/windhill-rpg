@@ -1,0 +1,2 @@
+// 회차 전투 구성. 첫 회차 및 유효하지 않은 차수는 원래 경비를 사용한다.
+export function archiveCyclePlan(cycle,wave){if(!Number.isSafeInteger(cycle)||cycle<2||![0,1].includes(wave))return null;return wave===0?[{role:'lancer',hp:110,dmg:17,label:'회랑 돌진 창병',x:254,z:-26},{role:'archer',hp:110,dmg:17,label:'회랑 엄호 사수',x:266,z:-26}]:[{role:'guard',hp:300,dmg:24,label:'회랑 방패 대장',x:257,z:-24},{role:'archer',hp:160,dmg:17,label:'회랑 후방 사수',x:267,z:-28}];}
