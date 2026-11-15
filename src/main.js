@@ -380,7 +380,7 @@ const GEAR_SHOP = [
   { key: 'armor', names: ['가죽 갑옷', '철 갑옷', '뼈 갑옷'], prices: [60, 150, 250], desc: ['받는 피해 -2', '받는 피해 -4', '받는 피해 -6'], mats: [null, null, [['뼈 조각', 5]]] },
   { key: 'boots', names: ['바람 부츠', '폭풍 부츠', '천둥 부츠'], prices: [100, 220, 280], desc: ['이동속도 +12%', '이동속도 +25%', '이동속도 +40%'], mats: [null, null, [['거미줄', 4]]] },
 ];
-// ---------- 스킬 트리 (레벨업으로 포인트 획득, 4계열 8노드, 각 1P) ----------
+// ---------- 스킬 트리 (기본 8노드 각1P + 기록원 보법 2택1 각2P) ----------
 const SKILLS = [
   { id:'windshot',branch:'원풍',name:'바람칼날',desc:'바라보는 방향으로 직선 바람탄 · 첫 적 1명에 1.2배 피해 · 사거리10m · G키/쿨5초 · 벽에 막힘/가드 파괴 불가',req:null },
   { id: 'crush', branch: '강풍', name: '파쇄', desc: '강공격이 가드를 부수고 2.5초 경직 · 가드 적에게 피해 +30%', req: null },
@@ -390,8 +390,16 @@ const SKILLS = [
   { id: 'riposte', branch: '질풍', name: '역풍', desc: '실제 회피 무적으로 공격을 막으면 4초 반격 준비 · 다음 근접 유효타에 체력12 회복 (회피당 1회, 가드 막힘/회전베기 제외)', req: 'blade' },
   { id: 'whirl', branch: '선풍', name: '회전베기', desc: '주위 모든 적에게 1.4배 피해 (F키 / 쿨 8초)', req: null },
   { id: 'storm', branch: '선풍', name: '폭풍', desc: '회전베기 피해 2.0배 · 쿨 6초', req: 'whirl' },
+  {id:'shortstep',branch:'보법 연마 · 2택1',name:'짧은 발걸음',cost:2,group:'footwork',req:'haste',desc:'2.5m를 0.28초에 이동 · 무적0.38초 · 잔상 적용 쿨0.9초(발걸음 인장0.65초). 빠른 반격 대신 긴 예고에서 벗어날 거리가 짧다.'},
+  {id:'longstep',branch:'보법 연마 · 2택1',name:'긴 발걸음',cost:2,group:'footwork',req:'haste',desc:'6m를 0.6초에 이동 · 무적0.55초 · 잔상 적용 쿨2.3초(발걸음 인장2.05초). 넓은 예고를 벗어나지만 끝부분은 무적이 아니며 다음 회피가 늦다.'},
 ];
 const hasSkill = (id) => !!state.skills[id];
+function footworkUnlocked(){return state.level>=10&&state.archive?.stage===4;}
+function footworkId(){return footworkUnlocked()&&hasSkill('haste')?(hasSkill('shortstep')?'shortstep':hasSkill('longstep')?'longstep':null):null;}
+function dodgeProfile(){const id=footworkId(),short=id==='shortstep',long=id==='longstep';return{id,name:short?'짧은 발걸음':long?'긴 발걸음':'기본 회피',distance:short?2.5:long?6:4,duration:short?.28:long?.6:.45,inv:short?.38:.55,cooldown:(short?(hasSkill('haste')?.9:1.5):long?(hasSkill('haste')?2.3:3.2):(hasSkill('haste')?1.6:2.5))-(activeInsignia('stride')?.25:0)};}
+function footworkSafe(){return footworkUnlocked()&&insigniaSafe();}
+function refundFootwork(){if(!state.dialog||!footworkSafe())return;const ids=SKILLS.filter(s=>s.group==='footwork'&&hasSkill(s.id));if(!ids.length)return;const points=ids.reduce((n,s)=>n+(s.cost||1),0);for(const s of ids)delete state.skills[s.id];state.skillPts+=points;saveGame();sfx('reward',.6);toast(`보법 연마 해제 · ${points}P 반환 · 현재 체력/쿨 유지`);}
+
 // 전투 숙련: 기존 스킬과 별도. 선택만 저장하고 연격/감속은 전투 중에만 유지한다.
 const MASTERIES = [
   {id:'chain',name:'연격',desc:'같은 적에게 3초 안에 일반공격을 이어 3번 적중하면 세번째가 가드 파괴. 헛침·강공격·회전베기는 연속 초기화. 일반공격 기본 피해로 가드 파괴 (기존 파쇄 효과 적용).'},
@@ -526,6 +534,7 @@ document.head.appendChild(windStyle);
 
 const skillTreeStyle = document.createElement('style');
 skillTreeStyle.textContent = '#dlg.journey-dialog #dlg-text { max-height:min(38vh,260px);overflow-y:auto;scrollbar-width:thin; } #dlg.journey-dialog .btns { flex-wrap:wrap; } #dlg.skilltree #dlg-list { max-height: min(40vh, 260px); overflow-y:auto; scrollbar-width:thin; }';
+skillTreeStyle.textContent+='#dlg.skilltree{display:flex!important;flex-direction:column;gap:4px;top:50%;bottom:auto;transform:translate(-50%,-50%);width:min(474px,calc(100vw - 20px));height:min(660px,calc(100dvh - 24px));max-height:none;box-sizing:border-box;overflow:hidden}#dlg.skilltree h3,#dlg.skilltree .btns{flex-shrink:0}#dlg.skilltree #dlg-text{flex:0 0 auto;max-height:25vh;overflow-y:auto;scrollbar-width:thin}#dlg.skilltree #dlg-list{flex:1 1 auto;min-height:60px;max-height:none;overflow-y:auto}#dlg.skilltree .btns{margin-top:4px;flex-wrap:wrap}#dlg.skilltree button:disabled{opacity:.45;cursor:default}';
 document.head.appendChild(skillTreeStyle);
 // 이름과 대응 지시를 분리한다. HUD 대상만 바뀌며 실제 공격/자동전투 대상은 그대로다.
 const combatHudStyle=document.createElement('style');
@@ -731,9 +740,10 @@ function tryDodge() {
   }
   state.heading = Math.atan2(state.dodgeDir.x, state.dodgeDir.z);
   state.player.rotation.y = state.heading;
-  state.dodgeUntil = now + 0.45;
-  state.dodgeCdUntil = now + (hasSkill('haste') ? 1.6 : 2.5) - (activeInsignia('stride') ? .25 : 0);
-  state.invUntil = now + 0.55;
+  const form=dodgeProfile();state.dodgeFormAtCast=form;state.dodgeTravel=0;
+  state.dodgeUntil = now + form.duration;
+  state.dodgeCdUntil = now + form.cooldown;
+  state.invUntil = now + form.inv;
   if (hasSkill('blade')) state.bladeUntil = now + 3; // 칼바람: 회피 후 다음 타격 강화
   state.dodgeFrom = state.player.position.clone();
   state.dodgeStart = now;
@@ -746,7 +756,7 @@ function tryDodge() {
 // 역풍은 빈 회피가 아니라 실제 공격의 무적 방지에서만 획득한다.
 function registerDodgeBlock(now) {
   state.dodgeBlocks = (state.dodgeBlocks || 0) + 1;
-  if (!hasSkill('riposte') || !state.dodgeCount || now < state.dodgeStart || now >= state.dodgeStart + 0.55 || state.riposteDodge === state.dodgeCount) return;
+  if (!hasSkill('riposte') || !state.dodgeCount || now < state.dodgeStart || now >= state.dodgeStart + (state.dodgeFormAtCast?.inv||.55) || state.riposteDodge === state.dodgeCount) return;
   state.riposteDodge = state.dodgeCount;
   state.riposteUntil = now + 4;
   skillFx(state.player.position,0x85ffc0,1.3,'ready');
@@ -829,7 +839,7 @@ function renderMenu() {
       ['총 처치', state.kills + ' (전사 ' + state.wKills + ' · 엘리트 ' + state.eliteKills + ' · 보스 ' + state.bossKills + ')'],
       ['도감 발견', Object.keys(state.dex || {}).length + '종'],
       ['전투 숙련', MASTERIES.find(m=>m.id===state.mastery)?.name || '미선택 (Lv.8)'],
-      ['습득 스킬', SKILLS.filter((k) => state.skills[k.id]).length + ' / ' + SKILLS.length + ' (포인트 ' + state.skillPts + ')'],
+      ['습득 스킬', SKILLS.filter(k=>!k.group&&state.skills[k.id]).length + ' / 8 · 보법 ' + (footworkId()?'선택':'미선택') + ' (포인트 ' + state.skillPts + ')'],
       ['보유 골드', state.gold + 'G'],
       ['장비 등급', '검 ' + state.gear.sword + ' · 갑옷 ' + state.gear.armor + ' · 부츠 ' + state.gear.boots],
       ['업적', Object.keys(state.ach || {}).length + '개'],
@@ -1408,7 +1418,7 @@ async function build() {
       state.player.rotation.y = state.heading;
     },
     beaconInfo(){return{...state.beacon,status:beaconStatus(),target:beaconTarget(),fight:state.beaconFight?{step:state.beaconFight.step,enemies:state.beaconFight.enemies.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),guard:e.stats.guard,label:e.stats.label}))}:null}},
-    insigniaInfo(){return{selected:state.insignia,active:insigniaName(),safe:insigniaSafe(),unlocked:INSIGNIAS.filter(d=>d.unlocked()).map(d=>d.id),hp:state.hp,maxHp:state.maxHp,potionHeal:activeInsignia('care')?85:60,dodgeRemaining:Math.max(0,state.dodgeCdUntil-clock.elapsedTime),dodgeCooldown:(hasSkill('haste')?1.6:2.5)-(activeInsignia('stride')?.25:0)}},
+    insigniaInfo(){return{selected:state.insignia,active:insigniaName(),safe:insigniaSafe(),unlocked:INSIGNIAS.filter(d=>d.unlocked()).map(d=>d.id),hp:state.hp,maxHp:state.maxHp,potionHeal:activeInsignia('care')?85:60,dodgeRemaining:Math.max(0,state.dodgeCdUntil-clock.elapsedTime),dodgeCooldown:dodgeProfile().cooldown}},
     windTuneInfo(){return{selected:state.windTune,active:windTuneName(),safe:windTuneSafe(),unlocked:state.bell?.stage===5&&hasSkill('windshot'),practice:(state.windPractice||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,hits:e.windPracticeHits,pos:e.root.position.toArray()})),lastHits:state.lastWindHits||0}},
     archiveInfo(){return{...state.archive,inside:inArchive(),status:archiveStatus(),target:archiveTarget(),gate:!state.archiveGate.mesh.visible,channel:state.archiveChannel?{...state.archiveChannel,left:Math.max(0,2.5-(clock.elapsedTime-state.archiveChannel.start))}:null,streams:state.archiveStreams.map(t=>({z:t.z,at:t.at,next:t.next,hits:t.hits,dodges:t.dodges})),fight:(state.archiveFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),archer:!!e.stats.archer,aim:e.archerAt||0}))}},
     mistInfo(){const f=state.mistFight,e=f?.enemy;return{...state.mist,status:mistStatus(),target:mistTarget(),sites:(state.mistProps||[]).map(d=>({id:d.id,x:d.x,z:d.z,bit:d.bit})),fight:f?{active:f.active,left:Math.max(0,f.next-clock.elapsedTime),swaps:f.swaps,blocks:f.blocks,i:state.enemies.indexOf(e),hp:e.hp,pos:e.root.position.toArray(),lit:mistLit(e),at:e.mistAt,next:e.mistNext,hits:e.mistHits,dodges:e.mistDodges,strikes:e.mistStrikes}:null}},
@@ -1445,6 +1455,7 @@ async function build() {
     setMapFrags(n) { state.mapFrags = n; if (n >= 3 && !state.treasureDone) spawnTreasure(); },
     spawnGolden(x, z) { if (!state.protos || !state.protos.Rat) return false; if (!state.golden) state.golden = { nextAt: 0, active: null, until: 0 }; const e = state.spawn(state.protos.Rat, GOLDEN, x, z); e.home.set(x, 0, z); state.golden.active = e; state.golden.until = clock.elapsedTime + 60; return true; },
     setDialog(v) { state.dialog = !!v; },
+    footworkInfo(){return{...dodgeProfile(),unlocked:footworkUnlocked(),safe:footworkSafe(),points:state.skillPts,owned:SKILLS.filter(s=>s.group==='footwork'&&hasSkill(s.id)).map(s=>s.id),cast:state.dodgeFormAtCast||null,invLeft:Math.max(0,state.invUntil-clock.elapsedTime),dodgeLeft:Math.max(0,state.dodgeUntil-clock.elapsedTime),cooldownLeft:Math.max(0,state.dodgeCdUntil-clock.elapsedTime)};},
     givePts(n) { state.skillPts = (state.skillPts || 0) + n; },
     questInfo() { return { ...state.quest, progress: questProgress() }; },
     probeAt(i) { const x = state.enemies[i]; return x ? { label: x.stats.label, hp: x.hp, guard: !!x.stats.guard, staggered: !!(x.staggerUntil && clock.elapsedTime < x.staggerUntil), dead: x.dead } : null; },
@@ -1577,7 +1588,7 @@ function openCampaignJournal(){
     const names=QUESTS.slice(c.from,Math.min(c.to,info.done)).map(q=>'✓ '+q.name);
     html+=`<details style="padding:7px 0;border-top:1px solid #445"><summary>${cidx+1}장 · ${c.name} · ${p.done}/${p.total}${p.done===p.total?' 완료':''}</summary>${names.length?names.join('<br>'):'아직 완료한 의뢰가 없다.'}</details>`;
   }
-  html+=`<br><b>성장 선택</b><br>Lv.${state.level} · 스킬 포인트 ${state.skillPts||0}P · 습득 ${SKILLS.filter(k=>state.skills[k.id]).length}/${SKILLS.length}<br>포인트가 있어도 스킬은 자동으로 배우지 않는다. 스킬 창에서 설명과 선행 조건을 확인하자.`;
+  html+=`<br><b>성장 선택</b><br>Lv.${state.level} · 스킬 포인트 ${state.skillPts||0}P · 기본 스킬 ${SKILLS.filter(k=>!k.group&&state.skills[k.id]).length}/8 · 보법 ${footworkId()?'선택':'미선택'}<br>포인트가 있어도 스킬은 자동으로 배우지 않는다. 스킬 창에서 설명과 선행 조건을 확인하자.`;
   html+=`<br>원풍 조율: <b>${windTuneName()}</b> · 종 탐험 완료 뒤 장로 곁 스킬 창에서 무료 교체.`;
   html+=`<br>여행 인장: <b>${insigniaName()}</b> · 해금 ${INSIGNIAS.filter(d=>d.unlocked()).length}/3 · 장로 곁 스킬 창에서 한 개 장착. 관측소·수레·전령길 완료 기록으로 열린다.`;
   html+='<br><br><b>선택 탐험</b> · 메인 의뢰와 별도<br>';
@@ -1923,15 +1934,18 @@ function openSkillTree() {
   const list = document.getElementById('dlg-list');
   const btns = document.getElementById('dlg-btns');
   const renderTree = () => {
-    document.getElementById('dlg-text').innerHTML = `보유 스킬 포인트 <b>${state.skillPts || 0}</b> · 레벨업 시 +1<br><small>원풍: 바람칼날 · 강풍: 강공격 · 질풍: 회피 · 선풍: 회전베기</small>`;
+    document.getElementById('dlg-text').innerHTML = `보유 스킬 포인트 <b>${state.skillPts || 0}</b> · 레벨업 시 +1<br><small>현재 ${dodgeProfile().name} · ${dodgeProfile().distance}m / 무적${dodgeProfile().inv}초 / 쿨${dodgeProfile().cooldown.toFixed(2)}초</small>`;
     list.innerHTML='';renderInsignias(list,renderTree);
     list.innerHTML += SKILLS.map((s) => {
       const owned = hasSkill(s.id);
-      const locked = s.req && !hasSkill(s.req);
-      const can = !owned && !locked && (state.skillPts || 0) > 0;
-      const reqName = locked ? SKILLS.find((x) => x.id === s.req).name : '';
-      return `<div class="shoprow"><div class="info">${owned ? '<b style="color:#8fd68f">[습득]</b> ' : locked ? '<small>[잠김] </small>' : ''}<b>${s.branch} · ${s.name}</b><br><small>${s.desc}${locked ? ` (선행: ${reqName})` : ''}</small></div>${!owned && !locked ? `<button data-skill="${s.id}" ${can ? '' : 'disabled'}>습득 (1P)</button>` : ''}</div>`;
+      const form=s.group==='footwork',other=form&&SKILLS.some(k=>k.group==='footwork'&&k.id!==s.id&&hasSkill(k.id));
+      const locked = (s.req && !hasSkill(s.req)) || (form&&!footworkUnlocked());
+      const can = !owned && !locked && !other && (!form||footworkSafe()) && (state.skillPts || 0) >= (s.cost||1);
+      const reqName = locked ? (s.req&&!hasSkill(s.req)?SKILLS.find(x=>x.id===s.req).name:'Lv.10 + 기록원 원본 인계') : '';
+      return `${s.id==='shortstep'?'<div class="shoprow"><div class="info"><b>보법 연마 · Lv.10 + 기록원 원본 인계 + 잔상</b><br><small>2택1 · 각2P. 장로 곁2.6m·주변12m 적 없음에서 습득·해제. 해제 시 이 보법의 2P만 반환. 기존 스킬/체력/쿨 유지.</small></div></div>':''}<div class="shoprow"><div class="info">${owned ? '<b style="color:#8fd68f">[습득]</b> ' : locked ? '<small>[잠김] </small>' : ''}<b>${s.branch} · ${s.name}</b><br><small>${s.desc}${locked ? ` (선행: ${reqName})` : ''}</small></div>${!owned && !locked ? `<button data-skill="${s.id}" ${can ? '' : 'disabled'}>습득 (${s.cost||1}P)</button>` : ''}</div>`;
     }).join('');
+    const learnedForm=SKILLS.find(s=>s.group==='footwork'&&hasSkill(s.id));
+    if(learnedForm)list.innerHTML+=`<div class="shoprow"><div class="info"><b>보법 연마 해제</b><br><small>${learnedForm.name}에 쓴 2P만 반환 · 기본 회피로 복귀</small></div><button data-footwork-refund ${footworkSafe()?'':'disabled'}>해제 (+2P)</button></div>`;
     const safe = masterySafe();
     list.innerHTML += `<div class="shoprow"><div class="info"><b>Lv.8 전투 숙련 · 3택1</b><br><small>현재: ${MASTERIES.find(m=>m.id===state.mastery)?.name || '미선택'} · 기존 스킬/포인트 유지<br>장로 곁 2.6m · 주변 12m 적 없음일 때 무료 선택·교체. 전투 중 교체 불가.</small></div></div>` + MASTERIES.map(m=>{
       const owned = state.mastery === m.id;
@@ -1939,6 +1953,7 @@ function openSkillTree() {
       return `<div class="shoprow"><div class="info"><b>${m.name}${owned ? ' [선택 중]' : ''}</b><br><small>${m.desc}${m.req && !hasSkill(m.req) ? ` (${SKILLS.find(s=>s.id===m.req)?.name||m.req} 습득 필요)` : ''}</small></div><button data-mastery="${m.id}" ${!can || owned ? 'disabled' : ''}>${owned?'선택 중':'무료 선택'}</button></div>`;
     }).join('');
     bindInsignias(list,renderTree);
+    list.querySelector('[data-footwork-refund]')?.addEventListener('click',()=>{refundFootwork();renderTree();});
     list.querySelectorAll('button[data-mastery]').forEach(b=>b.addEventListener('click',()=>{
       const m = MASTERIES.find(m=>m.id===b.dataset.mastery);
       if (!m || !masterySafe() || (m.req && !hasSkill(m.req)) || state.mastery===m.id) return;
@@ -1946,8 +1961,9 @@ function openSkillTree() {
     }));
     list.querySelectorAll('button[data-skill]').forEach((b) => b.addEventListener('click', () => {
       const s = SKILLS.find((x) => x.id === b.dataset.skill);
-      if (!s || hasSkill(s.id) || (state.skillPts || 0) < 1 || (s.req && !hasSkill(s.req))) return;
-      state.skillPts--; state.skills[s.id] = true;
+      if (!s || hasSkill(s.id) || (state.skillPts || 0) < (s.cost||1) || (s.req && !hasSkill(s.req))) return;
+      if(s.group==='footwork'&&(!footworkSafe()||SKILLS.some(k=>k.group==='footwork'&&hasSkill(k.id))))return;
+      state.skillPts-=s.cost||1; state.skills[s.id] = true;
       sfx('reward', 1);
       toast(s.id === 'windshot' ? '바람칼날 해금! G키 또는 바람칼날 버튼' : s.id === 'whirl' ? '회전베기 해금! F키 또는 회전베기 버튼' : `스킬 습득: ${s.name}`);
       saveGame(); updateWhirlBtn(); renderTree();
@@ -2234,7 +2250,7 @@ function loadGame() {
     state.mastery = MASTERIES.some(m=>m.id===s.mastery) ? s.mastery : null;
     resetMasteryCombat();
     // 구 세이브 소급: (레벨-1) - 이미 습득에 쓴 포인트 - 보유 포인트 만큼만 지급 (중복 지급 방지, 감액 없음)
-    const spentPts = SKILLS.filter((k) => state.skills[k.id]).length;
+    const spentPts = SKILLS.filter((k) => state.skills[k.id]).reduce((n,k)=>n+(k.cost||1),0);
     const earnedPts = Math.max(0, (s.level || 1) - 1);
     const backfill = Math.max(0, earnedPts - spentPts - (s.skillPts || 0));
     state.skillPts = (s.skillPts || 0) + backfill;
@@ -2871,8 +2887,8 @@ const sign=makeNameSprite('서가 ← 대합실 → 수로');sign.scale.multiply
 function nearbyArchive(){return state.ready&&!state.dead&&inArchive()?(state.archiveProps||[]).find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.2)||null:null;}
 function clearArchiveFight(){for(const e of state.archiveFight||[]){cancelArcher(e);if(e.tele)scene.remove(e.tele);for(const m of e.archerLines||[])scene.remove(m);for(const a of e.arrows||[])scene.remove(a.root);e.dead=true;e.despawned=true;scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1);}state.archiveFight=null;state.archiveChannel=null;}
 function archiveTravel(inside){clearArchiveFight();clearMistFight();clearWindPractice();clearBellFight();clearEstuaryFight();clearCourierFight();clearCartRun();clearEchoFight();clearObservatoryFight();clearBeaconFight();if(state.trial?.active)endTrial(false);cancelWindshot('travel');resetMasteryCombat();state.dodgeFrom=null;state.dodgeUntil=0;state.attackUntil=0;state.autoOn=false;document.getElementById('auto').textContent='자동 전투 OFF';document.getElementById('auto').classList.remove('on');state.player.position.set(inside?260:129,0,inside?25:-5);state.invUntil=Math.max(state.invUntil,clock.elapsedTime+1);state.tracked='archive';closeDialog();saveGame();toast(inside?'침묵의 기록원 · 서가와 수로는 자유 순서로 조사':'여울 기록대로 귀환 · 기록원 진행 보존');}
-function openArchiveEntrance(){const s=state.archive,bs=[];const text='<b>'+archiveStatus()+'</b><br><br>안개 항로의 끝은 이름을 지우는 기록원으로 이어진다. 같은 적을 더 많이 잡는 곳이 아니라, 두 날개의 기록을 모아 닫힌 회랑을 여는 별도 지역이다.<br><br><b>서쪽 서가</b>에서는 사서의 수기를 읽고 달·바람·물결 서가의 순서를 추론한다. 틀려도 수기는 잃지 않는다. <b>동쪽 수로</b>에서는 번갈아 붉어지는 물길을 건너 조절기 둘을 각각 2.5초 동안 작동한다. 1.8m 이탈·피격·회피·공격·메뉴는 작업을 취소한다.<br><br>둘을 마치면 <b>북쪽 회랑</b> 개방. 첫 경비는 기둥 엄폐와 사격 예고 끊기, 다음 경비는 강공격 가드 파괴로 대응한다. 두 전투 사이 승리는 저장된다. 마지막 원본을 회수해 이곳에 인계하며 기록의 운명을 고른다.<br><br>배편·귀환·재도전 무료. 각 날개·조절기·전투 차수·원본 회수 저장. 사망·지역 이탈·재접속은 미완료 전투와 작업만 초기화한다. 경비별 전리품 없음. 마지막 인계 한 번 <b>600XP·400G·스킬1P</b>. 보존/공유는 이야기 기록만 다르며 능력치 보상은 같다.';
-if(archiveReady()){bs.push([s.stage?'기록원으로 다시 건너가기':'침묵의 기록원 조사 시작',()=>{if(!archiveReady()||nearbyBell()?.id!=='archive')return;if(!s.stage)s.stage=1;archiveTravel(true);}]);if(s.stage===3)for(const[id,label]of[['keep','원본을 보존해 인계'],['share','길잡이 사본으로 인계']])bs.push([label,()=>{if(s.stage!==3||nearbyBell()?.id!=='archive')return;s.stage=4;s.ending=id;state.gold+=400;state.skillPts=(state.skillPts||0)+1;gainXp(600);saveGame();closeDialog();sfx('reward',1);toast('침묵을 건넌 기록 · 600XP · 400G · 스킬1P');}]);}journeyDialog('침묵의 기록원',text,bs);}
+function openArchiveEntrance(){const s=state.archive,bs=[];const text='<b>'+archiveStatus()+'</b><br><br>안개 항로의 끝은 이름을 지우는 기록원으로 이어진다. 같은 적을 더 많이 잡는 곳이 아니라, 두 날개의 기록을 모아 닫힌 회랑을 여는 별도 지역이다.<br><br><b>서쪽 서가</b>에서는 사서의 수기를 읽고 달·바람·물결 서가의 순서를 추론한다. 틀려도 수기는 잃지 않는다. <b>동쪽 수로</b>에서는 번갈아 붉어지는 물길을 건너 조절기 둘을 각각 2.5초 동안 작동한다. 1.8m 이탈·피격·회피·공격·메뉴는 작업을 취소한다.<br><br>둘을 마치면 <b>북쪽 회랑</b> 개방. 첫 경비는 기둥 엄폐와 사격 예고 끊기, 다음 경비는 강공격 가드 파괴로 대응한다. 두 전투 사이 승리는 저장된다. 마지막 원본을 회수해 이곳에 인계하며 기록의 운명을 고른다.<br><br>배편·귀환·재도전 무료. 각 날개·조절기·전투 차수·원본 회수 저장. 사망·지역 이탈·재접속은 미완료 전투와 작업만 초기화한다. 경비별 전리품 없음. 마지막 인계 한 번 <b>600XP·400G·스킬1P</b>. 보존/공유는 이야기 기록만 다르며 능력치 보상은 같다.<br><br><b>인계 후 보법 연마 해금</b>: Lv.10과 잔상 습득 후 장로 곁 스킬 창(K)에서 2P로 짧은/긴 발걸음 중 하나를 배운다. 안전한 장로 곁에서 보법 비용2P를 돌려받아 기본 회피로 돌아갈 수 있다.';
+if(archiveReady()){bs.push([s.stage?'기록원으로 다시 건너가기':'침묵의 기록원 조사 시작',()=>{if(!archiveReady()||nearbyBell()?.id!=='archive')return;if(!s.stage)s.stage=1;archiveTravel(true);}]);if(s.stage===3)for(const[id,label]of[['keep','원본을 보존해 인계'],['share','길잡이 사본으로 인계']])bs.push([label,()=>{if(s.stage!==3||nearbyBell()?.id!=='archive')return;s.stage=4;s.ending=id;state.gold+=400;state.skillPts=(state.skillPts||0)+1;gainXp(600);saveGame();closeDialog();sfx('reward',1);toast('침묵을 건넌 기록 · 600XP · 400G · 스킬1P · 보법 연마(K) 해금');}]);}journeyDialog('침묵의 기록원',text,bs);}
 function archiveMapHtml(){const s=state.archive;return `<div style="margin:8px 0;padding:10px;background:#1b2a34;border:1px solid #647c8e;border-radius:8px;text-align:center"><div style="padding:10px;background:#494353">북쪽 원본대<br>회랑 ${s.wave}/2 · ${s.stage>=3?'원본 회수':'원본 미회수'}</div><div style="padding:7px">↑ ${s.shelf&&s.valves===3?'문 열림':'서가 + 수로 기록 필요'}</div><div style="display:flex;gap:10px"><div style="flex:1;background:#514d51;padding:8px">서쪽 서가<br>${s.shelf?'복원 완료':s.read?'수기 기록됨':'수기부터 조사'}</div><div style="flex:1;background:#36535b;padding:8px">동쪽 수로<br>조절기 ${Number(!!(s.valves&1))+Number(!!(s.valves&2))}/2</div></div><div style="padding:9px">↖ 자유 순서 ↗</div><div style="padding:9px;background:#665e49">남쪽 대합실 · 언제든 여울로 귀환</div></div>`;}
 function openArchive(d){const s=state.archive;state.dlgFocus=d.root.position;if(d.id==='desk'){journeyDialog(d.name,archiveMapHtml()+archiveStatus()+'<br><br>서쪽 서가와 동쪽 수로는 원하는 순서로 진행한다. 북쪽 문은 두 날개의 기록이 있어야 열린다. 귀환은 언제든 무료이며 완료한 기록은 사라지지 않는다.',[['여울 기록대로 귀환',()=>{if(nearbyArchive()?.id==='desk')archiveTravel(false);}]]);return;}if(d.id==='clue'){journeyDialog(d.name,'사서의 수기: "<b>첫 장은 밤하늘을 비추고, 다음 장은 보이지 않는 숨결로 넘긴다. 마지막 장은 바다의 흔들림 속에 묻는다.</b>"<br><br>서가의 이름과 대조해 순서대로 책을 펼치자. 수기를 기록한 뒤부터 시도할 수 있다.',!s.read&&s.stage===1?[['사서 수기 기록',()=>{if(nearbyArchive()?.id!=='clue'||s.read)return;s.read=true;saveGame();closeDialog();toast('서가 수기를 기록했다 · 밤하늘, 숨결, 바다');}]]:[]);return;}if(['moon','wind','tide'].includes(d.id)){journeyDialog(d.name,s.shelf?'서가 기록은 이미 복원했다.':!s.read?'먼저 서가 남쪽의 사서 수기를 읽자.':`첫 장은 밤하늘, 다음 장은 숨결, 마지막 장은 바다.<br>올바른 책 ${s.input}/3 · 이 서가를 펼칠까?`,s.stage===1&&s.read&&!s.shelf?[['서가 펼치기',()=>{if(nearbyArchive()?.id!==d.id||s.shelf||!s.read)return;if(d.id===['moon','wind','tide'][s.input]){s.input++;skillFx(d.root.position,0x94dfdb,1.7,'ready');if(s.input===3){s.shelf=true;toast('서쪽 서가 기록 복원 · 북쪽 잠금 하나 해제');}else toast(`올바른 책 ${s.input}/3`);}else{s.input=0;toast('연결되지 않는 기록 · 책 순서만 처음부터');}saveGame();closeDialog();}]]:[]);return;}if(d.bit){if(s.valves&d.bit){journeyDialog(d.name,'조절기를 고정했다. 이 기록은 저장된다.');return;}if(s.stage!==1)return;state.archiveChannel={id:d.id,bit:d.bit,x:d.x,z:d.z,start:clock.elapsedTime,hp:state.hp};toast('수로 조절 중 · 2.5초, 피격·1.8m 이탈·회피·공격 시 취소');return;}if(d.id==='seal'){journeyDialog(d.name,s.shelf&&s.valves===3?'두 기록이 문을 열었다. 북쪽 회랑의 엄폐물 뒤로 접근하자.':`잠금: 서가 ${s.shelf?'해제':'미해제'}, 수로 ${s.valves===3?'해제':'미해제'}. 둘 다 마치면 문이 열린다.`);return;}if(d.id==='core'){journeyDialog(d.name,s.stage===2?'빈 서가와 물길 끝에 사라지지 않은 이름들이 남아 있다. 이 원본을 회수하면 두 날개의 여정이 끝난다.':s.stage>=3?'원본은 이미 회수했다. 여울 기록대에 인계하자.':'회랑 경비가 남아 있다. 원본은 아직 봉인되어 있다.',s.stage===2?[['기록원 원본 회수',()=>{if(s.stage!==2||nearbyArchive()?.id!=='core')return;s.stage=3;saveGame();closeDialog();sfx('reward',.7);toast('원본 회수 · 대합실로 돌아가 여울 기록대에 인계');}]]:[]);}}
 function spawnArchiveWave(){const s=state.archive;if(s.wave>=2||state.archiveFight)return;const defs=s.wave===0?[[254,-26,{...ENEMY,hp:110,dmg:17,speed:2,range:1.7,cd:1.8,label:'기록원 사수',archer:true}],[266,-26,{...ENEMY,hp:110,dmg:17,speed:2,range:1.7,cd:1.8,label:'기록원 사수',archer:true}]]:[[260,-24,{...WARRIOR,hp:460,dmg:24,guard:true,combo:false,aggro:24,label:'기록원 철갑 대장'}]];state.archiveFight=defs.map(([x,z,stats])=>{const e=state.spawn(state.protos.skel,{...stats,aggro:24,noElite:true,noRespawn:true,archiveGuard:true},x,z);e.expedition=e.trial=e.estuary=true;e.archerNext=clock.elapsedTime+2;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=2.8;e.root.add(e.nameSprite);}if(stats.archer){const bow=new THREE.Mesh(new THREE.TorusGeometry(.5,.07,5,16,Math.PI),new THREE.MeshLambertMaterial({color:0xc5a05f}));bow.position.set(-.5,1.4,.2);e.root.add(bow);}return e;});toast(s.wave===0?'회랑 사수 · 기둥 뒤로 엄폐하거나 사격 준비 끊기':'회랑 1차 저장 · 철갑 대장은 강공격으로 가드 파괴');}
@@ -4289,10 +4305,12 @@ function tick() {
     let speed = (!state.dead && !attacking && m > 0.05) ? (running ? RUN : WALK) * GEAR_SPD[state.gear.boots] * ((state.runes || []).includes('gale') ? 1.08 : 1) : 0; // 질주 룬 +8%
     // 회피 구르기 중: 구르기 방향으로 빠르게 이동, 다른 조작/공격 불가
     if (!state.dead && state.dodgeFrom && now < state.dodgeUntil + 0.5) {
-      // 시간 기반 보간: 프레임률과 무관하게 0.45초 동안 정확히 4m 이동 (저FPS에서 회피 거리 축소 방지)
-      const k = Math.min(1, Math.max(0, (now - state.dodgeStart) / 0.45));
-      state.player.position.copy(state.dodgeFrom).addScaledVector(state.dodgeDir, 4 * k);
-      resolveCollisions(state.player.position);clampWorld(state.player.position);
+      // 시전 순간의 보법으로 고정. 0.2m 이하로 나누어 벽/기둥을 뚫지 않고 이동한다.
+      const form=state.dodgeFormAtCast||{duration:.45,distance:4};
+      const k=Math.min(1,Math.max(0,(now-state.dodgeStart)/form.duration));
+      const target=form.distance*k,delta=Math.max(0,target-(state.dodgeTravel||0)),steps=Math.max(1,Math.ceil(delta/.2));
+      for(let i=0;i<steps;i++){state.player.position.addScaledVector(state.dodgeDir,delta/steps);resolveCollisions(state.player.position);clampWorld(state.player.position);}
+      state.dodgeTravel=target;
       if (now >= state.dodgeUntil) state.dodgeFrom = null; // 창이 지난 첫 프레임에 최종 위치 확정
       speed = 0;
     }
