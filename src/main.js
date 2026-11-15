@@ -359,7 +359,7 @@ const state = {
   dodgeDir: new THREE.Vector3(0, 0, 1), autoOn: false, chargeStart: -1, attackStrong: false,
   windCdUntil: 0, windshot: null, mastery: null, masteryChain: null, skillPts: 0, skills: {}, whirlCdUntil: 0, bladeUntil: 0, poisonUntil: 0, poisonTickAt: 0,
   bossKills: 0, eliteKills: 0, flowers: null, flowerCount: 0, flowersSold: 0, boss: null, dex: {}, mats: {}, dlgFocus: null, order: null, orderDone: 0, // 도감: 종류별 처치 수 / mats: 재료 보유 / dlgFocus: 대화 상대 위치 / order: 수집가 특별 주문
-  level: 1, xp: 0, echo: 0, cartStage: 0, courier: 0, insignia: null,
+  level: 1, xp: 0, echo: 0, cartStage: 0, courier: 0, insignia: null, estuary: {stage:0,rescued:0,bossWon:false},
   bounty: { active: false, startKills: 0, count: 0 }, tracked: 'auto', chests: null, chestsOpened: [], shrines: null, shrinesPrayed: [], trial: null, trialDone: 0,
   mapFrags: 0, treasureDone: false, treasure: null, chestProto: null, chestScale: 1, // 숨겨진 보물: 지도 조각 수집 → 보물 위치 공개
   dens: null, densCleared: [], // 몬스터 소굴: 접근 시 매복 스폰, 전멸 시 보상(1회성)
@@ -831,6 +831,7 @@ function autoTarget() {
 }
 
 function hitFlash(root) {
+  if(root===state.player&&state.estuaryChannel){state.estuaryChannel=null;toast('피격으로 구조 중단 · 다시 시도할 수 있다.');}
   root.traverse((o) => {
     if (o.isMesh && o.material) {
       if (!o.userData.origMat) o.userData.origMat = o.material;
@@ -1338,6 +1339,7 @@ async function build() {
     await buildWatchtower();
   }
 
+  buildEstuary();
   state.ready = true;
   window.__gameReady = true;
   const lo = document.getElementById('loading');
@@ -1362,6 +1364,7 @@ async function build() {
     },
     beaconInfo(){return{...state.beacon,status:beaconStatus(),target:beaconTarget(),fight:state.beaconFight?{step:state.beaconFight.step,enemies:state.beaconFight.enemies.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),guard:e.stats.guard,label:e.stats.label}))}:null}},
     insigniaInfo(){return{selected:state.insignia,active:insigniaName(),safe:insigniaSafe(),unlocked:INSIGNIAS.filter(d=>d.unlocked()).map(d=>d.id),hp:state.hp,maxHp:state.maxHp,potionHeal:activeInsignia('care')?85:60,dodgeRemaining:Math.max(0,state.dodgeCdUntil-clock.elapsedTime),dodgeCooldown:(hasSkill('haste')?1.6:2.5)-(activeInsignia('stride')?.25:0)}},
+    estuaryInfo(){return{...state.estuary,status:estuaryStatus(),inside:inEstuary(),target:estuaryTarget(),channel:state.estuaryChannel?{...state.estuaryChannel,left:Math.max(0,3-(clock.elapsedTime-state.estuaryChannel.start))}:null,tides:(state.estuaryTides||[]).map(t=>({id:t.id,at:t.at,next:t.next,hits:t.hits,blocks:t.blocks,saves:t.saves})),fight:(state.estuaryFight||[]).map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,boss:!!e.stats.estuaryBoss,pos:e.root.position.toArray()}))}},
     courierInfo(){return{stage:state.courier||0,status:courierStatus(),target:courierTarget(),fight:state.courierFight?state.courierFight.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray(),aim:e.archerAt||0,next:e.archerNext||0,recover:e.archerRecover||0,fired:e.archerFired||0,walls:e.archerWalls||0,hits:e.archerHits||0,dodges:e.archerDodges||0,interrupts:e.archerInterrupts||0,result:e.archerResult||null,lines:(e.archerLines||[]).filter(m=>m.visible).length,arrows:(e.arrows||[]).map(a=>({left:a.left,pos:a.root.position.toArray(),visible:a.root.visible,dir:a.dir.toArray()}))})):null}},
     cartInfo(){const f=state.cartRun;return{stage:state.cartStage||0,status:cartStatus(),pos:state.cartModel.root.position.toArray(),run:f?{hp:f.hp,wave:f.wave,moved:f.moved,total:f.total,raiders:f.raiders.map(e=>({i:state.enemies.indexOf(e),hp:e.hp,dead:e.dead,pos:e.root.position.toArray()}))}:null}},
     echoInfo(){const f=state.echoFight;return{done:state.echo||0,status:echoStatus(),target:echoTarget(),fight:f?{phase:f.phase,sequence:f.sequence,shield:f.shield,hp:f.boss.hp,i:state.enemies.indexOf(f.boss),pos:f.boss.root.position.toArray(),dead:f.boss.dead,pulseAt:f.boss.pulseAt||0}:null}},
@@ -1528,7 +1531,7 @@ function openCampaignJournal(){
   html+=`<br><b>성장 선택</b><br>Lv.${state.level} · 스킬 포인트 ${state.skillPts||0}P · 습득 ${SKILLS.filter(k=>state.skills[k.id]).length}/${SKILLS.length}<br>포인트가 있어도 스킬은 자동으로 배우지 않는다. 스킬 창에서 설명과 선행 조건을 확인하자.`;
   html+=`<br>여행 인장: <b>${insigniaName()}</b> · 해금 ${INSIGNIAS.filter(d=>d.unlocked()).length}/3 · 장로 곁 스킬 창에서 한 개 장착. 관측소·수레·전령길 완료 기록으로 열린다.`;
   html+='<br><br><b>선택 탐험</b> · 메인 의뢰와 별도<br>';
-  const optional=[['북서 전령길',courierStatus()],['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
+  const optional=[['회색 여울',estuaryStatus()],['북서 전령길',courierStatus()],['관측 기록 운반',cartStatus()],['유적 잔향 봉인',echoStatus()],['동쪽 바람 관측소',observatoryStatus()],['꺼진 봉화길',state.beacon?.step===5?'봉화지기 기록 완료':state.beacon?.step?beaconStatus():'묘지의 왕 보고 후 마을 남쪽 출발석에서 시작'],['끊어진 순례길',state.journey===5?'이야기 기록 완료':state.journey?`기록 ${Math.min(3,state.journey-1)}/3 · 여행 수첩(J)에서 다음 단서`:'마을 장로의 여행 수첩에서 시작'],['유적 바람길',state.sealSolved?'무료 왕복길 개통':'유적 남쪽의 비문과 세 문양을 살피기'],['몬스터 소굴',`${(state.densCleared||[]).length}/${DENS.length}곳 정리`],['버려진 망루',state.watchCleared?'수호대장 격파':state.watchFound?'발견 · 수호대장은 남아 있다':'들판에서 망루 찾기'],['시련의 돌',state.trialDone?'시련 완료':'마을 밖 시련의 돌에서 규칙 확인']];
   html+=optional.map(([k,v])=>`<div style="padding:6px 0;border-top:1px solid #445"><b>${k}</b><br>${v}</div>`).join('');
   html+='<br><small>이 일지는 기존 의뢰와 탐험의 진행 안내다. 장 수는 새 콘텐츠 분량이나 권장 플레이 시간을 뜻하지 않는다.</small>';
   const buttons=[];
@@ -1615,6 +1618,7 @@ function tryInteract() {
   if (state.npc && state.player.position.distanceTo(state.npc.pos) <= 2.6) { state.dlgFocus = state.npc.pos; openDialog(); return; }
   if (state.npc2 && state.player.position.distanceTo(state.npc2.pos) <= 2.6) { state.dlgFocus = state.npc2.pos; openCollectorDialog(); return; }
   if (state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8) { openTrialDialog(); return; }
+  const est=nearbyEstuary();if(est){openEstuary(est);return;}
   const courier=nearbyCourier();if(courier){openCourier(courier);return;}
   if(nearbyCart()){openCart();return;}
   const echo=nearbyEcho(); if(echo){openEcho(echo);return;}
@@ -1950,6 +1954,7 @@ function drawMinimap() {
   if (state.swampPos) dot(state.swampPos.x, state.swampPos.z, '#8aa24f', 4); // 독 늪지대
   if (state.ruinsPos) dot(state.ruinsPos.x, state.ruinsPos.z, state.ruinsFound ? '#d8cba8' : '#b8b2a6', 4); // 잊힌 유적: 미발견 회색 → 발견 후 모래색
   for (const d of state.journeySites || []) dot(d.x,d.z,state.journey>d.step?'#8aa2a2':'#8be1e5',3);
+  if(estuaryReady()){dot(70,-12,'#98e2ed',4);mctx.strokeStyle='rgba(110,200,210,.8)';mctx.beginPath();mctx.arc(px(150),pz(0),32/MMAP_RANGE*W/2,0,Math.PI*2);mctx.stroke();for(const d of ESTUARY_SITES.slice(1))dot(d.x,d.z,'#98e2ed',3);}
   if(state.courier!==3)dot(-47,-14,'#f2ce81',4);
   if(state.cartModel&&state.cartStage!==3)dot(state.cartModel.root.position.x,state.cartModel.root.position.z,'#78e4d8',4);
   dot(-8,-58,state.echo===2?'#d8c47c':'#bca0fa',4);
@@ -2096,7 +2101,7 @@ function saveGame() {
       bounty: state.bounty, tracked: state.tracked || 'auto', mastery: state.mastery || null, skills: state.skills || {}, skillPts: state.skillPts || 0, chestsOpened: state.chestsOpened || [], shrinesPrayed: state.shrinesPrayed || [], trialDone: state.trialDone || 0, gear: state.gear, ach: state.ach, order: state.order || null, orderDone: state.orderDone || 0,
       observatory: state.observatory || 0, observatorySeen: !!state.observatorySeen,
       beacon: {step:state.beacon?.step||0,supply:state.beacon?.supply||null},
-      cartStage: state.cartStage || 0, courier: state.courier || 0, insignia: state.insignia || null,
+      cartStage: state.cartStage || 0, courier: state.courier || 0, insignia: state.insignia || null, estuary:{stage:state.estuary.stage,rescued:state.estuary.rescued,bossWon:!!state.estuary.bossWon},
       echo: state.echo || 0,
       journey: state.journey || 0, journeyEnding: state.journeyEnding || null,
       sealSolved: !!state.sealSolved,
@@ -2139,6 +2144,7 @@ function loadGame() {
     state.cartStage=Number.isInteger(s.cartStage)?Math.max(0,Math.min(3,s.cartStage)):0;
     state.insignia=INSIGNIAS.some(d=>d.id===s.insignia&&d.unlocked())?s.insignia:null;
     state.cartModel.root.position.set(cartPoint().x,0,cartPoint().z);
+    const es=s.estuary;state.estuary={stage:Number.isInteger(es?.stage)?Math.max(0,Math.min(5,es.stage)):0,rescued:Number.isInteger(es?.rescued)?es.rescued&3:0,bossWon:!!es?.bossWon};if(state.estuary.stage<3)state.estuary.bossWon=false;if(state.estuary.stage<2)state.estuary.rescued=0;if(state.estuary.stage>=3)state.estuary.rescued=3;if(state.estuary.stage===2&&state.estuary.rescued===3)state.estuary.stage=3;
     state.echo=Number.isInteger(s.echo)?Math.max(0,Math.min(2,s.echo)):0;
     state.observatorySeen=!!s.observatorySeen || state.observatory>0;
     updateObservatoryVisuals();
@@ -2698,6 +2704,50 @@ function updateObservatory(){
 
 // ---------- 북서 전령길: 엄폐와 세 갈래 사격 ----------
 const COURIER_CENTER={x:-54,z:-23},COURIER_BOARD={x:-47,z:-14,name:'북서 전령길 안내판',id:'board'},COURIER_BOX={x:-54,z:-31,name:'전령의 봉인함',id:'box'};
+// ---------- 회색 여울: 별도 섬, 구조와 침수 주기를 잇는 다음 지역 ----------
+const ESTUARY_SITES=[{id:'ferry',name:'회색 여울 나루',x:70,z:-12},{id:'return',name:'언덕행 나룻배',x:126,z:0},{id:'chart',name:'젖은 조사 지도',x:140,z:-16},{id:'north',name:'북쪽 조사원',x:157,z:-12,bit:1},{id:'south',name:'남쪽 조사원',x:157,z:12,bit:2},{id:'sluice',name:'막힌 여울 수문',x:172,z:0}];
+function inEstuary(p=state.player?.position){return !!p&&p.x>105;}
+function onWorld(p){return Math.hypot(p.x,p.z)<=78||Math.hypot(p.x-150,p.z)<=30;}
+function clampWorld(p){const east=p.x>105,cx=east?150:0,r=east?30:78,d=Math.hypot(p.x-cx,p.z);if(d>r){p.x=cx+(p.x-cx)*r/d;p.z=p.z*r/d;}return p;}
+function estuaryReady(){return state.quest.idx>=20&&state.courier===3;}
+function estuaryStatus(){const s=state.estuary;return s.stage===5?'회색 여울 구조 기록 인계 완료':s.stage===4?'언덕 나루로 돌아가 구조 기록 인계':s.stage===3?'동쪽 수문 철갑병을 물리치고 수문 열기':s.stage===2?`조사원 구조 ${Number(!!(s.rescued&1))+Number(!!(s.rescued&2))}/2 · 침수 뒤 3초 확보`:s.stage===1?'북서 물가의 젖은 조사 지도 읽기':estuaryReady()?'동쪽 나루에서 회색 여울로 출발':'메인 20개·전령 기록 인계 후 출발';}
+function estuaryTarget(){if(state.estuary.stage===5)return null;let id='ferry';if(inEstuary()){id=state.estuary.stage===1?'chart':state.estuary.stage===2?(!(state.estuary.rescued&1)?'north':'south'):state.estuary.stage===3?'sluice':'return';}const d=ESTUARY_SITES.find(d=>d.id===id);return{...d,label:d.name};}
+function buildEstuary(){
+ const root=new THREE.Group();scene.add(root);state.estuaryRoot=root;
+ const stone=new THREE.MeshLambertMaterial({color:0x79858b}),wood=new THREE.MeshLambertMaterial({color:0x91734f});
+ const land=new THREE.Mesh(new THREE.CircleGeometry(32,48),new THREE.MeshLambertMaterial({color:0x87958c}));land.rotation.x=-Math.PI/2;land.position.set(150,.005,0);land.receiveShadow=true;root.add(land);
+ const water=new THREE.Mesh(new THREE.RingGeometry(32,37,48),new THREE.MeshBasicMaterial({color:0x6099b5,transparent:true,opacity:.7,side:THREE.DoubleSide}));water.rotation.x=-Math.PI/2;water.position.set(150,-.02,0);root.add(water);
+ for(const [x,z,w,d]of[[145,-5,36,2.8],[150,-8,2.8,30],[164,0,17,3]]){const m=new THREE.Mesh(new THREE.BoxGeometry(w,.06,d),new THREE.MeshLambertMaterial({color:0xb7b09b}));m.position.set(x,.045,z);root.add(m);}
+ state.estuaryProps=ESTUARY_SITES.map(d=>{const g=new THREE.Group();g.position.set(d.x,0,d.z);const base=new THREE.Mesh(new THREE.BoxGeometry(d.bit?.7:1.4,.65,1),d.bit?new THREE.MeshLambertMaterial({color:0x62b8b0}):wood);base.position.y=.4;g.add(base);const gem=new THREE.Mesh(new THREE.OctahedronGeometry(d.bit?.33:.26),new THREE.MeshBasicMaterial({color:d.bit?0x8effd9:0xffd17b}));gem.position.y=1.6;g.add(gem);const label=makeNameSprite(d.name);label.position.y=d.bit?3.4:2.2;g.add(label);root.add(g);if(d.bit&&state.npc){base.visible=false;const person=SkeletonUtils.clone(state.npc.root);person.position.set(0,0,0);person.scale.multiplyScalar(.85);g.add(person);person.name='estuary-surveyor';gem.position.set(0,2.9,0);const tent=new THREE.Mesh(new THREE.ConeGeometry(1.7,2.2,4),new THREE.MeshLambertMaterial({color:0x457e82}));tent.rotation.y=Math.PI/4;tent.position.set(-2,1.1,2.8);g.add(tent);colliders.push({x:d.x-2,z:d.z+2.8,r:1.1,estuaryTent:true});registerTreeFade(tent,d.x-2,d.z+2.8);}if(d.id==='ferry'||d.id==='return'){const hull=new THREE.Mesh(new THREE.BoxGeometry(1.8,.45,3.6),wood);hull.position.set(0,.25,2.6);g.add(hull);const mast=new THREE.Mesh(new THREE.CylinderGeometry(.06,.06,3,6),wood);mast.position.set(0,1.7,2.6);g.add(mast);const sail=new THREE.Mesh(new THREE.PlaneGeometry(1.4,1.4),new THREE.MeshLambertMaterial({color:0xdbe5df,side:THREE.DoubleSide}));sail.position.set(.65,2.2,2.6);g.add(sail);}return{...d,root:g,gem,person:g.getObjectByName('estuary-surveyor')};});
+ state.estuaryTides=ESTUARY_SITES.filter(d=>d.bit).map(d=>{const disc=new THREE.Mesh(new THREE.CircleGeometry(5.5,48),new THREE.MeshBasicMaterial({color:0x599cb7,transparent:true,opacity:.12,depthWrite:false,side:THREE.DoubleSide}));disc.rotation.x=-Math.PI/2;disc.position.set(d.x,.075,d.z);root.add(disc);const ring=new THREE.Mesh(new THREE.RingGeometry(5.35,5.5,48),new THREE.MeshBasicMaterial({color:0x69cfe9,transparent:true,opacity:.75,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.set(d.x,.085,d.z);root.add(ring);const refuge=new THREE.Mesh(new THREE.CylinderGeometry(1.35,1.5,.35,10),stone);refuge.position.set(d.x+3.8,.18,d.z);root.add(refuge);const safeRing=new THREE.Mesh(new THREE.RingGeometry(1.3,1.45,24),new THREE.MeshBasicMaterial({color:0xa7ffe2,side:THREE.DoubleSide}));safeRing.rotation.x=-Math.PI/2;safeRing.position.set(d.x+3.8,.37,d.z);root.add(safeRing);const label=makeNameSprite('높은 돌 · 침수 안전');label.position.set(d.x+3.8,1.4,d.z);root.add(label);return{...d,disc,ring,refuge,next:0,at:0,hits:0,blocks:0,saves:0};});
+ for(const [x,z]of[[131,-9],[139,18],[148,24],[169,16],[177,-6],[151,-24]]){const m=new THREE.Mesh(new THREE.DodecahedronGeometry(1.4,0),stone);m.scale.y=.65;m.position.set(x,.6,z);root.add(m);colliders.push({x,z,r:1.25,estuaryRock:true});registerTreeFade(m,x,z);}
+ const gate=new THREE.Mesh(new THREE.BoxGeometry(1.2,2.6,7),stone);gate.position.set(175,1.3,0);root.add(gate);state.estuarySluice=gate;
+}
+function nearbyEstuary(){if(!state.ready||state.dead)return null;return state.estuaryProps?.find(d=>Math.hypot(state.player.position.x-d.x,state.player.position.z-d.z)<2.2)||null;}
+function clearEstuaryFight(){for(const e of state.estuaryFight||[]){cancelWardenPulse(e);cancelFrogSpit(e);cancelArcher(e);e.dead=true;e.despawned=true;if(e.tele)scene.remove(e.tele);scene.remove(e.root);const i=state.enemies.indexOf(e);if(i>=0)state.enemies.splice(i,1)}state.estuaryFight=null;state.estuaryChannel=null;for(const t of state.estuaryTides||[]){t.at=0;t.next=0;t.disc.visible=false;t.ring.visible=false;}}
+function estuaryTravel(east){clearEstuaryFight();clearCourierFight();clearCartRun();clearEchoFight();clearObservatoryFight();clearBeaconFight();if(state.trial?.active)endTrial(false);cancelWindshot('travel');resetMasteryCombat();state.dodgeFrom=null;state.dodgeUntil=0;state.attackUntil=0;state.autoOn=false;document.getElementById('auto').textContent='자동 전투 OFF';document.getElementById('auto').classList.remove('on');state.player.position.set(east?126:70,0,east?0:-12);state.invUntil=Math.max(state.invUntil,clock.elapsedTime+1);state.tracked='estuary';closeDialog();saveGame();toast(east?'회색 여울 도착 · 지도부터 살펴보자.':'언덕 나루로 돌아왔다. 구조 기록은 보존된다.');}
+function openEstuary(d){state.dlgFocus=d.root.position;const s=state.estuary;
+ if(d.id==='ferry'){const buttons=[];let text='전령이 지켜 낸 대피 지도는 동쪽 회색 여울로 이어진다. 돌아오지 못한 조사원 둘과 막힌 수문을 찾아보자.<br><br><b>'+estuaryStatus()+'</b><br>배편과 재도전은 무료. 지도·각 조사원·수문 단계는 저장된다. 사망하면 마을에서 부활하며 미완료 전투·구조만 초기화된다.<br>붉은 침수 예고 1.5초 뒤 물가 원에 피해16. 초록 테두리의 높은 돌은 안전하다. 침수 직후 조사원 곁에서 E/터치로 구조 시작, 3초 안에 피격·2m 이탈·회피·공격·메뉴를 열면 취소된다.<br>구조 둘 후 수문 철갑병과 싸우고 수문을 열어 귀환한다. 최종 한 번300XP·180G. 적은 전리품을 주지 않는다.';
+  if(s.stage===4)buttons.push(['구조 기록 인계',()=>{if(state.estuary.stage!==4||nearbyEstuary()?.id!=='ferry')return;state.estuary.stage=5;state.gold+=180;gainXp(300);if(state.tracked==='estuary')state.tracked='auto';saveGame();closeDialog();sfx('reward',1);toast('회색 여울의 길잡이 · 300XP · 180G');}]);
+  if(estuaryReady())buttons.push([s.stage?'회색 여울로 건너가기':'여울 조사 시작',()=>{if(nearbyEstuary()?.id!=='ferry'||!estuaryReady())return;if(!s.stage)s.stage=1;estuaryTravel(true);}]);
+  journeyDialog(d.name,text,buttons);return;
+ }
+ if(d.id==='return'){journeyDialog(d.name,'언덕 나루로 무료 귀환한다. 완료한 지도·구조·수문 단계는 유지된다.',[['언덕 나루로 귀환',()=>{if(nearbyEstuary()?.id==='return')estuaryTravel(false)}]]);return;}
+ if(d.id==='chart'){journeyDialog(d.name,'지도의 파란 선은 물이 차는 곳, 초록 원은 높은 돌이다.<br>북쪽과 남쪽 조사원을 구조한 뒤 동쪽 수문을 열면 대피로가 이어진다.<br>구조 순서는 자유. 3초 동안 곁을 지켜야 하므로 침수가 빠진 직후 시작하자.',s.stage===1?[['대피 경로 기록',()=>{if(s.stage!==1||nearbyEstuary()?.id!=='chart')return;s.stage=2;saveGame();closeDialog();toast('북쪽·남쪽 조사원 구조 0/2 · 순서 자유');}]]:[]);return;}
+ if(d.bit){if(s.stage!==2||s.rescued&d.bit){journeyDialog(d.name,s.rescued&d.bit?'조사원은 나루로 대피했다. 구조 기록은 저장되어 있다.':'먼저 젖은 조사 지도에서 대피 경로를 읽자.');return;}state.estuaryChannel={id:d.id,bit:d.bit,x:d.x,z:d.z,start:clock.elapsedTime,hp:state.hp};toast('구조 중 · 3초 동안 2m 안에서 공격·회피 없이 곁을 지키자.');return;}
+ if(d.id==='sluice'){if(s.stage===3&&!s.bossWon){journeyDialog(d.name,'철갑병이 수문 손잡이를 막고 있다. 강공격으로 가드를 깨거나 스킬로 빈틈을 만들자.');return;}journeyDialog(d.name,s.stage>=4?'수문이 열려 대피로를 확보했다. 언덕 나루로 돌아가 기록을 인계하자.':s.stage===3?'철갑병이 쓰러졌다. 수문을 열어 남은 물을 흘려보내자.':'조사원 둘을 먼저 구조하자.',s.stage===3?[['수문 개방',()=>{if(s.stage!==3||nearbyEstuary()?.id!=='sluice'||!s.bossWon)return;s.stage=4;clearEstuaryFight();saveGame();closeDialog();sfx('reward',1);toast('회색 여울 수문 개방 · 언덕 나루에 구조 기록 인계');}]]:[]);}
+}
+function updateEstuary(now){const s=state.estuary,p=state.player.position,inside=inEstuary();state.estuarySluice.position.y=s.stage>=4?-1.8:1.3;for(const d of state.estuaryProps||[])if(d.bit){d.gem.visible=!(s.rescued&d.bit);if(d.person)d.person.visible=!(s.rescued&d.bit);}
+ if(state.dead||!inside){if(state.estuaryFight||state.estuaryChannel)clearEstuaryFight();return;}
+ if(!estuaryReady()||!s.stage){clearEstuaryFight();state.player.position.set(70,0,-12);return;}
+ if((s.stage===2||(s.stage===3&&!s.bossWon))&&!state.estuaryFight&&!state.dialog&&!state.menuOpen){const defs=s.stage===2?ESTUARY_SITES.filter(d=>d.bit&&!(s.rescued&d.bit)).map(d=>({x:d.x-4,z:d.z,stats:{...WARRIOR,hp:90,dmg:12,guard:false,label:'여울 표류병'}})):[{x:169,z:0,stats:{...WARRIOR,hp:260,dmg:18,guard:true,combo:false,label:'수문 철갑병',estuaryBoss:true}}];state.estuaryFight=defs.map(d=>{const e=state.spawn(state.protos.skel,{...d.stats,aggro:11,noElite:true,noRespawn:true},d.x,d.z);e.expedition=true;e.trial=true;e.estuary=true;if(!e.nameSprite){e.nameSprite=makeNameSprite(e.stats.label);e.nameSprite.position.y=2.4;e.root.add(e.nameSprite)}return e;});}
+ if(s.stage===3&&!s.bossWon&&state.estuaryFight?.some(e=>e.stats.estuaryBoss)&&state.estuaryFight.every(e=>e.dead)){s.bossWon=true;saveGame();toast('수문 철갑병 격파 · 손잡이에서 수문을 열자.');}
+ for(const t of state.estuaryTides||[]){const active=s.stage===2&&!(s.rescued&t.bit);t.disc.visible=t.ring.visible=active;if(!active){t.at=0;t.next=0;continue;}if(state.dialog||state.menuOpen){t.next=now+2;t.at=0;t.disc.material.opacity=.12;t.ring.material.color.setHex(0x69cfe9);continue;}if(!t.next)t.next=now+2;if(!t.at&&now>=t.next){t.at=now+1.5;t.ring.material.color.setHex(0xff665b);t.disc.material.color.setHex(0xff665b);}t.disc.material.opacity=t.at?.18+.18*Math.sin(now*10)**2:.10;
+  if(t.at&&now>=t.at){const wet=Math.hypot(p.x-t.x,p.z-t.z)<5.5,safe=Math.hypot(p.x-t.x-3.8,p.z-t.z)<1.5;if(wet){if(safe)t.saves++;else if(now<state.invUntil){t.blocks++;registerDodgeBlock(now);}else{t.hits++;state.hp=Math.max(0,state.hp-Math.max(1,16-GEAR_DEF[state.gear.armor]));state.estuaryChannel=null;hitFlash(state.player);sfx('hurt',.8);toast('여울 침수! 높은 돌로 피하거나 물 빠진 뒤 구조하자.');if(!state.hp)playerDie('여울 침수');}}t.at=0;t.next=now+6.5;t.ring.material.color.setHex(0x69cfe9);t.disc.material.color.setHex(0x599cb7);}
+ }
+ const ch=state.estuaryChannel;if(ch){if(state.dead||state.dialog||state.menuOpen||state.hp<ch.hp||Math.hypot(p.x-ch.x,p.z-ch.z)>2||now<state.dodgeUntil||now<state.attackUntil){state.estuaryChannel=null;toast('구조 중단 · 완료 기록 손실 없이 다시 시도할 수 있다.');}else if(now-ch.start>=3){s.rescued|=ch.bit;state.estuaryChannel=null;skillFx(p,0x88ffcc,1.6,'heal');if(s.rescued===3){s.stage=3;clearEstuaryFight();toast('조사원 둘 구조! 동쪽 수문을 열어 대피로를 확보하자.');}else toast('조사원 구조 완료 · 반대쪽 조사원에게 이동');saveGame();sfx('reward',.8);}}
+}
+
 function courierStatus(){if(state.courier===3)return '북서 전령 기록 인계 완료';if(state.courier===2)return '전령길 안내판에 기록 인계';if(state.courier===1)return '길 안쪽 봉인함 회수';if(state.courierFight)return `전령길 궁수 ${(state.courierFight||[]).filter(e=>!e.dead).length}명 · 엄폐/사격 예고 끊기`;return state.quest.idx>=10?'북서 전령길 안내판에서 시작':'메인 의뢰 10개 완료 후 도전';}
 function courierTarget(){if(state.courier===3||state.quest.idx<10)return null;const d=state.courier===1?COURIER_BOX:state.courierFight?COURIER_CENTER:COURIER_BOARD;return{x:d.x,z:d.z,label:state.courierFight?'전령길 엄폐 전투':d.name};}
 function buildCourierSite(){
@@ -3343,6 +3393,7 @@ function objectiveTarget() {
   if (!state.npc) return null;
   const mode = state.tracked || 'auto';
   if (mode === 'none') return null;
+  if (mode === 'estuary') return estuaryTarget() || autoObjective();
   if (mode === 'courier') return courierTarget() || autoObjective();
   if (mode === 'cart') return cartTarget() || autoObjective();
   if (mode === 'echo') return echoTarget() || autoObjective();
@@ -3367,6 +3418,7 @@ function cycleTrack() {
   if (beaconTarget()) opts.push('beacon');
   if (observatoryTarget()) opts.push('observatory');
   if (echoTarget()) opts.push('echo');
+  if(estuaryReady()&&state.estuary.stage<5)opts.push('estuary');
   if (courierTarget()) opts.push('courier');
   if (cartTarget()) opts.push('cart');
   opts.push('none');
@@ -3574,7 +3626,7 @@ function damageEnemy(e, dmg, heavy) {
     const push = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
     e.root.position.addScaledVector(push, 1.4);
     const d0 = Math.hypot(e.root.position.x, e.root.position.z);
-    if (d0 > 78) e.root.position.multiplyScalar(78 / d0);
+    clampWorld(e.root.position);
   }
   if (e.hp <= 0) killEnemy(e);
   else { e.anim.playOnce('hit_a', 'hit'); e.hitUntil = now + 0.4; }
@@ -3674,7 +3726,7 @@ function makeWindVisual(){if(windVisual)return;const root=new THREE.Group();cons
 }
 function cancelWindshot(result){if(state.windshot){state.windshot=null;state.windResult=result;}if(windVisual)windVisual.visible=false;}
 function windWall(p){
-  if(Math.abs(p.x)>78||Math.abs(p.z)>78)return true;
+  if(!onWorld(p))return true;
   if(colliders.some(c=>Math.hypot(p.x-c.x,p.z-c.z)<c.r+.22))return true;
   const {cx,cz,half,doorHalf}=DUNGEON;if(!half)return false;
   const dx=Math.abs(p.x-cx),dz=Math.abs(p.z-cz),band=.85;
@@ -3823,7 +3875,7 @@ function updateStormCharge(e, dt, now) {
     // 예고 경로와 실제 경로 일치: 기존 충돌물 앞에서 끝나도록 사전 절단.
     for(let step=0.25;step<=length;step+=0.25) {
       const x=e.stormFrom.x+dir.x*step,z=e.stormFrom.z+dir.z*step;
-      if(Math.abs(x)>78 || Math.abs(z)>78 || colliders.some(c=>Math.hypot(x-c.x,z-c.z)<c.r+0.8)) { length=Math.max(0,step-0.25); break; }
+      if(!onWorld({x,z}) || colliders.some(c=>Math.hypot(x-c.x,z-c.z)<c.r+0.8)) { length=Math.max(0,step-0.25); break; }
     }
     if(length<1) { e.stormNext=now+2; return false; }
     e.stormTo=e.stormFrom.clone().addScaledVector(dir,length);
@@ -4007,6 +4059,7 @@ function playerDie(killerLabel) {
   state.dead = true;
   clearCartRun();
   clearCourierFight();
+  clearEstuaryFight();
   clearEchoFight();
   clearObservatoryFight();
   cancelWindshot('death');
@@ -4044,7 +4097,7 @@ function tick() {
     // 중독 DoT: 초당 2, 중독만으로는 쓰러지지 않음(최소 1HP)
     if (!state.dead && now < state.poisonUntil && now >= state.poisonTickAt) {
       state.poisonTickAt = now + 1;
-      state.hp = Math.max(1, state.hp - 2);
+      state.hp = Math.max(1, state.hp - 2);state.estuaryChannel=null;
     }
     let ix = 0, iz = 0;
     if (keys.has('KeyW') || keys.has('ArrowUp')) iz -= 1;
@@ -4093,7 +4146,7 @@ function tick() {
       // 시간 기반 보간: 프레임률과 무관하게 0.45초 동안 정확히 4m 이동 (저FPS에서 회피 거리 축소 방지)
       const k = Math.min(1, Math.max(0, (now - state.dodgeStart) / 0.45));
       state.player.position.copy(state.dodgeFrom).addScaledVector(state.dodgeDir, 4 * k);
-      resolveCollisions(state.player.position);
+      resolveCollisions(state.player.position);clampWorld(state.player.position);
       if (now >= state.dodgeUntil) state.dodgeFrom = null; // 창이 지난 첫 프레임에 최종 위치 확정
       speed = 0;
     }
@@ -4109,7 +4162,7 @@ function tick() {
       state.player.position.addScaledVector(dir, speed * dt * Math.min(1, m * 1.2));
       resolveCollisions(state.player.position);
       const d = Math.hypot(state.player.position.x, state.player.position.z);
-      if (d > 78) state.player.position.multiplyScalar(78 / d);
+      clampWorld(state.player.position);
       state.anim.play(running ? 'running' : 'walking');
       if (now >= audio.stepAt) {
         audio.stepAt = now + (running ? 0.27 : 0.36);
@@ -4123,6 +4176,7 @@ function tick() {
 
     for (const e of state.enemies) {
       const ep=e.root.position;const old=ep.x>49&&ep.x<71&&ep.z>-5&&ep.z<15?ep.clone():null;updateEnemy(e, dt, now);
+      if(e.estuary)clampWorld(e.root.position);
       if(old&&colliders.some(c=>c.observatoryWall&&Math.hypot(e.root.position.x-c.x,e.root.position.z-c.z)<c.r+.5))e.root.position.copy(old);
     }
     updateFlowers(dt, now);
@@ -4145,6 +4199,7 @@ function tick() {
     updateEcho();
     updateCart(dt,now);
     updateCourier();
+    updateEstuary(now);
     checkAch();
     updateWeather(dt, now);
 
@@ -4162,6 +4217,7 @@ function tick() {
     }
     const trialNear = state.trialStone && state.player.position.distanceTo(state.trialStone.root.position) <= 2.8 && !state.dead;
     const promptEl = document.getElementById('prompt');
+    const estNear=nearbyEstuary();
     const courierNear=nearbyCourier();
     const cartNear=nearbyCart();
     const echoNear=nearbyEcho();
@@ -4169,8 +4225,8 @@ function tick() {
     const sealNear = nearbySeal();
     const journeyNear = nearbyJourneySite();
     const beaconNear = nearbyBeacon();
-    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : courierNear ? `E · ${courierNear.name}` : cartNear ? 'E · 기록 운반 수레' : echoNear ? `E · ${echoNear.name}` : obsNear ? `E · ${obsNear.name}` : sealNear ? `E · ${sealNear.name}` : beaconNear ? `E · ${beaconNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
-    promptEl.style.display = (npcNear || trialNear || sealNear || journeyNear || beaconNear || obsNear || echoNear || cartNear || courierNear) && !state.dialog ? 'block' : 'none';
+    promptEl.textContent = npcNear ? 'E · 대화하기' : trialNear ? 'E · 시련의 돌' : estNear ? `E · ${estNear.name}` : courierNear ? `E · ${courierNear.name}` : cartNear ? 'E · 기록 운반 수레' : echoNear ? `E · ${echoNear.name}` : obsNear ? `E · ${obsNear.name}` : sealNear ? `E · ${sealNear.name}` : beaconNear ? `E · ${beaconNear.name}` : journeyNear ? `E · ${journeyNear.name}` : '';
+    promptEl.style.display = (npcNear || trialNear || sealNear || journeyNear || beaconNear || obsNear || echoNear || cartNear || courierNear || estNear) && !state.dialog ? 'block' : 'none';
 
     // 의뢰 HUD
     const qEl = document.getElementById('quest');
@@ -4198,6 +4254,7 @@ function tick() {
       lines.push(`${resolved === 'bounty' ? '▸ ' : ''}반복 의뢰 · ${b.kind === 'flowers' ? '바람꽃' : b.kind === 'variants' ? '변종 처치' : b.kind === 'elite' ? '엘리트 토벌' : b.kind === 'mats' ? b.mat + ' 납품' : '몬스터 처치'} ${bp} / ${goal}${bp >= goal ? ' · 장로에게 보고 ' + distTo(t) : (t ? ' · ' + distTo(t) : '')}`);
     }
     const bt=beaconTarget();if(bt)lines.push(`${state.tracked==='beacon'?'▸ ':''}원정 · ${bt.label} ${distTo(bt)}<br><span style="font-size:.85em">${beaconStatus()}</span>`);
+    const est=estuaryTarget();if(est&&estuaryReady()&&state.estuary.stage<5)lines.push(`${state.tracked==='estuary'?'▸ ':''}여울 · ${state.estuaryChannel?`구조 중 ${Math.max(0,3-(now-state.estuaryChannel.start)).toFixed(1)}초`:estuaryStatus()} ${distTo(est)}`);
     const crt=courierTarget();if(crt)lines.push(`${state.tracked==='courier'?'▸ ':''}전령길 · ${courierStatus()} ${distTo(crt)}`);
     const ct=cartTarget();if(ct)lines.push(`${state.tracked==='cart'?'▸ ':''}호위 · ${cartStatus()} ${distTo(ct)}`);
     const et=echoTarget();if(et)lines.push(`${state.tracked==='echo'?'▸ ':''}잔향 · ${echoStatus()} ${distTo(et)}`);
